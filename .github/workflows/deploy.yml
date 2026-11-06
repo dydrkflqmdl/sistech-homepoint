@@ -52,9 +52,10 @@ jobs:
       - name: 마이그레이션 적용
         run: supabase db push --remote --yes
       # 위에서 link 한 프로젝트에 배포한다. --use-api: 러너에 Docker 없이 Supabase 서버 쪽에서 번들한다.
+      # --yes: 비대화형 실행에서는 확인 프롬프트를 띄울 수 없어 미리 승인한다(db push와 같은 이유).
       # verify_jwt 설정은 config.toml([functions.admin-users])을 따른다.
       - name: Edge Function 배포
-        run: supabase functions deploy admin-users --use-api
+        run: supabase functions deploy admin-users --use-api --yes
 
   deploy:
     name: 페이지 배포
