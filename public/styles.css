@@ -58,8 +58,14 @@ p {
 .topbar h1 {
   font-size: 17px;
   font-weight: 700;
-  /* 좁은 화면에서 낱말 중간이 아니라 띄어쓰기에서만 줄을 바꾼다 */
-  word-break: keep-all;
+  /* 제목은 임의로 접지 않는다. 휴대폰에서는 아래 <br> 규칙으로 "HOME POINT / NAVI" 두 줄에 고정한다.
+     (버튼 줄에 밀려 낱말마다 세 줄로 접히는 것을 막는다) */
+  white-space: nowrap;
+}
+
+/* 넓은 화면은 한 줄. 휴대폰(767px 이하)에서만 줄바꿈을 살린다. */
+.topbar h1 br {
+  display: none;
 }
 
 /* 제목은 처음 화면으로 돌아가는 링크. 글자색은 그대로 두고 눌렀을 때만 살짝 표시한다. */
@@ -1190,6 +1196,11 @@ body.dragging .drop-overlay {
 @media (max-width: 767px) {
   .user-name {
     max-width: 110px;
+  }
+
+  /* 제목을 "HOME POINT / NAVI" 두 줄로 쌓아 버튼 칸을 넓게 남긴다 */
+  .topbar h1 br {
+    display: inline;
   }
 }
 

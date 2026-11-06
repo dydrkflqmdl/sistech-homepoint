@@ -1,4 +1,4 @@
--- SISTECH 홈포인트 지도: 장소·미션 기록 테이블, 접근 권한(RLS), 화면이 부르는 RPC 함수.
+-- HOME POINT NAVI(홈포인트 네비): 장소·미션 기록 테이블, 접근 권한(RLS), 화면이 부르는 RPC 함수.
 -- 예전 Express + node:sqlite 서버(server/db.js, server/app.js)의 저장 규칙과 오류 문구를 그대로 옮겼다.
 -- 화면에 보여 줄 오류는 errcode P0001과 한국어 message로 올린다(PostgREST가 message를 그대로 내려준다).
 

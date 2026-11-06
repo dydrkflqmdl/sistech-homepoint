@@ -69,7 +69,7 @@ server.on('error', (err) => {
 });
 
 server.listen(port, () => {
-  console.log(`SISTECH 관리 페이지: http://localhost:${port}`);
+  console.log(`HOME POINT NAVI(홈포인트 네비): http://localhost:${port}`);
   for (const a of Object.values(os.networkInterfaces()).flat()) {
     if (a.family === 'IPv4' && !a.internal) console.log(`다른 기기에서: http://${a.address}:${port}`);
   }
