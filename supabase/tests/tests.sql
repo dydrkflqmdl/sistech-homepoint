@@ -345,8 +345,8 @@ select t.ok('auth.sessions에 로그인 기록 트리거가 있음',
 select t.ok('definer 함수 소유자는 마이그레이션 실행 롤',
   (select bool_and(pg_get_userbyid(proowner) = current_user) from pg_proc
    where pronamespace = 'public'::regnamespace and prosecdef));
-select t.ok('authenticated는 login_logs를 읽기만 할 수 있음',
-  has_table_privilege('authenticated', 'public.login_logs', 'select')
+select t.ok('authenticated는 login_logs에 어떤 권한도 없음(비공개)',
+  not has_table_privilege('authenticated', 'public.login_logs', 'select')
   and not has_table_privilege('authenticated', 'public.login_logs', 'insert')
   and not has_table_privilege('authenticated', 'public.login_logs', 'update')
   and not has_table_privilege('authenticated', 'public.login_logs', 'delete'));
@@ -357,8 +357,11 @@ select t.ok('login_logs 시퀀스는 anon·authenticated 모두 권한 없음',
   and not has_sequence_privilege('authenticated', 'public.login_logs_id_seq', 'usage,select,update'));
 select t.ok('authenticated는 로그인 기록 RPC 실행 가능',
   has_function_privilege('authenticated', 'public.log_login(text)', 'execute')
-  and has_function_privilege('authenticated', 'public.log_logout()', 'execute')
-  and has_function_privilege('authenticated', 'public.list_login_logs(integer)', 'execute'));
+  and has_function_privilege('authenticated', 'public.log_logout()', 'execute'));
+select t.ok('list_login_logs 함수는 존재하지 않음',
+  not exists (select from pg_proc where pronamespace = 'public'::regnamespace and proname = 'list_login_logs'));
+select t.ok('login_logs에 select 정책이 없음',
+  not exists (select from pg_policies where schemaname = 'public' and tablename = 'login_logs'));
 select t.ok('트리거 함수는 supabase_auth_admin만 실행 권한',
   has_function_privilege('supabase_auth_admin', 'public.login_logs_on_session()', 'execute')
   and not has_function_privilege('authenticated', 'public.login_logs_on_session()', 'execute')
@@ -481,37 +484,19 @@ select t.eq('JWT 클레임으로 email·login_id 채움',
 select set_config('request.jwt.claims', '', false);
 select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false);
 
--- ---------- list_login_logs ----------
-set role authenticated;
-create temp table ll as select public.list_login_logs() as r;
+-- ---------- 기록은 postgres(대시보드)로만 읽힌다 ----------
 reset role;
-select t.eq('list_login_logs: occurred_at 내림차순',
-  (select jsonb_agg(e -> 'id') from ll, jsonb_array_elements(r) e),
-  (select jsonb_agg(id order by occurred_at desc, id desc) from public.login_logs));
-select t.eq('list_login_logs 원소 키',
-  (select jsonb_agg(k order by k) from ll, jsonb_object_keys(r -> 0) k),
-  '["email", "event", "id", "ip", "loginId", "occurredAt", "userAgent", "userId"]');
-select t.ok('occurredAt은 UTC ISO 8601',
-  (select bool_and(e ->> 'occurredAt' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') from ll, jsonb_array_elements(r) e));
-select t.eq('list_login_logs 원소 모양(트리거 기록)',
-  (select e - 'id' - 'occurredAt' from ll, jsonb_array_elements(r) e where e ->> 'userAgent' = 'Mozilla/5.0 테스트'),
-  '{"userId": "11111111-1111-1111-1111-111111111111", "email": "xn--hong@sistech.local", "loginId": "홍길동", "event": "login", "userAgent": "Mozilla/5.0 테스트", "ip": "203.0.113.7"}');
-
--- limit 클램프: 1100행을 더 넣고 본다
-insert into public.login_logs (user_id, email, event, occurred_at)
-select '66666666-6666-6666-6666-666666666666', 'bulk@sistech.local', 'login', now() - interval '1 day' - g * interval '1 second'
-from generate_series(1, 1100) g;
+select t.ok('postgres는 login_logs를 조회할 수 있음', (select count(*) from public.login_logs) > 0);
+select t.ok('postgres 조회: 트리거 기록 내용',
+  exists (select from public.login_logs where user_id = '11111111-1111-1111-1111-111111111111' and event = 'login'
+    and email = 'xn--hong@sistech.local' and login_id = '홍길동' and user_agent = 'Mozilla/5.0 테스트' and ip = '203.0.113.7'));
 set role authenticated;
-select t.eq('limit 0 → 1개', to_jsonb(jsonb_array_length(public.list_login_logs(0))), '1');
-select t.eq('limit -5 → 1개', to_jsonb(jsonb_array_length(public.list_login_logs(-5))), '1');
-select t.eq('limit 5000 → 1000개', to_jsonb(jsonb_array_length(public.list_login_logs(5000))), '1000');
-select t.eq('limit 기본 → 200개', to_jsonb(jsonb_array_length(public.list_login_logs())), '200');
-select t.eq('limit null → 200개', to_jsonb(jsonb_array_length(public.list_login_logs(null))), '200');
-select t.eq('limit 1의 원소는 가장 최근 기록',
-  public.list_login_logs(1) #> '{0,id}',
-  (select to_jsonb(id) from public.login_logs order by occurred_at desc, id desc limit 1));
+select t.ok('authenticated: login_logs select 거부', t.err('select * from public.login_logs') like '42501:%');
+select t.ok('authenticated: list_login_logs 호출 불가(함수 없음)', t.err('select public.list_login_logs()') like '42883:%');
+reset role;
 
 -- ---------- authenticated는 직접 쓸 수 없다 ----------
+set role authenticated;
 select t.ok('authenticated: login_logs 직접 insert 거부',
   t.err($q$insert into public.login_logs (user_id, event) values ('11111111-1111-1111-1111-111111111111', 'login')$q$) like '42501:%');
 select t.ok('authenticated: login_logs 직접 update 거부',
@@ -525,7 +510,6 @@ reset role;
 -- ---------- anon은 막힌다 ----------
 set role anon;
 select t.ok('anon: login_logs select 거부', t.err('select * from public.login_logs') like '42501:%');
-select t.ok('anon: list_login_logs 거부', t.err('select public.list_login_logs()') like '42501:%');
 select t.ok('anon: log_login 거부', t.err($q$select public.log_login('x')$q$) like '42501:%');
 select t.ok('anon: log_logout 거부', t.err('select public.log_logout()') like '42501:%');
 reset role;

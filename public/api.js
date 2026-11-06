@@ -172,11 +172,6 @@ export const logLogin = (userAgent) => callLog('log_login', { p_user_agent: Stri
 // 로그아웃 버튼을 눌렀을 때 signOut 전에 한 번. 세션 만료로 내보낼 때는 부르지 않는다.
 export const logLogout = () => callLog('log_logout');
 
-// 최신순 로그인 기록 → [{ id, userId, email, loginId, event: 'login'|'logout', userAgent, ip, occurredAt }]
-// 세션 만료면 로그인 화면으로 보내지만, 권한이 없을 때는 기록 창에 문구만 보여 주도록 로그아웃시키지 않는다.
-export const listLoginLogs = async (limit = 200) =>
-  (await call('list_login_logs', { p_limit: limit }, { signOutOn: ['expired'] })) ?? [];
-
 // ── 실시간 ──────────────────────────────────────────────
 
 // places·missions 테이블이 바뀔 때마다 onChange()를 부른다. 연결이 끊겼다가 다시 붙으면 그사이 놓친 변경이 있을 수 있어서 그때도 부른다.

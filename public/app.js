@@ -3,11 +3,7 @@ import { kakaoMapViewUrl, openKakaoMapRoute } from './kakao.js';
 import { missionNames, missionProgress } from './mission.js';
 import { CsvFormatError, readPlaces, toCsv } from './csv.js';
 import { LOGIN_ID_RULE, emailToLoginId, loginIdToEmail } from './login-id.js';
-import { eventLabel, formatLogTime, shortUserAgent } from './login-log.js';
 import * as api from './api.js';
-
-// 로그인 기록 창의 처음 상태(닫힘). 열 때마다 새로 불러온다.
-const freshLoginLog = () => ({ open: false, loading: false, rows: [], error: null });
 
 const state = {
   places: [],
@@ -32,8 +28,6 @@ const state = {
   openGroups: new Set(),
   // 저절로 펼쳐진 묶음(고른 장소·검색)을 사람이 접은 것. 검색어·거르기·선택이 바뀌면 잊는다.
   closedGroups: new Set(),
-  // 로그인 기록 창. 가져오기 창·상세 정보와 동시에 열지 않는다.
-  loginLog: freshLoginLog(),
 };
 
 // config.js가 window.APP_CONFIG에 넣어 둔 설정(카카오 키·Supabase 주소와 공개 키).
@@ -978,8 +972,6 @@ function render() {
 // ── 동작 ────────────────────────────────────────────────
 
 function select(id, { pan = false } = {}) {
-  // 장소를 고르면 상세 정보가 그 자리에 열리므로 로그인 기록 창은 닫는다.
-  if (id !== null) closeLoginLog();
   if (id !== state.selectedId) {
     state.selectedMission = null;
     state.missionDraft = null;
@@ -1237,7 +1229,6 @@ function startImport(fileList) {
     state.missionDraft = null;
     render();
   }
-  closeLoginLog();
   state.importFiles = files;
   state.importSkipped = all.filter((f) => !isCsvFile(f)).map((f) => ({ name: f.name, reason: 'CSV 파일이 아닙니다' }));
   state.importResults = null;
@@ -1421,12 +1412,7 @@ $('#search').addEventListener('input', (e) => {
 
 // Esc: 미션 기록을 고치는 중이면 먼저 [취소], 그다음 Esc에 상세 정보를 닫는다.
 // 미션 입력 칸 안에서는 아무것도 안 고쳤을 때만 취소한다(적던 값을 실수로 날리지 않게). 다른 입력 칸에서는 아무것도 안 한다.
-// 로그인 기록 창이 열려 있으면(이때는 상세 정보가 닫혀 있다) Esc로 닫는다.
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && state.loginLog.open && !e.target.closest?.('input, textarea, select')) {
-    closeLoginLog({ focus: true });
-    return;
-  }
   if (e.key !== 'Escape' || state.selectedId === null) return;
   const inField = e.target.closest?.('input, textarea, select');
   const p = state.places.find((x) => x.id === state.selectedId);
@@ -1464,109 +1450,6 @@ window.addEventListener('drop', (e) => {
   if (e.dataTransfer.files.length > 0) startImport(e.dataTransfer.files);
 });
 
-// ── 로그인 기록 ─────────────────────────────────────────
-
-const LOGIN_LOG_LIMIT = 200;
-// 불러오는 사이 창을 닫았다가 다시 열었으면 앞 응답은 버린다.
-let loginLogSeq = 0;
-
-function loginLogRow(r) {
-  const who = r.loginId || emailToLoginId(r.email) || '-';
-  // 클래스 이름에 쓰므로 두 값으로만 좁힌다(.login은 로그인 화면 클래스라 그대로 쓰면 안 된다).
-  const event = r.event === 'logout' ? 'logout' : 'login';
-  return h(
-    'tr',
-    { 'data-event': event },
-    h('td', { class: 'log-time' }, h('time', { datetime: r.occurredAt || null }, formatLogTime(r.occurredAt))),
-    h('td', { class: 'log-who', title: who }, who),
-    h('td', { class: 'log-event' }, h('span', { class: `log-event-tag event-${event}` }, eventLabel(r.event))),
-    // 짧게 줄인 기기 이름 위에 마우스를 올리면 전체 user agent와 IP를 볼 수 있다.
-    h('td', { class: 'log-device', title: [r.userAgent, r.ip].filter(Boolean).join('\n') || null }, shortUserAgent(r.userAgent)),
-  );
-}
-
-function renderLoginLog() {
-  const box = $('#login-log-panel');
-  const log = state.loginLog;
-  $('#login-log-button').setAttribute('aria-expanded', String(log.open));
-  // 다시 그리면 버튼이 새로 만들어지므로, 창 안에 있던 초점을 같은 버튼으로 돌려놓는다.
-  const focused = box.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
-  box.hidden = !log.open;
-  if (!log.open) {
-    box.replaceChildren();
-    return;
-  }
-  const status = log.loading ? '불러오는 중…' : log.error ? log.error : log.rows.length === 0 ? '기록이 없습니다.' : `최근 ${log.rows.length}건`;
-  fill(
-    box,
-    h(
-      'div',
-      { class: 'import-head' },
-      h('h2', { id: 'login-log-title' }, '로그인 기록'),
-      h('button', { type: 'button', class: 'icon-btn', 'aria-label': '닫기', 'data-focus-key': 'close', onclick: () => closeLoginLog({ focus: true }) }, '×'),
-    ),
-    h('p', { class: log.error ? 'login-log-status error' : 'login-log-status', role: 'status' }, status),
-    log.error &&
-      h('div', { class: 'button-row' }, h('button', { type: 'button', class: 'btn', 'data-focus-key': 'retry', onclick: loadLoginLog }, '다시 불러오기')),
-    log.rows.length > 0 &&
-      h(
-        'table',
-        { class: 'login-log-table' },
-        h('caption', { class: 'sr-only' }, `로그인 기록 최근 ${log.rows.length}건, 최신순`),
-        h('thead', {}, h('tr', {}, ['시각', '아이디', '동작', '기기'].map((t) => h('th', { scope: 'col' }, t)))),
-        h('tbody', {}, log.rows.map(loginLogRow)),
-      ),
-  );
-  if (focused) refocus(`#login-log-panel [data-focus-key="${focused}"]`);
-}
-
-async function loadLoginLog() {
-  const seq = ++loginLogSeq;
-  const epoch = authEpoch;
-  state.loginLog = { ...state.loginLog, loading: true, error: null };
-  renderLoginLog();
-  let next;
-  try {
-    const rows = await api.listLoginLogs(LOGIN_LOG_LIMIT);
-    next = { open: true, loading: false, rows: Array.isArray(rows) ? rows : [], error: null };
-  } catch (err) {
-    // 세션이 끝났으면 로그인 화면으로 넘어가며 창도 닫힌다.
-    if (authFailed(err)) return;
-    next = { open: true, loading: false, rows: [], error: err.message };
-  }
-  if (seq !== loginLogSeq || epoch !== authEpoch || !state.loginLog.open) return;
-  state.loginLog = next;
-  renderLoginLog();
-}
-
-// 가져오기 창·상세 정보가 있던 자리(목록 위)에 연다. 가져오는 중이거나 적던 미션 기록을 버리지 않기로 했으면 열지 않는다.
-function openLoginLog() {
-  if (!signedIn()) return;
-  if (state.importing) {
-    toast('가져오는 중입니다. 끝난 뒤 다시 시도해 주세요.');
-    return;
-  }
-  if (!confirmDiscardDraft()) return;
-  state.importFiles = null;
-  state.importSkipped = [];
-  state.importResults = null;
-  renderImport();
-  if (state.selectedId !== null) select(null);
-  state.loginLog = { ...freshLoginLog(), open: true };
-  loadLoginLog();
-  $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-function closeLoginLog({ focus = false } = {}) {
-  if (!state.loginLog.open) return;
-  loginLogSeq++;
-  state.loginLog = freshLoginLog();
-  renderLoginLog();
-  if (focus) refocus('#login-log-button');
-}
-
-$('#login-log-button').addEventListener('click', () => (state.loginLog.open ? closeLoginLog() : openLoginLog()));
-
 // ── 처음 화면 ───────────────────────────────────────────
 
 // 제목을 누르면 처음 화면으로 돌아간다: 선택·검색·필터·가져오기 창을 모두 닫고 지도를 전체 장소에 맞춘다.
@@ -1584,7 +1467,6 @@ function goHome() {
   // 처음 화면은 시군을 모두 접은 상태다.
   collapseAllGroups();
   $('#search').value = '';
-  closeLoginLog();
   renderImport();
   render();
   fitToPlaces(state.places);
@@ -1701,13 +1583,10 @@ function leaveApp(notice) {
       importResults: null,
       importProgress: 0,
       importing: false,
-      loginLog: freshLoginLog(),
-    });
-    loginLogSeq++;
+        });
     collapseAllGroups();
     $('#search').value = '';
     showUserName();
-    renderLoginLog();
     renderImport();
     render();
   }
