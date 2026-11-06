@@ -349,4 +349,4 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 �
 - 미션: 미션명 펼치기, 미션별 기록, 기기 간 충돌 감지(`version`), 상태 색상 자동화, 시군별 접이식 목록.
 - 2026-11-06 전환: Express + SQLite 서버를 없애고 GitHub Pages(정적) + Supabase(Postgres·Auth·Realtime) 구조로 바꿈. 로그인 필수와 실시간 반영을 추가하고, CSV 읽기를 브라우저로 옮기고, API를 DB 함수 5개로 대체. GitHub Actions로 테스트 → 마이그레이션 → 배포를 자동화.
 - 2026-11-06 계정: 한글 아이디 로그인, 로그인 기록(DB에만), 관리자 전용 계정 관리(Edge Function `admin-users`, 관리자 표시는 `app_metadata.role`). 사이트 주소를 `https://sistech.dpdns.org`로 변경.
-- 2026-11-06 이름: 서비스 이름을 "SISTECH 관리 페이지(홈포인트 지도)"에서 **HOME POINT NAVI(홈포인트 네비)**로 변경. 화면 제목·로그인 화면·문서에 반영. 사이트 주소, 로그인 이메일 도메인(`sistech.local`), 저장소 이름 같은 내부 식별자는 그대로.
+- 2026-11-06 이름: 서비스 이름을 "SISTECH 관리 페이지(홈포인트 지도)"에서 **HOME POINT NAVI(홈포인트 네비)**로 변경. 브라우저 탭 제목은 "HOME POINT NAVI | 시스테크", 머리글과 로그인 카드의 제목 아래에 작게 "by SISTECH". 사이트 주소, 로그인 이메일 도메인(`sistech.local`), 저장소 이름 같은 내부 식별자는 그대로.

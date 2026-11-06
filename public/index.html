@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>HOME POINT NAVI</title>
+    <title>HOME POINT NAVI | 시스테크</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -14,6 +14,7 @@
     <main id="login" class="login" hidden>
       <form id="login-form" class="card login-card" novalidate>
         <h1>HOME POINT NAVI</h1>
+        <p class="brand-by">by SISTECH</p>
         <p class="hint">아이디와 비밀번호로 로그인해 주세요.</p>
         <label class="login-field">
           <span>아이디</span>
@@ -32,7 +33,10 @@
       <header class="topbar">
         <!-- 휴대폰에서는 <br>이 살아나 "HOME POINT / NAVI" 두 줄, 넓은 화면에서는 <br>이 숨어 한 줄(styles.css .topbar h1 br).
              <br> 뒤의 빈칸은 한 줄일 때 낱말 사이 띄어쓰기가 되고, 두 줄일 때는 줄 머리라 사라진다. -->
-        <h1><a id="home-link" href="./" title="처음 화면으로">HOME POINT<br /> NAVI</a></h1>
+        <div class="brand">
+          <h1><a id="home-link" href="./" title="처음 화면으로">HOME POINT<br /> NAVI</a></h1>
+          <p class="brand-by">by SISTECH</p>
+        </div>
         <div class="actions">
           <button type="button" class="btn primary" id="import-button">CSV 가져오기</button>
           <input id="csv-input" type="file" accept=".csv,.tsv,.txt,text/csv" multiple hidden />

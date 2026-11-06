@@ -68,6 +68,21 @@ p {
   display: none;
 }
 
+/* 제목 묶음(제목 + "by SISTECH"). 버튼 칸에 밀릴 때 안쪽 제목 폭 아래로는 줄지 않는다. */
+.brand {
+  min-width: 0;
+}
+
+/* 로고·제목 아래 작게 붙는 회사 표시. 머리글과 로그인 카드가 함께 쓴다. */
+.brand-by {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
 /* 제목은 처음 화면으로 돌아가는 링크. 글자색은 그대로 두고 눌렀을 때만 살짝 표시한다. */
 .topbar h1 a {
   color: inherit;
@@ -1121,8 +1136,13 @@ body.dragging .drop-overlay {
   word-break: keep-all;
 }
 
+/* 카드의 gap(14px)보다 바짝 붙인다: 제목 바로 아래 "by SISTECH", 그 아래 안내 문구 */
+.login-card .brand-by {
+  margin-top: -11px;
+}
+
 .login-card .hint {
-  margin-top: -8px;
+  margin-top: -6px;
 }
 
 .login-field {
