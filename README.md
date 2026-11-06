@@ -177,7 +177,7 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 
 ```
 테스트(npm ci, npm test)
-  └▶ DB 마이그레이션(supabase link → supabase db push)
+  └▶ DB 마이그레이션(supabase link → supabase db push --remote)
        └▶ 페이지 배포(build.mjs <커밋 해시 7자리> → dist 업로드 → Pages)
 ```
 
