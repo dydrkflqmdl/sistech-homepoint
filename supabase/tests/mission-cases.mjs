@@ -1,0 +1,47 @@
+// public/mission.js의 missionNames 결과를 JSON으로 뽑는다. SQL mission_names와 비교하는 기준값이다.
+const { missionNames } = await import(process.argv[2]);
+
+const inputs = [
+  null,
+  '',
+  '   ',
+  '단일미션',
+  'Q1_A_TA_SW__01_01 ~ _34',
+  'M_01 ~ 03',
+  'A1~A5',
+  'A9~10',
+  'A10~9',
+  'B001 ～ 012',
+  'C5 〜 7',
+  'X0~498',
+  'X0~499',
+  'X1~500',
+  'X1~501',
+  '  a01~03  ',
+  'a1 ~ b 2 c 3',
+  'a1~b2x',
+  'a1\n~3',
+  'a\n1~3',
+  'a1~\n3',
+  'a1~x\n3',
+  'a1~x 3',
+  '　a1~3　',
+  'a1 ~ 2',
+  '１~３',
+  'a1~2~3',
+  '1~3',
+  'a99~100',
+  'a007~9',
+  'a1 2~4',
+  'x~5',
+  '5~',
+  'a1\t~\t3',
+  'Q_﻿z1~3',
+  'a12345678901234~12345678901236',
+  '가나다_01-02 ~ _05',
+  '미션1~미션3 끝4',
+  'z00~0',
+  'r2~r1',
+];
+
+console.log(JSON.stringify(inputs.map((input) => ({ input, output: missionNames(input) }))));

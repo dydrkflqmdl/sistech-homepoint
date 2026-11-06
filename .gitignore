@@ -1,0 +1,8 @@
+node_modules/
+data/
+.env
+.DS_Store
+public/config.js
+dist/
+supabase/.temp/
+supabase/.branches/

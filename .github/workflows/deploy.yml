@@ -1,0 +1,87 @@
+# main 에 푸시하면 테스트 → DB 마이그레이션 → GitHub Pages 배포 순으로 실행한다.
+name: 배포
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 같은 배포가 겹치지 않게 하되, 진행 중인 배포는 끊지 않는다.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: 테스트
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v7
+      - name: Node 22 준비
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: 의존성 설치
+        run: npm ci
+      - name: 테스트 실행
+        run: npm test
+
+  migrate:
+    name: DB 마이그레이션
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v7
+      - name: Supabase CLI 설치
+        uses: supabase/setup-cli@v3
+        with:
+          version: latest
+      - name: Supabase 프로젝트 연결
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+      - name: 마이그레이션 적용
+        run: supabase db push
+
+  deploy:
+    name: 페이지 배포
+    needs: migrate
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      contents: read
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      KAKAO_JS_KEY: ${{ secrets.KAKAO_JS_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+    steps:
+      - name: 코드 내려받기
+        uses: actions/checkout@v7
+      - name: Node 22 준비
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: 정적 파일 빌드
+        run: node scripts/build.mjs "${GITHUB_SHA::7}"
+      - name: Pages 설정
+        uses: actions/configure-pages@v6
+      - name: 빌드 결과 업로드
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+      - name: Pages 배포
+        id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,17 @@
+{
+  "name": "sistech-homepoint",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SISTECH 관리 페이지: GitHub Pages 정적 프런트 + Supabase 백엔드",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env scripts/dev.mjs",
+    "dev": "node --env-file-if-exists=.env scripts/dev.mjs",
+    "build": "node --env-file-if-exists=.env scripts/build.mjs",
+    "test": "node --test",
+    "test:sql": "bash supabase/tests/run.sh"
+  }
+}

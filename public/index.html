@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>SISTECH 관리 페이지</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <!-- 설정이 없거나 불러오는 중일 때의 안내. 로그인 화면·앱이 뜨면 숨긴다. -->
+    <div id="boot-message" class="boot-message" role="status"><p>불러오는 중…</p></div>
+
+    <!-- 계정은 Supabase 대시보드에서 만든다. 여기에는 가입 화면이 없다. -->
+    <main id="login" class="login" hidden>
+      <form id="login-form" class="card login-card" novalidate>
+        <h1>SISTECH 관리 페이지</h1>
+        <p class="hint">관리자 계정으로 로그인해 주세요.</p>
+        <label class="login-field">
+          <span>이메일</span>
+          <input id="login-email" name="email" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" required aria-describedby="login-error" />
+        </label>
+        <label class="login-field">
+          <span>비밀번호</span>
+          <input id="login-password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-error" />
+        </label>
+        <p id="login-error" class="login-error" role="alert" hidden></p>
+        <button id="login-submit" type="submit" class="btn primary">로그인</button>
+      </form>
+    </main>
+
+    <div class="app" hidden>
+      <header class="topbar">
+        <h1><a id="home-link" href="./" title="처음 화면으로">SISTECH 관리 페이지</a></h1>
+        <div class="actions">
+          <button type="button" class="btn primary" id="import-button">CSV 가져오기</button>
+          <input id="csv-input" type="file" accept=".csv,.tsv,.txt,text/csv" multiple hidden />
+          <button type="button" class="btn" id="export-button">내보내기</button>
+          <div class="account">
+            <span id="user-email" class="user-email"></span>
+            <button type="button" class="btn" id="logout-button">로그아웃</button>
+          </div>
+        </div>
+      </header>
+
+      <main class="layout">
+        <aside class="panel">
+          <section id="import-panel" class="card" hidden></section>
+          <section id="detail" class="card detail" hidden></section>
+
+          <div class="filters">
+            <input id="search" class="search" type="search" aria-label="장소 검색" placeholder="이름·주소·전화번호·메모 검색" autocomplete="off" />
+            <div id="color-filters" class="chips" role="group" aria-label="진행 상태로 거르기"></div>
+          </div>
+
+          <p id="list-summary" class="summary"></p>
+          <ul id="place-list" class="list"></ul>
+
+          <div id="empty" class="card empty" hidden>
+            <h2>아직 저장한 장소가 없습니다</h2>
+            <p>CSV 파일을 가져오거나 이 화면에 끌어다 놓으세요. 첫 줄은 머리글이어야 하고, 아래 열을 읽습니다.</p>
+            <ul>
+              <li><b>필수</b> 이름, 위도, 경도</li>
+              <li><b>선택</b> 주소, 전화번호, 메모, 미션명, 시군</li>
+            </ul>
+            <pre>이름,시군,주소,위도,경도
+SW_01,태안,소원면 송현리 인근,36.766667,126.149826</pre>
+          </div>
+        </aside>
+
+        <!-- 카카오 지도는 #map 안을 통째로 쓰므로, 지도 종류 버튼은 바깥 칸(.map-area)에 겹쳐 둔다 -->
+        <div class="map-area">
+          <div id="map" class="map" aria-label="지도"></div>
+        </div>
+      </main>
+    </div>
+
+    <div class="drop-overlay" aria-hidden="true"><p>CSV 파일을 놓으면 가져옵니다</p></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <!-- config.js는 git에 없고 배포 스크립트가 만든다(window.APP_CONFIG). 모듈보다 먼저 읽어야 한다. -->
+    <script src="./config.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
