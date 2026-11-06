@@ -59,15 +59,16 @@ const hasHangul = (s) => /[가-힣]/.test(String(s ?? ''));
 function signInMessage(error) {
   const code = error.code ?? '';
   const message = String(error.message ?? '');
-  if (code === 'invalid_credentials' || /invalid login credentials/i.test(message)) return '이메일 또는 비밀번호가 틀렸습니다.';
-  if (code === 'email_not_confirmed') return '이메일 인증이 끝나지 않은 계정입니다. 관리자에게 문의해 주세요.';
+  if (code === 'invalid_credentials' || /invalid login credentials/i.test(message)) return '아이디 또는 비밀번호가 틀렸습니다.';
+  if (code === 'email_not_confirmed') return '인증이 끝나지 않은 계정입니다. 관리자에게 문의해 주세요.';
   if (code === 'user_banned') return '사용이 막힌 계정입니다. 관리자에게 문의해 주세요.';
   if (error.status === 429 || /rate limit/i.test(code)) return '로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요.';
   if (error.name === 'AuthRetryableFetchError' || !error.status) return NETWORK_MESSAGE;
   return '로그인하지 못했습니다. 잠시 후 다시 시도해 주세요.';
 }
 
-// 이메일+비밀번호로 로그인한다. 실패하면 한국어 문구를 담은 Error를 던진다. 가입은 대시보드에서만 한다.
+// Supabase 이메일+비밀번호로 로그인한다. 화면의 아이디는 app.js가 loginIdToEmail로 이메일로 바꿔서 넘긴다.
+// 실패하면 한국어 문구를 담은 Error를 던진다. 계정은 관리자가 만든다(가입 화면 없음).
 export async function signIn(email, password) {
   let result;
   try {
@@ -98,7 +99,9 @@ const AUTH_MESSAGES = {
 
 // RPC 하나를 부른다. 실패하면 { status, code, auth } 를 단 Error를 던진다.
 // DB 함수가 던진 검증 오류는 문구가 한국어라 그대로 쓰고, 영어로 오는 라이브러리 문구는 내보내지 않는다.
-async function call(name, params) {
+// signOutOn: 이 종류의 인증 실패('expired'·'forbidden')면 세션을 지우고 로그인 화면으로 보낸다(err.auth도 이때만 단다).
+// 기록용 RPC처럼 실패해도 화면을 그대로 둬야 하는 호출은 빈 배열을 넘긴다.
+async function call(name, params, { signOutOn = ['expired', 'forbidden'] } = {}) {
   let res;
   try {
     res = await client.rpc(name, params);
@@ -109,10 +112,12 @@ async function call(name, params) {
 
   const { status = 0 } = res;
   const code = res.error.code ?? '';
-  const auth = authKind(status, code);
+  const kind = authKind(status, code);
+  const auth = kind && signOutOn.includes(kind) ? kind : null;
   let message;
   if (auth) message = AUTH_MESSAGES[auth];
   else if (hasHangul(res.error.message)) message = res.error.message;
+  else if (kind) message = AUTH_MESSAGES[kind];
   else if (!status) message = NETWORK_MESSAGE;
   else message = `서버 오류가 발생했습니다.${code ? ` (${code})` : ''}`;
 
@@ -144,6 +149,33 @@ export const updateMemo = (placeId, memo) => call('update_memo', { p_place_id: p
 
 // 장소 삭제 → 지웠으면 true, 이미 없으면 false.
 export const deletePlace = async (placeId) => Boolean(await call('delete_place', { p_place_id: placeId }));
+
+// ── 로그인 기록 ─────────────────────────────────────────
+
+// 기록 RPC는 화면 전환·로그아웃을 막지 않도록 이 시간까지만 기다린다.
+const LOG_TIMEOUT_MS = 2000;
+
+// 기록 RPC를 부르되 절대 던지지 않는다. 결과({ logged }) 또는 실패·시간 초과면 null.
+// 세션이 막 끝났더라도 기록 실패 때문에 로그아웃시키지 않는다(signOutOn: []).
+function callLog(name, params) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(null), LOG_TIMEOUT_MS);
+  });
+  const request = call(name, params, { signOutOn: [] }).catch(() => null);
+  return Promise.race([request, timeout]).finally(() => clearTimeout(timer));
+}
+
+// 로그인 성공 직후 한 번. 서버 트리거가 이미 기록했으면 { logged: false }가 온다(정상).
+export const logLogin = (userAgent) => callLog('log_login', { p_user_agent: String(userAgent ?? '') });
+
+// 로그아웃 버튼을 눌렀을 때 signOut 전에 한 번. 세션 만료로 내보낼 때는 부르지 않는다.
+export const logLogout = () => callLog('log_logout');
+
+// 최신순 로그인 기록 → [{ id, userId, email, loginId, event: 'login'|'logout', userAgent, ip, occurredAt }]
+// 세션 만료면 로그인 화면으로 보내지만, 권한이 없을 때는 기록 창에 문구만 보여 주도록 로그아웃시키지 않는다.
+export const listLoginLogs = async (limit = 200) =>
+  (await call('list_login_logs', { p_limit: limit }, { signOutOn: ['expired'] })) ?? [];
 
 // ── 실시간 ──────────────────────────────────────────────
 

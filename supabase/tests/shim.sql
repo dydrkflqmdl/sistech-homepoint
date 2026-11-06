@@ -11,6 +11,29 @@ end $$;
 create schema auth;
 create function auth.uid() returns uuid language sql stable
 as $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+
+-- Supabase Auth(GoTrue) 흉내. 실제 auth 테이블은 GoTrue가 쓰는 롤 supabase_auth_admin이 소유한다.
+-- 롤은 클러스터 전체에 남으므로 이미 있으면 다시 만들지 않는다.
+do $$ begin
+  if not exists (select from pg_roles where rolname = 'supabase_auth_admin') then create role supabase_auth_admin nologin; end if;
+end $$;
+grant usage on schema auth to supabase_auth_admin;
+create table auth.users (
+  id                 uuid primary key,
+  email              text,
+  raw_user_meta_data jsonb default '{}',
+  created_at         timestamptz default now()
+);
+create table auth.sessions (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid references auth.users,
+  user_agent text,
+  ip         text,
+  created_at timestamptz default now()
+);
+alter table auth.users owner to supabase_auth_admin;
+alter table auth.sessions owner to supabase_auth_admin;
+grant all on auth.users, auth.sessions to postgres;
 create publication supabase_realtime;
 revoke all on schema public from public;
 grant usage on schema public to anon;

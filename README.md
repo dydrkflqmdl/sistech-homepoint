@@ -16,7 +16,7 @@ main 브랜치에 푸시 ──▶ GitHub Actions ──▶ 테스트 → DB 마
 
 ## 사용 흐름
 
-1. 로그인: 주소로 들어가면 이메일·비밀번호 로그인 화면이 나옵니다. 계정은 관리자가 미리 만들어 준 것만 쓸 수 있습니다.
+1. 로그인: 주소로 들어가면 아이디·비밀번호 로그인 화면이 나옵니다. 아이디는 한글(예: 손두병)입니다. 계정은 관리자가 미리 만들어 준 것만 쓸 수 있습니다.
 2. CSV 가져오기: 상단 "CSV 가져오기" 버튼을 누르거나 화면에 파일을 끌어다 놓습니다.
 3. 확인: 지도에 핀이 찍히고, 아래(PC는 왼쪽) 목록에 CSV 순서대로 표시됩니다.
 4. 선택: 목록이나 핀을 누르면 상세 정보가 열리고 지도가 그 위치로 이동합니다.
@@ -26,6 +26,8 @@ main 브랜치에 푸시 ──▶ GitHub Actions ──▶ 테스트 → DB 마
 ## 기능
 
 - 로그인 / 로그아웃: 로그인한 사용자만 장소를 보고 고칠 수 있습니다. 로그인 상태는 브라우저에 유지되고, 로그아웃은 이 기기에서만 적용됩니다. 로그인이 만료되거나 권한이 없으면 안내 문구와 함께 로그인 화면으로 돌아갑니다.
+- 한글 아이디 로그인: 이메일 대신 `손두병`처럼 한글·영문·숫자·밑줄 1~16자 아이디로 로그인합니다. 내부적으로는 아이디를 가짜 이메일 주소로 바꿔 Supabase Auth에 넘깁니다.
+- 로그인 기록 화면: 누가 언제 로그인·로그아웃했는지(아이디, 시각, 기기, IP)를 화면에서 볼 수 있습니다.
 - 실시간 반영: 다른 기기에서 장소나 미션 기록을 바꾸면 새로고침 없이 화면에 반영됩니다(Supabase Realtime). 탭으로 돌아올 때도(마지막 조회 후 5초가 지났으면) 목록을 한 번 더 새로 받아 놓친 변경을 메웁니다.
 - CSV 가져오기: EUC-KR(엑셀 저장)과 UTF-8 모두 읽습니다. 파일은 브라우저에서 읽고, 장소 목록만 DB로 보냅니다. 같은 이름·같은 좌표의 장소는 중복 저장하지 않고, 잘못된 행은 몇 번째 줄이 왜 빠졌는지 보여 줍니다. 파일 크기는 10MB까지입니다.
   - 여러 파일을 한 번에 선택하거나 끌어다 놓을 수 있습니다. 고른 순서대로 하나씩 가져오고, 파일별 결과와 합계를 보여 줍니다. 한 파일이 잘못돼도 나머지는 계속 가져옵니다.
@@ -54,7 +56,7 @@ main 브랜치에 푸시 ──▶ GitHub Actions ──▶ 테스트 → DB 마
 | 화면 | 프레임워크 없는 HTML·CSS·JavaScript(ES 모듈). 정적 파일이라 GitHub Pages에서 그대로 서비스합니다. |
 | 호스팅 | GitHub Pages. 배포 때 `scripts/build.mjs`가 `dist/`를 만듭니다. |
 | 데이터 | Supabase Postgres. 화면은 `supabase-js`로 RPC 함수를 부릅니다. |
-| 로그인 | Supabase Auth 이메일·비밀번호. 가입 화면은 없고 관리자가 계정을 만듭니다. |
+| 로그인 | Supabase Auth 이메일·비밀번호. 화면에서는 한글 아이디를 받아 가짜 이메일 주소(`xn--….@sistech.local`)로 바꿔 씁니다. 가입 화면은 없고 관리자가 계정을 만듭니다. |
 | 실시간 | Supabase Realtime(`places`, `missions` 표의 변경을 구독) |
 | 지도 | 카카오맵 JavaScript SDK(일반·위성·하이브리드·지적편집도). developers.kakao.com에서 무료 JavaScript 키를 받습니다. |
 | 길안내 | 카카오맵 URL(별도 키 불필요) |
@@ -79,6 +81,8 @@ scripts/
   dev.mjs                로컬 개발 서버(config.js 생성 + public/ 서빙)
   build.mjs              배포용 빌드(public/ → dist/, config.js 생성, 캐시 스탬프)
   write-config.mjs       환경변수 → config.js 생성기
+  create-users.mjs       한글 아이디 계정 일괄 생성(Supabase Admin API)
+  login-email.mjs        아이디 → 로그인 이메일 변환 출력
 supabase/
   config.toml            Supabase 프로젝트 설정
   migrations/            DB 구조 변경 이력(테이블, 권한, 함수)
@@ -137,7 +141,17 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수) 검�
    - "Enable automatic RLS": 켬
    - 프로젝트를 만들 때 정하는 데이터베이스 비밀번호는 따로 적어 두세요(배포 Secrets에 씁니다).
 2. Authentication → Sign In / Providers → Email에서 가입 허용(Allow new users to sign up)을 끕니다. 가입 화면이 없으니 외부 사람이 계정을 만들 수 없게 하는 설정입니다.
-3. Authentication → Users에서 "Add user"로 사용할 계정을 직접 만듭니다(이메일·비밀번호, 이메일 인증 없이 바로 쓰도록 자동 확인 체크).
+3. 사용할 계정을 만듭니다. 아래 두 방법 중 하나를 고르세요.
+   - 권장, 스크립트로 한꺼번에: Project Settings → API에서 service_role 키를 복사해 `.env`의 `SUPABASE_SERVICE_ROLE_KEY`에 넣고(`SUPABASE_URL`도 채워져 있어야 합니다) 실행합니다. 이미 있는 아이디는 "이미 있음"으로 건너뛰고, 기존 계정의 비밀번호를 바꾸려면 `--reset-password`를 붙입니다.
+
+     ```bash
+     npm run users -- --password <비밀번호> 손두병 황병용 오성민
+     ```
+
+   - 대안, 대시보드에서 손으로: `npm run login-email -- 손두병`으로 변환된 이메일 주소를 뽑아, Authentication → Users → "Add user"에 그 주소와 비밀번호를 입력합니다. 이메일 인증 없이 바로 쓰도록 Auto Confirm User를 체크하세요.
+   - 아이디 규칙: 한글·영문·숫자·밑줄 1~16자. 같은 아이디는 언제나 같은 주소가 되므로 로그인 화면에 아이디만 적으면 됩니다.
+   - 비밀번호 최소 길이는 Supabase 설정(Authentication → Sign In / Providers → Email의 최소 길이, 기본 6자)을 따릅니다.
+   - 주소는 가짜(`@sistech.local`)라 메일이 가지 않습니다. 그래서 비밀번호 찾기 메일은 쓸 수 없고, 비밀번호를 잊으면 관리자가 `npm run users -- --password <새 비밀번호> --reset-password 아이디`로 바꾸거나 대시보드 Users에서 직접 바꿉니다.
 4. 아래 값을 확인해 둡니다.
 
 | 값 | 위치 | 쓰는 곳 |
@@ -148,7 +162,7 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수) 검�
 | Access Token | 계정 메뉴 → Account Settings → Access Tokens에서 새로 발급 | `SUPABASE_ACCESS_TOKEN` |
 | 데이터베이스 비밀번호 | 프로젝트 만들 때 정한 값. 잊었으면 Project Settings → Database에서 재설정 | `SUPABASE_DB_PASSWORD` |
 
-> 경고: service_role 키와 secret 키는 어디에도 넣지 마세요. `.env`, GitHub Secrets, 코드, 채팅 어디에도 필요하지 않습니다. 이 키는 RLS를 건너뛰는 관리자 키라 화면에 한 번이라도 들어가면 누구나 모든 데이터를 지울 수 있습니다. 화면에는 anon(공개) 키만 씁니다.
+> 경고: service_role 키와 secret 키는 계정 생성 스크립트(`npm run users`)를 돌릴 때 로컬 `.env`에만 넣습니다. GitHub Secrets, `config.js`, 코드, 채팅에는 절대 넣지 마세요. 이 키는 RLS를 건너뛰는 관리자 키라 화면에 한 번이라도 들어가면 누구나 모든 데이터를 지울 수 있습니다. 화면에는 anon(공개) 키만 씁니다. 계정을 다 만들었으면 `.env`에서 지워도 됩니다.
 
 ## 배포 (GitHub Actions)
 
@@ -190,12 +204,14 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 
 ## DB 구조
 
-테이블은 2개입니다. 둘 다 행 수준 보안(RLS)이 켜져 있고, 로그인한 사용자(`authenticated`)만 읽고 쓸 수 있습니다. 로그인하지 않은 사용자(`anon`)의 권한은 모두 거두었습니다.
+테이블은 3개입니다. 모두 행 수준 보안(RLS)이 켜져 있고, 로그인한 사용자(`authenticated`)만 읽고 쓸 수 있습니다. 로그인하지 않은 사용자(`anon`)의 권한은 모두 거두었습니다.
 
 | 표 | 내용 |
 | --- | --- |
 | `places` | 장소. 이름, 시군, 주소, 전화번호, 메모, 미션명, 위도, 경도. 같은 이름·같은 좌표는 한 번만 저장합니다(유일 제약). 글 칸은 각각 길이 제한이 있고 메모는 2000자까지입니다. 색 칸은 없습니다. |
 | `missions` | 미션별 진행 기록. 완료 여부, 이름, 비행시간, 배터리 번호, 배터리 남은 용량(0~100), 저장 횟수(`version`). 장소와 미션명 조합당 한 줄이고, 처음 손댈 때 만들어지며, 장소를 지우면 함께 지워집니다. 완료로 저장하려면 네 칸이 모두 채워져야 하는 규칙이 표 제약으로도 걸려 있습니다. |
+
+| `login_logs` | 로그인·로그아웃 기록. 로그인·로그아웃 시각, 아이디, 기기, IP. Supabase 세션 생성 트리거와 화면의 함수 호출로 이중 기록하고, 15초 안의 중복은 하나로 합칩니다. |
 
 화면은 표를 직접 만지지 않고 아래 함수(RPC)를 부릅니다. 함수는 모두 호출한 사용자의 권한으로 실행됩니다(`security invoker`). 그래서 RLS가 그대로 적용되고, 로그인하지 않으면 실행할 수 없습니다.
 
@@ -206,6 +222,9 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 | `save_mission(place_id, mission, fields, base_version)` | 장소 번호, 미션명, 바꿀 칸 `{ done, worker, flightTime, batteryNo, batteryLeft }` 중 일부, 화면이 마지막으로 본 `version`(기록이 없었으면 null) | `{ status: "ok", record }` 또는 `{ status: "conflict", record }` | 기록이 없으면 새로 만들고(version 1) 있으면 들어온 칸만 바꾸며 version을 1 올립니다. 검사 순서는 장소 없음, 없는 미션, 형식, 버전 충돌, 남은 용량·완료 조건입니다. |
 | `update_memo(place_id, memo)` | 장소 번호, 메모 | 바뀐 장소 1건(`list_places` 원소와 같은 모양) | 메모는 문자열이어야 하고 2000자로 자릅니다. 장소가 없으면 오류. |
 | `delete_place(place_id)` | 장소 번호 | 지웠으면 true | 미션 기록도 함께 지워집니다. |
+| `log_login(p_user_agent)` | 기기 정보 문자열(비우면 요청 헤더의 User-Agent) | `{ logged }` | 로그인 직후 화면이 부릅니다. 현재 사용자의 로그인 기록을 남기고, 세션 트리거가 15초 안에 이미 남겼으면 `logged: false`로 건너뜁니다. IP는 요청 헤더에서 채웁니다. |
+| `log_logout()` | 없음 | `{ logged }` | 로그아웃 직전 화면이 부릅니다. 로그아웃 기록을 남기고 2초 안 중복은 건너뜁니다. |
+| `list_login_logs(p_limit)` | 최대 개수(기본 200, 1~1000) | 로그인 기록 배열(최근순) | 로그인 기록 화면에서 씁니다. 각 원소는 `id, userId, email, loginId, event, userAgent, ip, occurredAt`입니다. |
 
 오류 규칙
 
@@ -271,11 +290,11 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 �
 ## 보안 구조
 
 - 공개되어도 되는 값: `SUPABASE_ANON_KEY`(anon 키)와 `KAKAO_JS_KEY`는 브라우저에 내려가는 공개용 키입니다. `config.js`로 화면에 들어가므로 누구나 볼 수 있다고 전제합니다.
-  - anon 키로는 데이터를 못 봅니다. 두 표의 권한은 로그인한 사용자에게만 열려 있고 RLS가 켜져 있어서, 로그인하지 않은 요청은 거절됩니다. 함수 실행 권한도 로그인한 사용자에게만 있습니다.
+  - anon 키로는 데이터를 못 봅니다. 표의 권한은 로그인한 사용자에게만 열려 있고 RLS가 켜져 있어서, 로그인하지 않은 요청은 거절됩니다. 함수 실행 권한도 로그인한 사용자에게만 있습니다.
   - 카카오 JavaScript 키는 콘솔에 등록한 도메인에서만 동작하도록 제한됩니다.
 - 로그인 필수: 가입 기능을 꺼 두었고 계정은 관리자가 직접 만듭니다. 계정이 있는 사람은 모든 장소를 보고 고치고 지울 수 있습니다(사용자별 권한 구분은 없습니다).
 - 진짜 비밀: `SUPABASE_ACCESS_TOKEN`과 `SUPABASE_DB_PASSWORD`는 GitHub Actions 안의 마이그레이션 단계에서만 쓰입니다. 화면 파일(`dist/`)에는 들어가지 않고, 깃에도 올리지 않습니다.
-- service_role / secret 키는 이 프로젝트 어디에도 쓰지 않습니다.
+- service_role 키는 내 컴퓨터의 `.env`에서 계정 생성 스크립트로만 씁니다(`.env`는 깃 제외). 화면 파일, `config.js`, GitHub Secrets, 배포 과정에는 들어가지 않으며 스크립트도 키를 출력하지 않습니다.
 - 로그인이 만료되거나 권한 오류가 나면 화면이 로그인 화면으로 돌아가 이전 데이터를 지웁니다.
 
 ## 운영 주의

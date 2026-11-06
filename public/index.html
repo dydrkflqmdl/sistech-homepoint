@@ -14,10 +14,10 @@
     <main id="login" class="login" hidden>
       <form id="login-form" class="card login-card" novalidate>
         <h1>SISTECH 관리 페이지</h1>
-        <p class="hint">관리자 계정으로 로그인해 주세요.</p>
+        <p class="hint">아이디와 비밀번호로 로그인해 주세요.</p>
         <label class="login-field">
-          <span>이메일</span>
-          <input id="login-email" name="email" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" required aria-describedby="login-error" />
+          <span>아이디</span>
+          <input id="login-id" name="username" type="text" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="예: 홍길동" required aria-describedby="login-error" />
         </label>
         <label class="login-field">
           <span>비밀번호</span>
@@ -36,7 +36,8 @@
           <input id="csv-input" type="file" accept=".csv,.tsv,.txt,text/csv" multiple hidden />
           <button type="button" class="btn" id="export-button">내보내기</button>
           <div class="account">
-            <span id="user-email" class="user-email"></span>
+            <span id="user-name" class="user-name"></span>
+            <button type="button" class="btn" id="login-log-button" aria-expanded="false" aria-controls="login-log-panel">로그인 기록</button>
             <button type="button" class="btn" id="logout-button">로그아웃</button>
           </div>
         </div>
@@ -44,6 +45,7 @@
 
       <main class="layout">
         <aside class="panel">
+          <section id="login-log-panel" class="card login-log" aria-labelledby="login-log-title" hidden></section>
           <section id="import-panel" class="card" hidden></section>
           <section id="detail" class="card detail" hidden></section>
 

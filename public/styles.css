@@ -51,6 +51,8 @@ p {
   padding: max(10px, env(safe-area-inset-top)) 16px 10px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
+  /* .app 격자 칸이 머리글 내용 폭만큼 늘어나 휴대폰에서 화면 밖으로 밀리지 않게 한다(.actions의 min-width: 0과 함께). */
+  min-width: 0;
 }
 
 .topbar h1 {
@@ -1154,11 +1156,13 @@ body.dragging .drop-overlay {
   height: 42px;
 }
 
-/* 머리글 오른쪽: 가져오기·내보내기와 계정(이메일·로그아웃). 좁은 화면에서는 줄을 바꿔 아래로 내려간다. */
+/* 머리글 오른쪽: 가져오기·내보내기와 계정(아이디·로그인 기록·로그아웃). 좁은 화면에서는 줄을 바꿔 아래로 내려간다. */
 .actions {
   flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
+  /* 계정 줄(아이디·로그인 기록·로그아웃)이 휴대폰 폭보다 길면 머리글이 화면 밖으로 밀려난다. 아이디 칸이 줄어들게 둔다. */
+  min-width: 0;
 }
 
 .account {
@@ -1168,7 +1172,7 @@ body.dragging .drop-overlay {
   min-width: 0;
 }
 
-.user-email {
+.user-name {
   max-width: 200px;
   overflow: hidden;
   color: var(--muted);
@@ -1177,9 +1181,87 @@ body.dragging .drop-overlay {
   white-space: nowrap;
 }
 
-/* 휴대폰: 긴 이메일이 제목을 세 줄로 밀어내지 않게 더 짧게 자른다(전체 주소는 툴팁) */
+/* 휴대폰: 긴 아이디(이메일 계정이면 주소)가 제목을 세 줄로 밀어내지 않게 더 짧게 자른다(전체는 툴팁) */
 @media (max-width: 767px) {
-  .user-email {
+  .user-name {
     max-width: 110px;
   }
+}
+
+/* 로그인 기록: 목록 위(가져오기 창 자리)에 뜨는 표. 휴대폰 폭에서도 가로로 넘치지 않게 칸 너비를 고정하고 긴 글자는 줄바꿈·생략한다. */
+.login-log-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.login-log-status.error {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.login-log-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.login-log-table th,
+.login-log-table td {
+  padding: 7px 4px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.login-log-table th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.login-log-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* 칸 너비: 시각 · 아이디 · 동작 · 기기 */
+.login-log-table th:nth-child(1) {
+  width: 30%;
+}
+.login-log-table th:nth-child(2) {
+  width: 22%;
+}
+.login-log-table th:nth-child(3) {
+  width: 20%;
+}
+
+/* 시각은 좁으면 날짜와 시:분 사이에서만 줄을 바꾼다 */
+.log-time {
+  font-variant-numeric: tabular-nums;
+  word-break: keep-all;
+}
+
+.log-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log-device {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.log-event-tag {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--bg);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.log-event-tag.event-logout {
+  color: var(--muted);
 }

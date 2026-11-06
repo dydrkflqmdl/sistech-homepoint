@@ -2,7 +2,12 @@ import { PALETTE, colorLabel, progressColor } from './palette.js';
 import { kakaoMapViewUrl, openKakaoMapRoute } from './kakao.js';
 import { missionNames, missionProgress } from './mission.js';
 import { CsvFormatError, readPlaces, toCsv } from './csv.js';
+import { LOGIN_ID_RULE, emailToLoginId, loginIdToEmail } from './login-id.js';
+import { eventLabel, formatLogTime, shortUserAgent } from './login-log.js';
 import * as api from './api.js';
+
+// 로그인 기록 창의 처음 상태(닫힘). 열 때마다 새로 불러온다.
+const freshLoginLog = () => ({ open: false, loading: false, rows: [], error: null });
 
 const state = {
   places: [],
@@ -27,6 +32,8 @@ const state = {
   openGroups: new Set(),
   // 저절로 펼쳐진 묶음(고른 장소·검색)을 사람이 접은 것. 검색어·거르기·선택이 바뀌면 잊는다.
   closedGroups: new Set(),
+  // 로그인 기록 창. 가져오기 창·상세 정보와 동시에 열지 않는다.
+  loginLog: freshLoginLog(),
 };
 
 // config.js가 window.APP_CONFIG에 넣어 둔 설정(카카오 키·Supabase 주소와 공개 키).
@@ -34,7 +41,7 @@ const config = api.readConfig();
 
 // 로그인할 때마다 하나씩 올린다. 응답을 기다리는 사이 로그아웃·다른 계정 로그인이 있었으면 그 응답은 버린다.
 let authEpoch = 0;
-let currentUser = null; // { id, email }
+let currentUser = null; // { id, email, name } — name은 머리글에 보여 줄 아이디
 let unsubscribeChanges = null;
 let mapStarted = false;
 let loggingOut = false;
@@ -971,6 +978,8 @@ function render() {
 // ── 동작 ────────────────────────────────────────────────
 
 function select(id, { pan = false } = {}) {
+  // 장소를 고르면 상세 정보가 그 자리에 열리므로 로그인 기록 창은 닫는다.
+  if (id !== null) closeLoginLog();
   if (id !== state.selectedId) {
     state.selectedMission = null;
     state.missionDraft = null;
@@ -1228,6 +1237,7 @@ function startImport(fileList) {
     state.missionDraft = null;
     render();
   }
+  closeLoginLog();
   state.importFiles = files;
   state.importSkipped = all.filter((f) => !isCsvFile(f)).map((f) => ({ name: f.name, reason: 'CSV 파일이 아닙니다' }));
   state.importResults = null;
@@ -1411,7 +1421,12 @@ $('#search').addEventListener('input', (e) => {
 
 // Esc: 미션 기록을 고치는 중이면 먼저 [취소], 그다음 Esc에 상세 정보를 닫는다.
 // 미션 입력 칸 안에서는 아무것도 안 고쳤을 때만 취소한다(적던 값을 실수로 날리지 않게). 다른 입력 칸에서는 아무것도 안 한다.
+// 로그인 기록 창이 열려 있으면(이때는 상세 정보가 닫혀 있다) Esc로 닫는다.
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.loginLog.open && !e.target.closest?.('input, textarea, select')) {
+    closeLoginLog({ focus: true });
+    return;
+  }
   if (e.key !== 'Escape' || state.selectedId === null) return;
   const inField = e.target.closest?.('input, textarea, select');
   const p = state.places.find((x) => x.id === state.selectedId);
@@ -1449,6 +1464,109 @@ window.addEventListener('drop', (e) => {
   if (e.dataTransfer.files.length > 0) startImport(e.dataTransfer.files);
 });
 
+// ── 로그인 기록 ─────────────────────────────────────────
+
+const LOGIN_LOG_LIMIT = 200;
+// 불러오는 사이 창을 닫았다가 다시 열었으면 앞 응답은 버린다.
+let loginLogSeq = 0;
+
+function loginLogRow(r) {
+  const who = r.loginId || emailToLoginId(r.email) || '-';
+  // 클래스 이름에 쓰므로 두 값으로만 좁힌다(.login은 로그인 화면 클래스라 그대로 쓰면 안 된다).
+  const event = r.event === 'logout' ? 'logout' : 'login';
+  return h(
+    'tr',
+    { 'data-event': event },
+    h('td', { class: 'log-time' }, h('time', { datetime: r.occurredAt || null }, formatLogTime(r.occurredAt))),
+    h('td', { class: 'log-who', title: who }, who),
+    h('td', { class: 'log-event' }, h('span', { class: `log-event-tag event-${event}` }, eventLabel(r.event))),
+    // 짧게 줄인 기기 이름 위에 마우스를 올리면 전체 user agent와 IP를 볼 수 있다.
+    h('td', { class: 'log-device', title: [r.userAgent, r.ip].filter(Boolean).join('\n') || null }, shortUserAgent(r.userAgent)),
+  );
+}
+
+function renderLoginLog() {
+  const box = $('#login-log-panel');
+  const log = state.loginLog;
+  $('#login-log-button').setAttribute('aria-expanded', String(log.open));
+  // 다시 그리면 버튼이 새로 만들어지므로, 창 안에 있던 초점을 같은 버튼으로 돌려놓는다.
+  const focused = box.contains(document.activeElement) ? document.activeElement.dataset.focusKey : null;
+  box.hidden = !log.open;
+  if (!log.open) {
+    box.replaceChildren();
+    return;
+  }
+  const status = log.loading ? '불러오는 중…' : log.error ? log.error : log.rows.length === 0 ? '기록이 없습니다.' : `최근 ${log.rows.length}건`;
+  fill(
+    box,
+    h(
+      'div',
+      { class: 'import-head' },
+      h('h2', { id: 'login-log-title' }, '로그인 기록'),
+      h('button', { type: 'button', class: 'icon-btn', 'aria-label': '닫기', 'data-focus-key': 'close', onclick: () => closeLoginLog({ focus: true }) }, '×'),
+    ),
+    h('p', { class: log.error ? 'login-log-status error' : 'login-log-status', role: 'status' }, status),
+    log.error &&
+      h('div', { class: 'button-row' }, h('button', { type: 'button', class: 'btn', 'data-focus-key': 'retry', onclick: loadLoginLog }, '다시 불러오기')),
+    log.rows.length > 0 &&
+      h(
+        'table',
+        { class: 'login-log-table' },
+        h('caption', { class: 'sr-only' }, `로그인 기록 최근 ${log.rows.length}건, 최신순`),
+        h('thead', {}, h('tr', {}, ['시각', '아이디', '동작', '기기'].map((t) => h('th', { scope: 'col' }, t)))),
+        h('tbody', {}, log.rows.map(loginLogRow)),
+      ),
+  );
+  if (focused) refocus(`#login-log-panel [data-focus-key="${focused}"]`);
+}
+
+async function loadLoginLog() {
+  const seq = ++loginLogSeq;
+  const epoch = authEpoch;
+  state.loginLog = { ...state.loginLog, loading: true, error: null };
+  renderLoginLog();
+  let next;
+  try {
+    const rows = await api.listLoginLogs(LOGIN_LOG_LIMIT);
+    next = { open: true, loading: false, rows: Array.isArray(rows) ? rows : [], error: null };
+  } catch (err) {
+    // 세션이 끝났으면 로그인 화면으로 넘어가며 창도 닫힌다.
+    if (authFailed(err)) return;
+    next = { open: true, loading: false, rows: [], error: err.message };
+  }
+  if (seq !== loginLogSeq || epoch !== authEpoch || !state.loginLog.open) return;
+  state.loginLog = next;
+  renderLoginLog();
+}
+
+// 가져오기 창·상세 정보가 있던 자리(목록 위)에 연다. 가져오는 중이거나 적던 미션 기록을 버리지 않기로 했으면 열지 않는다.
+function openLoginLog() {
+  if (!signedIn()) return;
+  if (state.importing) {
+    toast('가져오는 중입니다. 끝난 뒤 다시 시도해 주세요.');
+    return;
+  }
+  if (!confirmDiscardDraft()) return;
+  state.importFiles = null;
+  state.importSkipped = [];
+  state.importResults = null;
+  renderImport();
+  if (state.selectedId !== null) select(null);
+  state.loginLog = { ...freshLoginLog(), open: true };
+  loadLoginLog();
+  $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function closeLoginLog({ focus = false } = {}) {
+  if (!state.loginLog.open) return;
+  loginLogSeq++;
+  state.loginLog = freshLoginLog();
+  renderLoginLog();
+  if (focus) refocus('#login-log-button');
+}
+
+$('#login-log-button').addEventListener('click', () => (state.loginLog.open ? closeLoginLog() : openLoginLog()));
+
 // ── 처음 화면 ───────────────────────────────────────────
 
 // 제목을 누르면 처음 화면으로 돌아간다: 선택·검색·필터·가져오기 창을 모두 닫고 지도를 전체 장소에 맞춘다.
@@ -1466,6 +1584,7 @@ function goHome() {
   // 처음 화면은 시군을 모두 접은 상태다.
   collapseAllGroups();
   $('#search').value = '';
+  closeLoginLog();
   renderImport();
   render();
   fitToPlaces(state.places);
@@ -1499,7 +1618,7 @@ function setLoginError(message, invalidField = null) {
   const el = $('#login-error');
   el.textContent = message ?? '';
   el.hidden = !message;
-  for (const name of ['email', 'password']) {
+  for (const name of ['id', 'password']) {
     const input = $(`#login-${name}`);
     if (invalidField === name) input.setAttribute('aria-invalid', 'true');
     else input.removeAttribute('aria-invalid');
@@ -1513,20 +1632,29 @@ function authFailed(err) {
   return true;
 }
 
+// 머리글에 보여 줄 아이디. 계정 생성 스크립트가 user_metadata.login_id에 넣어 둔 한글 아이디를 먼저 쓰고,
+// 없으면(대시보드에서 만든 계정 등) 이메일에서 되살린다.
+const displayName = (user) => String(user.user_metadata?.login_id ?? '').trim() || emailToLoginId(user.email ?? '');
+
+function showUserName() {
+  const el = $('#user-name');
+  el.textContent = currentUser?.name ?? '';
+  el.title = currentUser?.name ?? '';
+}
+
 function enterApp(session) {
   const user = session.user;
   if (currentUser?.id === user.id) {
     // 토큰을 새로 받은 것 등. 화면은 그대로 둔다.
     currentUser.email = user.email ?? '';
-    $('#user-email').textContent = currentUser.email;
+    currentUser.name = displayName(user);
+    showUserName();
     return;
   }
   if (currentUser) leaveApp(null);
   authEpoch++;
-  currentUser = { id: user.id, email: user.email ?? '' };
-  const email = $('#user-email');
-  email.textContent = currentUser.email;
-  email.title = currentUser.email;
+  currentUser = { id: user.id, email: user.email ?? '', name: displayName(user) };
+  showUserName();
   // 로그인 폼에서 왔으면 초점이 숨는 칸에 남지 않게 제목으로 옮긴다(저장된 세션으로 바로 열 때는 건드리지 않는다).
   const fromLogin = $('#login').contains(document.activeElement);
   setLoginError(null);
@@ -1573,28 +1701,41 @@ function leaveApp(notice) {
       importResults: null,
       importProgress: 0,
       importing: false,
+      loginLog: freshLoginLog(),
     });
+    loginLogSeq++;
     collapseAllGroups();
     $('#search').value = '';
-    $('#user-email').textContent = '';
+    showUserName();
+    renderLoginLog();
     renderImport();
     render();
   }
   if (notice) setLoginError(notice);
   showView('login');
-  if (!$('#login').contains(document.activeElement)) $('#login-email').focus();
+  if (!$('#login').contains(document.activeElement)) $('#login-id').focus();
 }
 
 let loginBusy = false;
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (loginBusy) return;
-  const email = $('#login-email').value.trim();
+  const loginId = $('#login-id').value.trim();
   const password = $('#login-password').value;
-  if (!email || !password) {
-    const field = email ? 'password' : 'email';
-    setLoginError('이메일과 비밀번호를 입력해 주세요.', field);
+  if (!loginId || !password) {
+    const field = loginId ? 'password' : 'id';
+    setLoginError('아이디와 비밀번호를 입력해 주세요.', field);
     $(`#login-${field}`).focus();
+    return;
+  }
+  // 아이디를 Supabase 로그인용 이메일로 바꾼다('@'가 있으면 이메일 그대로). 규칙에 어긋나면 서버에 보내지 않는다.
+  let email;
+  try {
+    email = loginIdToEmail(loginId);
+  } catch {
+    setLoginError(LOGIN_ID_RULE, 'id');
+    $('#login-id').select();
+    $('#login-id').focus();
     return;
   }
   loginBusy = true;
@@ -1605,6 +1746,8 @@ $('#login-form').addEventListener('submit', async (e) => {
   try {
     // 로그인 알림(onAuthChange)으로도 화면이 바뀌지만, 먼저 바꿔 둔다. 같은 계정이면 두 번째는 그냥 넘어간다.
     enterApp(await api.signIn(email, password));
+    // 로그인 기록을 남긴다. 기다리지 않고, 실패해도 무시한다(서버 트리거도 기록하므로 { logged: false }가 올 수 있다).
+    api.logLogin(navigator.userAgent);
   } catch (err) {
     setLoginError(err.message);
     $('#login-password').select();
@@ -1617,18 +1760,27 @@ $('#login-form').addEventListener('submit', async (e) => {
 });
 
 $('#logout-button').addEventListener('click', async () => {
+  if (loggingOut) return;
   if (state.importing) {
     toast('가져오는 중입니다. 끝난 뒤 다시 시도해 주세요.');
     return;
   }
   if (!confirmDiscardDraft()) return;
   loggingOut = true;
+  const button = $('#logout-button');
+  button.disabled = true;
+  button.textContent = '로그아웃 중…';
   try {
+    // 로그아웃 기록은 세션이 살아 있을 때 남겨야 하므로 signOut 전에 부른다. 실패하거나 2초가 넘으면 그냥 넘어간다.
+    // (세션 만료·다른 창 로그아웃으로 내보낼 때는 이 버튼을 거치지 않으므로 기록하지 않는다.)
+    await api.logLogout();
     await api.signOut();
   } catch {
     // 이 기기의 세션만 지우는 것이라 실패해도 화면은 로그인으로 돌린다.
   } finally {
     loggingOut = false;
+    button.disabled = false;
+    button.textContent = '로그아웃';
   }
   leaveApp(null);
 });

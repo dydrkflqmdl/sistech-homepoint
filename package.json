@@ -11,6 +11,8 @@
     "start": "node --env-file-if-exists=.env scripts/dev.mjs",
     "dev": "node --env-file-if-exists=.env scripts/dev.mjs",
     "build": "node --env-file-if-exists=.env scripts/build.mjs",
+    "users": "node --env-file-if-exists=.env scripts/create-users.mjs",
+    "login-email": "node scripts/login-email.mjs",
     "test": "node --test",
     "test:sql": "bash supabase/tests/run.sh"
   }

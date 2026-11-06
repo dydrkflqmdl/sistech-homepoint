@@ -48,8 +48,10 @@ select t.eq('Realtime 발행물에 두 테이블',
   (select jsonb_agg(tablename order by tablename) from pg_publication_tables where pubname = 'supabase_realtime'),
   '["missions", "places"]');
 select t.ok('places에 color 칸 없음', not exists (select from information_schema.columns where table_schema = 'public' and table_name = 'places' and column_name = 'color'));
-select t.ok('public 함수는 모두 security invoker',
-  not exists (select from pg_proc where pronamespace = 'public'::regnamespace and prosecdef));
+-- 로그인 기록을 쓰는 세 함수만 security definer다(RLS를 거치지 않고 login_logs에 넣어야 한다).
+select t.eq('security definer는 로그인 기록 쓰기 함수 셋뿐',
+  (select jsonb_agg(proname::text order by proname) from pg_proc where pronamespace = 'public'::regnamespace and prosecdef),
+  '["log_login", "log_logout", "login_logs_on_session"]');
 select t.ok('public 함수는 모두 search_path=public',
   not exists (select from pg_proc where pronamespace = 'public'::regnamespace and not ('search_path=public' = any (coalesce(proconfig, '{}')))),
   (select string_agg(proname, ', ') from pg_proc where pronamespace = 'public'::regnamespace and not ('search_path=public' = any (coalesce(proconfig, '{}')))));
@@ -331,6 +333,208 @@ select t.eq('직접 쓰기 뒤의 저장은 충돌',
 select * from dblink_get_result('b') as x(r text);
 select dblink_disconnect('a');
 select dblink_disconnect('b');
+
+-- ===================================================================
+-- 로그인 기록(supabase/migrations/20261106120000_login_logs.sql)
+-- ===================================================================
+
+-- ---------- 구조·권한 ----------
+select t.ok('login_logs RLS 켜짐', (select relrowsecurity from pg_class where oid = 'public.login_logs'::regclass));
+select t.ok('auth.sessions에 로그인 기록 트리거가 있음',
+  exists (select from pg_trigger where tgrelid = 'auth.sessions'::regclass and tgname = 'login_logs_on_session' and not tgisinternal));
+select t.ok('definer 함수 소유자는 마이그레이션 실행 롤',
+  (select bool_and(pg_get_userbyid(proowner) = current_user) from pg_proc
+   where pronamespace = 'public'::regnamespace and prosecdef));
+select t.ok('authenticated는 login_logs를 읽기만 할 수 있음',
+  has_table_privilege('authenticated', 'public.login_logs', 'select')
+  and not has_table_privilege('authenticated', 'public.login_logs', 'insert')
+  and not has_table_privilege('authenticated', 'public.login_logs', 'update')
+  and not has_table_privilege('authenticated', 'public.login_logs', 'delete'));
+select t.ok('anon은 login_logs 권한이 없음',
+  not has_table_privilege('anon', 'public.login_logs', 'select,insert,update,delete'));
+select t.ok('login_logs 시퀀스는 anon·authenticated 모두 권한 없음',
+  not has_sequence_privilege('anon', 'public.login_logs_id_seq', 'usage,select,update')
+  and not has_sequence_privilege('authenticated', 'public.login_logs_id_seq', 'usage,select,update'));
+select t.ok('authenticated는 로그인 기록 RPC 실행 가능',
+  has_function_privilege('authenticated', 'public.log_login(text)', 'execute')
+  and has_function_privilege('authenticated', 'public.log_logout()', 'execute')
+  and has_function_privilege('authenticated', 'public.list_login_logs(integer)', 'execute'));
+select t.ok('트리거 함수는 supabase_auth_admin만 실행 권한',
+  has_function_privilege('supabase_auth_admin', 'public.login_logs_on_session()', 'execute')
+  and not has_function_privilege('authenticated', 'public.login_logs_on_session()', 'execute')
+  and not has_function_privilege('anon', 'public.login_logs_on_session()', 'execute'));
+
+insert into auth.users (id, email, raw_user_meta_data) values
+  ('11111111-1111-1111-1111-111111111111', 'xn--hong@sistech.local', '{"login_id":"홍길동"}'),
+  ('22222222-2222-2222-2222-222222222222', 'b@sistech.local', '{}'),
+  ('33333333-3333-3333-3333-333333333333', 'c@sistech.local', '{"login_id":"영희"}'),
+  ('44444444-4444-4444-4444-444444444444', 'boom@sistech.local', '{"login_id":"폭탄"}');
+
+-- ---------- 트리거: 세션 생성 = 로그인 ----------
+set role supabase_auth_admin;
+insert into auth.sessions (user_id, user_agent, ip) values ('11111111-1111-1111-1111-111111111111', 'Mozilla/5.0 테스트', '203.0.113.7');
+reset role;
+select t.eq('세션 생성 → login 행 1개(이메일·아이디·UA·IP 채움)',
+  (select jsonb_agg(jsonb_build_array(event, email, login_id, user_agent, ip)) from public.login_logs
+   where user_id = '11111111-1111-1111-1111-111111111111'),
+  '[["login", "xn--hong@sistech.local", "홍길동", "Mozilla/5.0 테스트", "203.0.113.7"]]');
+
+-- 트리거 안에서 오류가 나도 세션(로그인)은 막지 않는다
+alter table public.login_logs add constraint t_block check (email <> 'boom@sistech.local');
+set role supabase_auth_admin;
+select t.ok('트리거 안 오류는 삼켜서 세션 insert 성공',
+  t.err($q$insert into auth.sessions (user_id, user_agent) values ('44444444-4444-4444-4444-444444444444', 'x')$q$) is null);
+select t.ok('user_id가 null인 세션도 오류 없이 들어감',
+  t.err($q$insert into auth.sessions (user_id) values (null)$q$) is null);
+reset role;
+alter table public.login_logs drop constraint t_block;
+select t.ok('오류 난 세션은 세션만 남고 기록은 없음',
+  (select count(*) from auth.sessions where user_id = '44444444-4444-4444-4444-444444444444') = 1
+  and not exists (select from public.login_logs where user_id = '44444444-4444-4444-4444-444444444444'));
+select t.ok('user_id 없는 세션은 기록하지 않음', not exists (select from public.login_logs where user_id is null));
+
+-- GoTrue 버전에 따라 user_agent·ip 칸이 없어도 동작한다
+alter table auth.sessions drop column user_agent, drop column ip;
+set role supabase_auth_admin;
+insert into auth.sessions (user_id) values ('33333333-3333-3333-3333-333333333333');
+reset role;
+select t.eq('user_agent·ip 칸이 없는 세션 테이블 → 빈 칸으로 기록',
+  (select jsonb_agg(jsonb_build_array(event, email, login_id, user_agent, ip)) from public.login_logs
+   where user_id = '33333333-3333-3333-3333-333333333333'),
+  '[["login", "c@sistech.local", "영희", "", ""]]');
+alter table auth.sessions add column user_agent text, add column ip text;
+
+-- ---------- log_login: 트리거가 남긴 직후면 건너뜀 ----------
+set role authenticated;
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false);
+select t.eq('트리거 직후 log_login → 15초 중복이라 logged:false', public.log_login('UA'), '{"logged": false}');
+reset role;
+select t.ok('중복이면 행이 늘지 않음',
+  (select count(*) from public.login_logs where user_id = '11111111-1111-1111-1111-111111111111') = 1);
+
+select set_config('request.jwt.claim.sub', '', false);
+set role authenticated;
+select t.raises('jwt sub 없이 log_login → 로그인 필요', 'select public.log_login()', '로그인이 필요합니다.');
+select t.raises('jwt sub 없이 log_logout → 로그인 필요', 'select public.log_logout()', '로그인이 필요합니다.');
+reset role;
+
+-- ---------- log_login: 트리거가 없는 프로젝트(대비 경로) ----------
+drop trigger login_logs_on_session on auth.sessions;
+set role supabase_auth_admin;
+insert into auth.sessions (user_id) values ('22222222-2222-2222-2222-222222222222');
+reset role;
+select t.ok('트리거가 없으면 세션만 생기고 기록은 없음',
+  not exists (select from public.login_logs where user_id = '22222222-2222-2222-2222-222222222222'));
+select set_config('request.jwt.claim.sub', '22222222-2222-2222-2222-222222222222', false);
+select set_config('request.headers', '{"user-agent":"헤더UA","x-forwarded-for":"198.51.100.1, 10.0.0.1"}', false);
+set role authenticated;
+select t.eq('트리거 없음 → log_login이 기록(logged:true)', public.log_login('UA2'), '{"logged": true}');
+select t.eq('곧바로 다시 log_login → logged:false', public.log_login(''), '{"logged": false}');
+reset role;
+select t.eq('대비 경로 기록: 인자 UA, 헤더 IP(첫 번째)',
+  (select jsonb_agg(jsonb_build_array(event, email, login_id, user_agent, ip)) from public.login_logs
+   where user_id = '22222222-2222-2222-2222-222222222222'),
+  '[["login", "b@sistech.local", "", "UA2", "198.51.100.1"]]');
+update public.login_logs set occurred_at = occurred_at - interval '20 seconds' where user_id = '22222222-2222-2222-2222-222222222222';
+set role authenticated;
+select t.eq('15초가 지나면 다시 기록', public.log_login(''), '{"logged": true}');
+reset role;
+select t.eq('UA 인자가 비면 요청 헤더 User-Agent 사용',
+  (select to_jsonb(user_agent) from public.login_logs where user_id = '22222222-2222-2222-2222-222222222222' order by id desc limit 1),
+  '"헤더UA"');
+
+-- ---------- log_logout ----------
+set role authenticated;
+select t.eq('log_logout → logged:true', public.log_logout(), '{"logged": true}');
+select t.eq('2초 안에 다시 log_logout → logged:false', public.log_logout(), '{"logged": false}');
+reset role;
+select t.eq('logout 행 1개(헤더 UA·IP)',
+  (select jsonb_agg(jsonb_build_array(event, email, login_id, user_agent, ip)) from public.login_logs
+   where user_id = '22222222-2222-2222-2222-222222222222' and event = 'logout'),
+  '[["logout", "b@sistech.local", "", "헤더UA", "198.51.100.1"]]');
+update public.login_logs set occurred_at = occurred_at - interval '3 seconds' where user_id = '22222222-2222-2222-2222-222222222222' and event = 'logout';
+set role authenticated;
+select t.eq('2초가 지나면 다시 logout 기록', public.log_logout(), '{"logged": true}');
+reset role;
+select set_config('request.headers', '', false);
+
+-- ---------- 길이 제한·JWT 대비 ----------
+-- 사용자 3은 앞의 트리거 검사에서 기록이 있으므로 15초 중복에 걸리지 않게 미룬다
+update public.login_logs set occurred_at = occurred_at - interval '20 seconds' where user_id = '33333333-3333-3333-3333-333333333333';
+select set_config('request.jwt.claim.sub', '33333333-3333-3333-3333-333333333333', false);
+set role authenticated;
+select t.eq('500자 넘는 UA로 log_login', public.log_login(repeat('가', 600)), '{"logged": true}');
+reset role;
+select t.eq('UA는 500자로 잘림',
+  (select to_jsonb(char_length(user_agent)) from public.login_logs where user_id = '33333333-3333-3333-3333-333333333333' order by id desc limit 1),
+  '500');
+
+-- auth.users에 없는 사용자는 JWT 클레임의 email·user_metadata.login_id로 채운다
+select set_config('request.jwt.claim.sub', '55555555-5555-5555-5555-555555555555', false);
+select set_config('request.jwt.claims', '{"email":"jwt@sistech.local","user_metadata":{"login_id":"철수"}}', false);
+set role authenticated;
+select t.eq('auth.users에 없는 사용자도 log_login', public.log_login('UA5'), '{"logged": true}');
+reset role;
+select t.eq('JWT 클레임으로 email·login_id 채움',
+  (select jsonb_build_array(email, login_id) from public.login_logs where user_id = '55555555-5555-5555-5555-555555555555'),
+  '["jwt@sistech.local", "철수"]');
+select set_config('request.jwt.claims', '', false);
+select set_config('request.jwt.claim.sub', '11111111-1111-1111-1111-111111111111', false);
+
+-- ---------- list_login_logs ----------
+set role authenticated;
+create temp table ll as select public.list_login_logs() as r;
+reset role;
+select t.eq('list_login_logs: occurred_at 내림차순',
+  (select jsonb_agg(e -> 'id') from ll, jsonb_array_elements(r) e),
+  (select jsonb_agg(id order by occurred_at desc, id desc) from public.login_logs));
+select t.eq('list_login_logs 원소 키',
+  (select jsonb_agg(k order by k) from ll, jsonb_object_keys(r -> 0) k),
+  '["email", "event", "id", "ip", "loginId", "occurredAt", "userAgent", "userId"]');
+select t.ok('occurredAt은 UTC ISO 8601',
+  (select bool_and(e ->> 'occurredAt' ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') from ll, jsonb_array_elements(r) e));
+select t.eq('list_login_logs 원소 모양(트리거 기록)',
+  (select e - 'id' - 'occurredAt' from ll, jsonb_array_elements(r) e where e ->> 'userAgent' = 'Mozilla/5.0 테스트'),
+  '{"userId": "11111111-1111-1111-1111-111111111111", "email": "xn--hong@sistech.local", "loginId": "홍길동", "event": "login", "userAgent": "Mozilla/5.0 테스트", "ip": "203.0.113.7"}');
+
+-- limit 클램프: 1100행을 더 넣고 본다
+insert into public.login_logs (user_id, email, event, occurred_at)
+select '66666666-6666-6666-6666-666666666666', 'bulk@sistech.local', 'login', now() - interval '1 day' - g * interval '1 second'
+from generate_series(1, 1100) g;
+set role authenticated;
+select t.eq('limit 0 → 1개', to_jsonb(jsonb_array_length(public.list_login_logs(0))), '1');
+select t.eq('limit -5 → 1개', to_jsonb(jsonb_array_length(public.list_login_logs(-5))), '1');
+select t.eq('limit 5000 → 1000개', to_jsonb(jsonb_array_length(public.list_login_logs(5000))), '1000');
+select t.eq('limit 기본 → 200개', to_jsonb(jsonb_array_length(public.list_login_logs())), '200');
+select t.eq('limit null → 200개', to_jsonb(jsonb_array_length(public.list_login_logs(null))), '200');
+select t.eq('limit 1의 원소는 가장 최근 기록',
+  public.list_login_logs(1) #> '{0,id}',
+  (select to_jsonb(id) from public.login_logs order by occurred_at desc, id desc limit 1));
+
+-- ---------- authenticated는 직접 쓸 수 없다 ----------
+select t.ok('authenticated: login_logs 직접 insert 거부',
+  t.err($q$insert into public.login_logs (user_id, event) values ('11111111-1111-1111-1111-111111111111', 'login')$q$) like '42501:%');
+select t.ok('authenticated: login_logs 직접 update 거부',
+  t.err($q$update public.login_logs set email = 'x'$q$) like '42501:%');
+select t.ok('authenticated: login_logs 직접 delete 거부',
+  t.err('delete from public.login_logs') like '42501:%');
+select t.ok('authenticated: 트리거 함수 직접 실행 거부',
+  t.err('select public.login_logs_on_session()') like '42501:%');
+reset role;
+
+-- ---------- anon은 막힌다 ----------
+set role anon;
+select t.ok('anon: login_logs select 거부', t.err('select * from public.login_logs') like '42501:%');
+select t.ok('anon: list_login_logs 거부', t.err('select public.list_login_logs()') like '42501:%');
+select t.ok('anon: log_login 거부', t.err($q$select public.log_login('x')$q$) like '42501:%');
+select t.ok('anon: log_logout 거부', t.err('select public.log_logout()') like '42501:%');
+reset role;
+
+-- 정책 없는 롤은 권한이 있어도 RLS로 0행
+grant select on public.login_logs to rls_probe;
+set role rls_probe;
+select t.ok('정책 없는 롤은 login_logs도 RLS로 0행', (select count(*) from public.login_logs) = 0);
+reset role;
 
 -- ---------- 결과 ----------
 \o
