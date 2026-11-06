@@ -50,7 +50,7 @@ jobs:
       - name: Supabase 프로젝트 연결
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
       - name: 마이그레이션 적용
-        run: supabase db push --remote
+        run: supabase db push --remote --yes
 
   deploy:
     name: 페이지 배포
