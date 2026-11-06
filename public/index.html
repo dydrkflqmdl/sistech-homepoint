@@ -35,6 +35,8 @@
           <button type="button" class="btn primary" id="import-button">CSV 가져오기</button>
           <input id="csv-input" type="file" accept=".csv,.tsv,.txt,text/csv" multiple hidden />
           <button type="button" class="btn" id="export-button">내보내기</button>
+          <!-- 관리자(app_metadata.role = admin)에게만 보인다. 계정 만들기·비밀번호 재설정은 Edge Function admin-users가 한다. -->
+          <button type="button" class="btn" id="accounts-button" hidden>계정 관리</button>
           <div class="account">
             <span id="user-name" class="user-name"></span>
             <button type="button" class="btn" id="logout-button">로그아웃</button>
@@ -45,6 +47,7 @@
       <main class="layout">
         <aside class="panel">
           <section id="import-panel" class="card" hidden></section>
+          <section id="accounts-panel" class="card accounts" aria-labelledby="accounts-title" hidden></section>
           <section id="detail" class="card detail" hidden></section>
 
           <div class="filters">

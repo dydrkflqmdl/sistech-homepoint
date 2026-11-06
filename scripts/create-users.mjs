@@ -1,15 +1,21 @@
 // 한글 아이디 계정 일괄 생성. Supabase Admin API로 이메일 인증 없이 바로 쓰는 계정을 만든다.
 // 사용법: npm run users -- --password <비밀번호> 손두병 황병용 오성민
+//        npm run users -- --admin 김용문            (이미 있는 계정을 관리자로 지정)
+// 관리자 표시는 app_metadata.role = 'admin'. app_metadata는 사용자가 스스로 못 바꾸고 service_role만 쓸 수 있다.
 // 필요한 환경변수(.env): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  (service_role 키는 출력하지 않는다)
 import { loginIdToEmail } from '../public/login-id.js';
 
 const HELP = `한글 아이디 계정을 Supabase에 만듭니다.
 
-사용법: npm run users -- --password <비밀번호> [--reset-password] <아이디> [<아이디> ...]
+사용법: npm run users -- --password <비밀번호> [--reset-password] [--admin] <아이디> [<아이디> ...]
+        npm run users -- --admin <아이디> [<아이디> ...]
 
 옵션
-  --password <비밀번호>   모든 계정에 설정할 비밀번호 (필수)
+  --password <비밀번호>   모든 계정에 설정할 비밀번호 (--admin만 쓸 때는 생략 가능)
   --reset-password        이미 있는 계정이면 비밀번호를 위 값으로 바꿉니다
+  --admin                 적은 아이디들을 관리자로 지정합니다(app_metadata.role = admin).
+                          --password와 함께 쓰면 계정을 만들거나 비밀번호를 바꾼 뒤 지정합니다.
+                          --password 없이 쓰면 이미 있는 계정만 지정합니다(없는 계정은 실패).
   --help                  이 도움말
 
 환경변수(.env에 넣으세요. 깃에는 올라가지 않습니다)
@@ -18,14 +24,17 @@ const HELP = `한글 아이디 계정을 Supabase에 만듭니다.
 
 예시
   npm run users -- --password 비밀번호 손두병 황병용 오성민
-  npm run users -- --password 새비밀번호 --reset-password 손두병`;
+  npm run users -- --password 새비밀번호 --reset-password 손두병
+  npm run users -- --admin 김용문
+  npm run users -- --password 비밀번호 --admin 김용문`;
 
 function parseArgs(argv) {
-  const opts = { password: null, reset: false, help: false, ids: [] };
+  const opts = { password: null, reset: false, admin: false, help: false, ids: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') opts.help = true;
     else if (a === '--reset-password') opts.reset = true;
+    else if (a === '--admin') opts.admin = true;
     else if (a === '--password') opts.password = argv[++i] ?? '';
     else if (a.startsWith('--password=')) opts.password = a.slice('--password='.length);
     else if (a.startsWith('--')) throw new Error(`알 수 없는 옵션입니다: ${a}`);
@@ -46,8 +55,13 @@ if (opts.help) {
   console.log(HELP);
   process.exit(0);
 }
-if (opts.ids.length === 0 || !opts.password) {
-  console.error(!opts.password ? '--password <비밀번호>가 필요합니다.' : '만들 아이디를 하나 이상 적어 주세요.');
+if (opts.ids.length === 0 || (!opts.password && !opts.admin)) {
+  console.error(!opts.password && !opts.admin ? '--password <비밀번호>가 필요합니다(관리자 지정만 할 때는 --admin).' : '아이디를 하나 이상 적어 주세요.');
+  console.error('도움말: npm run users -- --help');
+  process.exit(1);
+}
+if (opts.reset && !opts.password) {
+  console.error('--reset-password는 --password <비밀번호>와 함께 써야 합니다.');
   console.error('도움말: npm run users -- --help');
   process.exit(1);
 }
@@ -120,6 +134,14 @@ async function findUserId(email) {
   return usersCache.find((u) => (u.email ?? '').toLowerCase() === email)?.id ?? null;
 }
 
+// 관리자 지정: GoTrue는 PUT의 app_metadata를 기존 값에 병합하므로 provider 등 다른 키는 남는다.
+async function makeAdmin(userId) {
+  const u = await admin('PUT', `/${userId}`, { app_metadata: { role: 'admin' } });
+  if (!u.ok) throw new Error(explain(u));
+}
+
+// 한 아이디 처리. --password가 있으면 만들기/비밀번호 변경, --admin이 있으면 이어서 관리자 지정.
+// 돌려주는 result는 단계별 결과를 ', '로 이은 문구(예: "만듦, 관리자 지정").
 async function createOne(rawId) {
   let email;
   try {
@@ -128,23 +150,43 @@ async function createOne(rawId) {
     return { id: rawId, email: '-', result: `실패: ${e.message}`, ok: false };
   }
   const loginId = rawId.includes('@') ? rawId.trim() : rawId.normalize('NFC').trim();
+  const steps = [];
+  const fail = (msg) => ({ id: loginId, email, result: [...steps, `실패: ${msg}`].join(', '), ok: false });
   try {
-    const r = await admin('POST', '', {
-      email,
-      password: opts.password,
-      email_confirm: true,
-      user_metadata: { login_id: loginId },
-    });
-    if (r.ok) return { id: loginId, email, result: '만듦', ok: true };
-    if (!isDuplicate(r)) return { id: loginId, email, result: `실패: ${explain(r)}`, ok: false };
-    if (!opts.reset) return { id: loginId, email, result: '이미 있음', ok: true };
-    const userId = await findUserId(email);
-    if (!userId) return { id: loginId, email, result: '실패: 이미 있다고 하는데 목록에서 찾지 못했습니다.', ok: false };
-    const u = await admin('PUT', `/${userId}`, { password: opts.password, user_metadata: { login_id: loginId } });
-    if (!u.ok) return { id: loginId, email, result: `실패: ${explain(u)}`, ok: false };
-    return { id: loginId, email, result: '비밀번호 변경', ok: true };
+    let userId = null; // 알게 되면 채운다(관리자 지정에 쓴다)
+    if (opts.password) {
+      const r = await admin('POST', '', {
+        email,
+        password: opts.password,
+        email_confirm: true,
+        user_metadata: { login_id: loginId },
+      });
+      if (r.ok) {
+        steps.push('만듦');
+        userId = r.data?.id ?? null;
+      } else if (!isDuplicate(r)) {
+        return fail(explain(r));
+      } else if (!opts.reset) {
+        steps.push('이미 있음');
+      } else {
+        userId = await findUserId(email);
+        if (!userId) return fail('이미 있다고 하는데 목록에서 찾지 못했습니다.');
+        const u = await admin('PUT', `/${userId}`, { password: opts.password, user_metadata: { login_id: loginId } });
+        if (!u.ok) return fail(explain(u));
+        steps.push('비밀번호 변경');
+      }
+    }
+    if (opts.admin) {
+      userId = userId ?? (await findUserId(email));
+      if (!userId) {
+        return fail(opts.password ? '목록에서 찾지 못해 관리자로 지정하지 못했습니다.' : '계정이 없습니다. 먼저 --password로 만드세요.');
+      }
+      await makeAdmin(userId);
+      steps.push('관리자 지정');
+    }
+    return { id: loginId, email, result: steps.join(', '), ok: true };
   } catch (e) {
-    return { id: loginId, email, result: `실패: ${e.message}`, ok: false };
+    return fail(e.message);
   }
 }
 

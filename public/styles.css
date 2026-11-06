@@ -175,6 +175,11 @@ p {
   cursor: not-allowed;
 }
 
+/* display를 따로 정했으므로 hidden 속성이 눌리지 않게 한다(계정 관리 버튼은 관리자에게만 보인다) */
+.btn[hidden] {
+  display: none;
+}
+
 .icon-btn {
   flex: none;
   width: 32px;
@@ -1185,5 +1190,214 @@ body.dragging .drop-overlay {
 @media (max-width: 767px) {
   .user-name {
     max-width: 110px;
+  }
+}
+
+/* ── 계정 관리(관리자만) ───────────────────────────────── */
+
+.accounts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.accounts-head h2 {
+  font-size: 16px;
+}
+
+.accounts-head-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 표 안·머리 줄의 작은 버튼 */
+.btn.small {
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+/* 창 안 메시지 영역: 오류는 빨갛게, 성공 안내는 보통 글씨로 */
+.accounts-message {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.accounts-message.error {
+  background: #fdecec;
+  color: var(--danger);
+}
+
+.accounts-message[hidden] {
+  display: none;
+}
+
+.accounts-status {
+  margin: 0;
+}
+
+/* 계정 표. 목록 패널은 PC에서도 400px라 네 칸짜리 표가 들어갈 폭이 없어서, 행마다 세로로 쌓고 칸 앞에 이름을 적는다.
+   머리 줄은 화면에서 숨기고 화면 읽기 프로그램에만 남긴다. */
+.accounts-table {
+  display: block;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.accounts-table thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+}
+
+.accounts-table tbody,
+.accounts-table tr,
+.accounts-table td {
+  display: block;
+}
+
+.accounts-table tr {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.accounts-table td {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.accounts-table td[data-label]::before {
+  content: attr(data-label) ' ';
+  display: inline-block;
+  min-width: 88px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.accounts-table .accounts-id::before {
+  display: none;
+}
+
+.accounts-id {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.accounts-id .badge,
+.accounts-self {
+  margin-left: 6px;
+}
+
+.accounts-self {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.accounts-when {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.accounts-actions {
+  padding-top: 6px;
+}
+
+/* 비밀번호 재설정 칸(행 안)과 새 계정 폼은 미션 기록 입력 칸과 같은 모양 */
+.accounts-reset,
+.accounts-create {
+  display: grid;
+  gap: 8px;
+}
+
+.accounts-reset {
+  margin: 2px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.accounts-reset-title {
+  font-size: 14px;
+}
+
+.accounts-self-notice {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.accounts-create {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.accounts-create h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.accounts-create-fields {
+  display: grid;
+  gap: 8px;
+}
+
+@media (min-width: 768px) {
+  .accounts-create-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.accounts .field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* 휴대폰(iOS)은 16px보다 작은 입력 칸에 초점이 가면 화면을 확대하므로 16px로 둔다 */
+.accounts .field input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+
+.accounts .field input[aria-invalid='true'] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px var(--danger);
+}
+
+.accounts .field input[aria-invalid='true']:focus {
+  outline: 2px solid var(--danger);
+  outline-offset: 0;
+}
+
+.accounts .button-row .btn {
+  flex: 1;
+}
+
+@media (min-width: 768px) {
+  .accounts .button-row .btn {
+    flex: none;
   }
 }

@@ -387,6 +387,11 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+# 관리자 전용 계정 관리 함수. 게이트웨이의 JWT 검증 대신 함수 안에서 서비스 롤 클라이언트의
+# getUser 로 토큰을 검증한다(새 JWT 서명 키 방식과도 호환).
+[functions.admin-users]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

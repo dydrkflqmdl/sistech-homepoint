@@ -150,6 +150,66 @@ export const updateMemo = (placeId, memo) => call('update_memo', { p_place_id: p
 // 장소 삭제 → 지웠으면 true, 이미 없으면 false.
 export const deletePlace = async (placeId) => Boolean(await call('delete_place', { p_place_id: placeId }));
 
+// ── 계정 관리(Edge Function admin-users) ───────────────
+
+// 관리자 계정인지. 역할은 Supabase가 서명한 JWT의 app_metadata.role에 있다(user_metadata는 사용자가 바꿀 수 있어서 쓰지 않는다).
+export const isAdmin = (user) => user?.app_metadata?.role === 'admin';
+
+const ACCOUNT_NETWORK_MESSAGE = '계정 서버에 연결할 수 없습니다.';
+const ACCOUNT_FORBIDDEN_MESSAGE = '관리자만 쓸 수 있는 기능입니다.';
+
+// admin-users 함수를 한 번 부른다. 성공하면 응답 본문({ ok: true, ... })을 돌려주고, 실패하면 한국어 문구를 담은 Error를 던진다.
+// supabase-js는 2xx가 아니면 error를 주고 error.context가 Response다(본문 { ok: false, error: '한국어 문구' }를 꺼내 그대로 보여 준다).
+// context가 Response가 아니면(연결 실패·중계 오류) 네트워크 문구를 쓴다. 오류 클래스는 CDN 동적 로드·가짜 주입 때문에 import하지 않고 모양으로 가린다.
+// 401은 RPC와 같이 세션 만료로 보고 로그아웃시키지만, 403(관리자 아님)은 로그아웃시키지 않고 문구만 보여 준다.
+async function callAdmin(body) {
+  let res;
+  try {
+    res = await client.functions.invoke('admin-users', { body });
+  } catch {
+    res = { data: null, error: { context: null } };
+  }
+  if (!res.error) return res.data ?? {};
+
+  const ctx = res.error.context;
+  if (typeof ctx?.json !== 'function') throw new Error(ACCOUNT_NETWORK_MESSAGE);
+  const status = Number(ctx.status) || 0;
+  let payload = null;
+  try {
+    payload = await ctx.json();
+  } catch {
+    payload = null;
+  }
+  const serverMessage = typeof payload?.error === 'string' && hasHangul(payload.error) ? payload.error : '';
+  const auth = status === 401 ? 'expired' : null;
+  let message;
+  if (auth) message = AUTH_MESSAGES.expired;
+  else if (serverMessage) message = serverMessage;
+  else if (status === 403) message = ACCOUNT_FORBIDDEN_MESSAGE;
+  else message = `계정 서버 오류가 발생했습니다. (${status})`;
+
+  const err = new Error(message);
+  err.status = status;
+  err.auth = auth;
+  if (auth) {
+    signOutReason = message;
+    client.auth.signOut({ scope: 'local' }).catch(() => {});
+  }
+  throw err;
+}
+
+// 계정 목록 → [{ id, login_id, email, created_at, last_sign_in_at, is_admin }]. login_id는 null일 수 있다(화면에서 이메일로 되살린다).
+export const listAccounts = async () => (await callAdmin({ action: 'list' })).users ?? [];
+
+// 새 계정을 만든다 → 만든 계정. 아이디·비밀번호 규칙은 화면에서 먼저 검사하고, 서버가 다시 검사한다.
+export const createAccount = async (loginId, password) =>
+  (await callAdmin({ action: 'create', login_id: loginId, password })).user ?? null;
+
+// 계정의 비밀번호를 바꾼다. 본인 계정이면 모든 기기에서 로그아웃된다.
+export const resetAccountPassword = async (userId, password) => {
+  await callAdmin({ action: 'reset_password', user_id: userId, password });
+};
+
 // ── 로그인 기록 ─────────────────────────────────────────
 
 // 기록 RPC는 화면 전환·로그아웃을 막지 않도록 이 시간까지만 기다린다.

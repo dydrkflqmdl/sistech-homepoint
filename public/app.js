@@ -2,7 +2,7 @@ import { PALETTE, colorLabel, progressColor } from './palette.js';
 import { kakaoMapViewUrl, openKakaoMapRoute } from './kakao.js';
 import { missionNames, missionProgress } from './mission.js';
 import { CsvFormatError, readPlaces, toCsv } from './csv.js';
-import { LOGIN_ID_RULE, emailToLoginId, loginIdToEmail } from './login-id.js';
+import { LOGIN_ID_RULE, emailToLoginId, loginIdToEmail, normalizeLoginId } from './login-id.js';
 import * as api from './api.js';
 
 const state = {
@@ -35,7 +35,7 @@ const config = api.readConfig();
 
 // 로그인할 때마다 하나씩 올린다. 응답을 기다리는 사이 로그아웃·다른 계정 로그인이 있었으면 그 응답은 버린다.
 let authEpoch = 0;
-let currentUser = null; // { id, email, name } — name은 머리글에 보여 줄 아이디
+let currentUser = null; // { id, email, name, admin } — name은 머리글에 보여 줄 아이디, admin은 계정 관리 버튼을 보일지
 let unsubscribeChanges = null;
 let mapStarted = false;
 let loggingOut = false;
@@ -959,6 +959,384 @@ function renderImport() {
   );
 }
 
+// ── 계정 관리(관리자만) ─────────────────────────────────
+
+const PASSWORD_MIN = 6;
+const PASSWORD_RULE = `비밀번호는 ${PASSWORD_MIN}자 이상이어야 합니다.`;
+const SELF_RESET_NOTICE = '본인 비밀번호를 바꾸면 모든 기기에서 로그아웃됩니다.';
+
+// 계정 관리 창의 상태. 장소 목록(state)과는 별개라 로그아웃하면 통째로 비운다.
+const accounts = {
+  open: false,
+  loading: false, // 목록을 받는 중
+  busy: false, // 만들기·재설정 요청 중(그동안 버튼을 모두 잠근다)
+  users: null, // 서버가 준 계정 목록. 아직 못 받았으면 null
+  error: null, // 창 안 메시지 영역에 빨갛게
+  notice: null, // 창 안 메시지 영역에 보통 글씨로(성공 안내)
+  resetId: null, // 비밀번호를 바꾸는 중인 계정 id
+  resetPassword: '',
+  resetInvalid: false,
+  // 새 계정 폼. 다시 그려도 적던 글자가 남게 여기에 둔다.
+  create: { loginId: '', password: '', invalid: null },
+};
+
+const accountsReset = () =>
+  Object.assign(accounts, {
+    open: false,
+    loading: false,
+    busy: false,
+    users: null,
+    error: null,
+    notice: null,
+    resetId: null,
+    resetPassword: '',
+    resetInvalid: false,
+    create: { loginId: '', password: '', invalid: null },
+  });
+
+// 계정 목록에 보여 줄 아이디. 서버가 login_id를 못 주면(대시보드에서 만든 계정 등) 이메일에서 되살린다.
+const accountName = (u) => String(u.login_id ?? '').trim() || emailToLoginId(u.email ?? '');
+
+// ISO 시각 → 한국 표기. 없거나 읽을 수 없으면 "-". withTime이면 시:분까지.
+function formatWhen(iso, { withTime = false } = {}) {
+  if (!iso) return '-';
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return '-';
+  const opts = { year: 'numeric', month: 'numeric', day: 'numeric' };
+  if (withTime) Object.assign(opts, { hour: 'numeric', minute: '2-digit' });
+  return t.toLocaleString('ko-KR', opts);
+}
+
+function setAccountsMessage({ error = null, notice = null } = {}) {
+  accounts.error = error;
+  accounts.notice = notice;
+}
+
+// 창을 열고 목록을 받는다. 이미 열려 있으면 목록만 새로 받는다.
+function openAccounts() {
+  if (!currentUser?.admin) return;
+  accounts.open = true;
+  renderAccounts();
+  $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
+  loadAccounts().then(() => refocus('#accounts-close'));
+}
+
+function closeAccounts() {
+  if (accounts.busy) return;
+  accountsReset();
+  renderAccounts();
+  refocus('#accounts-button');
+}
+
+// 목록을 새로 받는다. 세션이 끝났으면 로그인 화면으로 가고, 다른 실패는 창 안에 보여 준다.
+async function loadAccounts() {
+  const epoch = authEpoch;
+  accounts.loading = true;
+  renderAccounts();
+  try {
+    const users = await api.listAccounts();
+    if (epoch !== authEpoch || !accounts.open) return;
+    accounts.users = users;
+    accounts.error = null;
+  } catch (err) {
+    if (authFailed(err) || epoch !== authEpoch || !accounts.open) return;
+    accounts.error = err.message;
+  }
+  accounts.loading = false;
+  renderAccounts();
+}
+
+// 새 계정 폼의 입력을 검사한다. 어긋난 칸 이름('loginId' | 'password')과 문구를 돌려주고, 괜찮으면 null.
+function createFormProblem(loginId, password) {
+  if (normalizeLoginId(loginId) === null) return { field: 'loginId', message: LOGIN_ID_RULE };
+  if (password.length < PASSWORD_MIN) return { field: 'password', message: PASSWORD_RULE };
+  return null;
+}
+
+async function submitCreate() {
+  if (accounts.busy || accounts.loading) return;
+  const loginId = normalizeLoginId(accounts.create.loginId);
+  const problem = createFormProblem(accounts.create.loginId, accounts.create.password);
+  if (problem) {
+    accounts.create.invalid = problem.field;
+    setAccountsMessage({ error: problem.message });
+    renderAccounts();
+    refocus(`#accounts-new-${problem.field === 'loginId' ? 'id' : 'password'}`);
+    return;
+  }
+  const epoch = authEpoch;
+  accounts.busy = true;
+  accounts.create.invalid = null;
+  setAccountsMessage();
+  renderAccounts();
+  try {
+    await api.createAccount(loginId, accounts.create.password);
+    if (epoch !== authEpoch || !accounts.open) return;
+    accounts.create = { loginId: '', password: '', invalid: null };
+    accounts.busy = false;
+    setAccountsMessage({ notice: `${loginId} 계정을 만들었습니다.` });
+    await loadAccounts();
+    if (epoch === authEpoch && accounts.open) refocus('#accounts-new-id');
+  } catch (err) {
+    if (authFailed(err) || epoch !== authEpoch || !accounts.open) return;
+    accounts.busy = false;
+    setAccountsMessage({ error: err.message });
+    renderAccounts();
+    refocus('#accounts-new-id');
+  }
+}
+
+function startReset(userId) {
+  if (accounts.busy) return;
+  accounts.resetId = userId;
+  accounts.resetPassword = '';
+  accounts.resetInvalid = false;
+  setAccountsMessage();
+  renderAccounts();
+  refocus('#accounts-reset-password');
+}
+
+function cancelReset() {
+  if (accounts.busy) return;
+  const id = accounts.resetId;
+  accounts.resetId = null;
+  accounts.resetPassword = '';
+  accounts.resetInvalid = false;
+  renderAccounts();
+  refocus(`#accounts-panel button[data-reset="${CSS.escape(String(id))}"]`);
+}
+
+async function submitReset() {
+  if (accounts.busy || accounts.resetId === null) return;
+  const user = accounts.users?.find((u) => u.id === accounts.resetId);
+  if (!user) return;
+  if (accounts.resetPassword.length < PASSWORD_MIN) {
+    accounts.resetInvalid = true;
+    setAccountsMessage({ error: PASSWORD_RULE });
+    renderAccounts();
+    refocus('#accounts-reset-password');
+    return;
+  }
+  const epoch = authEpoch;
+  accounts.busy = true;
+  accounts.resetInvalid = false;
+  setAccountsMessage();
+  renderAccounts();
+  try {
+    await api.resetAccountPassword(user.id, accounts.resetPassword);
+    if (epoch !== authEpoch || !accounts.open) return;
+    accounts.busy = false;
+    accounts.resetId = null;
+    accounts.resetPassword = '';
+    setAccountsMessage({ notice: `${accountName(user)} 계정의 비밀번호를 바꿨습니다.` });
+    renderAccounts();
+    refocus(`#accounts-panel button[data-reset="${CSS.escape(String(user.id))}"]`);
+  } catch (err) {
+    if (authFailed(err) || epoch !== authEpoch || !accounts.open) return;
+    accounts.busy = false;
+    setAccountsMessage({ error: err.message });
+    renderAccounts();
+    refocus('#accounts-reset-password');
+  }
+}
+
+// 비밀번호를 바꾸는 중인 계정의 행: 아이디 + 새 비밀번호 입력 + 확인·취소.
+function accountResetRow(u, self) {
+  const disabled = accounts.busy;
+  return h(
+    'tr',
+    { class: 'accounts-row resetting', 'data-user-id': u.id },
+    h(
+      'td',
+      { colspan: 4 },
+      h(
+        'form',
+        {
+          class: 'accounts-reset',
+          onsubmit: (e) => {
+            e.preventDefault();
+            submitReset();
+          },
+        },
+        h('p', { class: 'accounts-reset-title' }, h('b', {}, accountName(u)), ' 비밀번호 재설정'),
+        self && h('p', { class: 'hint accounts-self-notice' }, SELF_RESET_NOTICE),
+        h(
+          'label',
+          { class: 'field' },
+          h('span', {}, '새 비밀번호'),
+          h('input', {
+            id: 'accounts-reset-password',
+            type: 'password',
+            name: 'new-password',
+            autocomplete: 'new-password',
+            value: accounts.resetPassword,
+            disabled,
+            'aria-invalid': accounts.resetInvalid ? 'true' : null,
+            oninput: (e) => {
+              accounts.resetPassword = e.target.value;
+              if (accounts.resetInvalid) {
+                accounts.resetInvalid = false;
+                e.target.removeAttribute('aria-invalid');
+              }
+            },
+          }),
+        ),
+        h(
+          'div',
+          { class: 'button-row' },
+          h('button', { type: 'submit', class: 'btn primary', disabled }, disabled ? '바꾸는 중…' : '확인'),
+          h('button', { type: 'button', class: 'btn', disabled, onclick: cancelReset }, '취소'),
+        ),
+      ),
+    ),
+  );
+}
+
+function accountRow(u) {
+  const self = u.id === currentUser?.id;
+  if (accounts.resetId === u.id) return accountResetRow(u, self);
+  return h(
+    'tr',
+    { class: 'accounts-row', 'data-user-id': u.id },
+    h(
+      'td',
+      { class: 'accounts-id', 'data-label': '아이디' },
+      h('span', { class: 'accounts-name' }, accountName(u)),
+      u.is_admin && h('span', { class: 'badge accounts-admin' }, '관리자'),
+      self && h('span', { class: 'accounts-self' }, '(본인)'),
+    ),
+    h('td', { class: 'accounts-when', 'data-label': '만든 날' }, formatWhen(u.created_at)),
+    h('td', { class: 'accounts-when', 'data-label': '마지막 로그인' }, formatWhen(u.last_sign_in_at, { withTime: true })),
+    h(
+      'td',
+      { class: 'accounts-actions' },
+      h('button', { type: 'button', class: 'btn small', 'data-reset': u.id, disabled: accounts.busy || accounts.loading, onclick: () => startReset(u.id) }, '비밀번호 재설정'),
+    ),
+  );
+}
+
+function accountsTable() {
+  const users = accounts.users;
+  if (!users) return accounts.loading ? h('p', { class: 'hint accounts-status' }, '계정 목록을 불러오는 중…') : null;
+  if (users.length === 0) return h('p', { class: 'hint accounts-status' }, '계정이 없습니다.');
+  return h(
+    'table',
+    { class: 'accounts-table' },
+    h(
+      'thead',
+      {},
+      h('tr', {}, h('th', { scope: 'col' }, '아이디'), h('th', { scope: 'col' }, '만든 날'), h('th', { scope: 'col' }, '마지막 로그인'), h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, '동작'))),
+    ),
+    h('tbody', {}, users.map(accountRow)),
+  );
+}
+
+function accountsCreateForm() {
+  const disabled = accounts.busy;
+  const { create } = accounts;
+  return h(
+    'form',
+    {
+      class: 'accounts-create',
+      autocomplete: 'off',
+      onsubmit: (e) => {
+        e.preventDefault();
+        submitCreate();
+      },
+    },
+    h('h3', {}, '새 계정'),
+    h(
+      'div',
+      { class: 'accounts-create-fields' },
+      h(
+        'label',
+        { class: 'field' },
+        h('span', {}, '아이디'),
+        h('input', {
+          id: 'accounts-new-id',
+          type: 'text',
+          name: 'new-login-id',
+          autocomplete: 'off',
+          autocapitalize: 'off',
+          autocorrect: 'off',
+          spellcheck: 'false',
+          placeholder: '예: 홍길동',
+          value: create.loginId,
+          disabled,
+          'aria-invalid': create.invalid === 'loginId' ? 'true' : null,
+          oninput: (e) => {
+            create.loginId = e.target.value;
+            if (create.invalid === 'loginId') {
+              create.invalid = null;
+              e.target.removeAttribute('aria-invalid');
+            }
+          },
+        }),
+      ),
+      h(
+        'label',
+        { class: 'field' },
+        h('span', {}, '비밀번호'),
+        h('input', {
+          id: 'accounts-new-password',
+          type: 'password',
+          name: 'new-password',
+          autocomplete: 'new-password',
+          placeholder: `${PASSWORD_MIN}자 이상`,
+          value: create.password,
+          disabled,
+          'aria-invalid': create.invalid === 'password' ? 'true' : null,
+          oninput: (e) => {
+            create.password = e.target.value;
+            if (create.invalid === 'password') {
+              create.invalid = null;
+              e.target.removeAttribute('aria-invalid');
+            }
+          },
+        }),
+      ),
+    ),
+    h('div', { class: 'button-row' }, h('button', { id: 'accounts-create-button', type: 'submit', class: 'btn primary', disabled }, disabled ? '만드는 중…' : '만들기')),
+  );
+}
+
+function renderAccounts() {
+  const box = $('#accounts-panel');
+  box.hidden = !accounts.open;
+  if (!accounts.open) {
+    box.replaceChildren();
+    return;
+  }
+  const message = accounts.error ?? accounts.notice;
+  fill(
+    box,
+    h(
+      'div',
+      { class: 'accounts-head' },
+      h('h2', { id: 'accounts-title' }, '계정 관리'),
+      h(
+        'div',
+        { class: 'accounts-head-buttons' },
+        h('button', { type: 'button', class: 'btn small', id: 'accounts-refresh', disabled: accounts.busy || accounts.loading, onclick: () => loadAccounts() }, '새로 고침'),
+        h('button', { type: 'button', class: 'icon-btn', id: 'accounts-close', 'aria-label': '닫기', disabled: accounts.busy, onclick: closeAccounts }, '×'),
+      ),
+    ),
+    h('p', { id: 'accounts-message', class: accounts.error ? 'accounts-message error' : 'accounts-message', role: accounts.error ? 'alert' : 'status', hidden: !message }, message ?? ''),
+    accountsTable(),
+    accountsCreateForm(),
+  );
+}
+
+$('#accounts-button').addEventListener('click', openAccounts);
+
+// 창 안에서 Esc: 비밀번호를 바꾸는 중이면 그것부터 접고, 아니면 창을 닫는다.
+$('#accounts-panel').addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || accounts.busy) return;
+  e.stopPropagation();
+  if (accounts.resetId !== null) cancelReset();
+  else closeAccounts();
+});
+
 function render() {
   // 미션 저장으로 그 상태의 장소가 하나도 안 남으면 칩도 사라지므로, 아무 칩도 눌리지 않은 채 걸러지지 않게 전체로 되돌린다.
   if (state.filterColor && !state.places.some((p) => placeColor(p) === state.filterColor)) state.filterColor = null;
@@ -1466,8 +1844,11 @@ function goHome() {
   state.importResults = null;
   // 처음 화면은 시군을 모두 접은 상태다.
   collapseAllGroups();
+  // 계정 관리 창도 닫는다(요청 중이면 끝날 때까지 둔다).
+  if (accounts.open && !accounts.busy) accountsReset();
   $('#search').value = '';
   renderImport();
+  renderAccounts();
   render();
   fitToPlaces(state.places);
   $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
@@ -1522,6 +1903,8 @@ function showUserName() {
   const el = $('#user-name');
   el.textContent = currentUser?.name ?? '';
   el.title = currentUser?.name ?? '';
+  // 계정 관리 버튼은 관리자에게만. 역할은 JWT(app_metadata)에서 오므로 토큰을 새로 받을 때마다 다시 본다.
+  $('#accounts-button').hidden = !currentUser?.admin;
 }
 
 function enterApp(session) {
@@ -1530,12 +1913,18 @@ function enterApp(session) {
     // 토큰을 새로 받은 것 등. 화면은 그대로 둔다.
     currentUser.email = user.email ?? '';
     currentUser.name = displayName(user);
+    currentUser.admin = api.isAdmin(user);
     showUserName();
+    // 관리자 권한이 빠진 토큰을 받았으면 열려 있던 계정 관리 창도 닫는다.
+    if (!currentUser.admin && accounts.open) {
+      accountsReset();
+      renderAccounts();
+    }
     return;
   }
   if (currentUser) leaveApp(null);
   authEpoch++;
-  currentUser = { id: user.id, email: user.email ?? '', name: displayName(user) };
+  currentUser = { id: user.id, email: user.email ?? '', name: displayName(user), admin: api.isAdmin(user) };
   showUserName();
   // 로그인 폼에서 왔으면 초점이 숨는 칸에 남지 않게 제목으로 옮긴다(저장된 세션으로 바로 열 때는 건드리지 않는다).
   const fromLogin = $('#login').contains(document.activeElement);
@@ -1585,9 +1974,11 @@ function leaveApp(notice) {
       importing: false,
         });
     collapseAllGroups();
+    accountsReset();
     $('#search').value = '';
     showUserName();
     renderImport();
+    renderAccounts();
     render();
   }
   if (notice) setLoginError(notice);

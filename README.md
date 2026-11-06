@@ -16,7 +16,7 @@ main 브랜치에 푸시 ──▶ GitHub Actions ──▶ 테스트 → DB 마
 
 ## 사용 흐름
 
-1. 로그인: 주소로 들어가면 아이디·비밀번호 로그인 화면이 나옵니다. 아이디는 한글(예: 손두병)입니다. 계정은 관리자가 미리 만들어 준 것만 쓸 수 있습니다.
+1. 로그인: 주소로 들어가면 아이디·비밀번호 로그인 화면이 나옵니다. 아이디는 한글(예: 손두병)입니다. 계정은 관리자가 화면의 "계정 관리"에서 만들어 준 것만 쓸 수 있습니다.
 2. CSV 가져오기: 상단 "CSV 가져오기" 버튼을 누르거나 화면에 파일을 끌어다 놓습니다.
 3. 확인: 지도에 핀이 찍히고, 아래(PC는 왼쪽) 목록에 CSV 순서대로 표시됩니다.
 4. 선택: 목록이나 핀을 누르면 상세 정보가 열리고 지도가 그 위치로 이동합니다.
@@ -27,6 +27,7 @@ main 브랜치에 푸시 ──▶ GitHub Actions ──▶ 테스트 → DB 마
 
 - 로그인 / 로그아웃: 로그인한 사용자만 장소를 보고 고칠 수 있습니다. 로그인 상태는 브라우저에 유지되고, 로그아웃은 이 기기에서만 적용됩니다. 로그인이 만료되거나 권한이 없으면 안내 문구와 함께 로그인 화면으로 돌아갑니다.
 - 한글 아이디 로그인: 이메일 대신 `손두병`처럼 한글·영문·숫자·밑줄 1~16자 아이디로 로그인합니다. 내부적으로는 아이디를 가짜 이메일 주소로 바꿔 Supabase Auth에 넘깁니다.
+- 계정 관리(관리자만): 관리자 계정으로 로그인하면 상단에 "계정 관리" 버튼이 보입니다. 계정 목록(아이디, 만든 날, 마지막 로그인)을 보고, 새 계정을 만들고, 비밀번호를 재설정합니다. 관리자가 아닌 계정에는 버튼이 없고, 버튼 없이 직접 호출해도 서버가 거절합니다. 비밀번호 재설정은 그 계정을 모든 기기에서 로그아웃시킵니다(본인 것도 마찬가지).
 - 로그인 기록: 모든 아이디의 로그인·로그아웃(아이디, 시각, 기기, IP)이 DB에 남습니다. 화면에는 보이지 않고, 관리자가 Supabase 대시보드 Table Editor의 `login_logs` 표에서만 봅니다.
 - 실시간 반영: 다른 기기에서 장소나 미션 기록을 바꾸면 새로고침 없이 화면에 반영됩니다(Supabase Realtime). 탭으로 돌아올 때도(마지막 조회 후 5초가 지났으면) 목록을 한 번 더 새로 받아 놓친 변경을 메웁니다.
 - CSV 가져오기: EUC-KR(엑셀 저장)과 UTF-8 모두 읽습니다. 파일은 브라우저에서 읽고, 장소 목록만 DB로 보냅니다. 같은 이름·같은 좌표의 장소는 중복 저장하지 않고, 잘못된 행은 몇 번째 줄이 왜 빠졌는지 보여 줍니다. 파일 크기는 10MB까지입니다.
@@ -57,6 +58,7 @@ main 브랜치에 푸시 ──▶ GitHub Actions ──▶ 테스트 → DB 마
 | 호스팅 | GitHub Pages. 배포 때 `scripts/build.mjs`가 `dist/`를 만듭니다. |
 | 데이터 | Supabase Postgres. 화면은 `supabase-js`로 RPC 함수를 부릅니다. |
 | 로그인 | Supabase Auth 이메일·비밀번호. 화면에서는 한글 아이디를 받아 가짜 이메일 주소(`xn--….@sistech.local`)로 바꿔 씁니다. 가입 화면은 없고 관리자가 계정을 만듭니다. |
+| 계정 관리 | Supabase Edge Function `admin-users`. 화면이 로그인 토큰과 함께 부르면 함수가 Supabase 안에서 토큰과 관리자 표시를 검사한 뒤 Admin API로 계정을 만듭니다. service_role 키는 Supabase가 함수 실행 환경에 자동으로 넣어 주므로 우리 쪽 어디에도 저장하지 않습니다. |
 | 실시간 | Supabase Realtime(`places`, `missions` 표의 변경을 구독) |
 | 지도 | 카카오맵 JavaScript SDK(일반·위성·하이브리드·지적편집도). developers.kakao.com에서 무료 JavaScript 키를 받습니다. |
 | 길안내 | 카카오맵 URL(별도 키 불필요) |
@@ -69,7 +71,8 @@ main 브랜치에 푸시 ──▶ GitHub Actions ──▶ 테스트 → DB 마
 public/                  GitHub Pages에 올라가는 화면 파일
   index.html             화면 뼈대
   app.js                 지도, 목록, 상세 정보, 로그인, 가져오기 화면
-  api.js                 Supabase 연결(로그인, RPC 호출, 실시간 구독)
+  api.js                 Supabase 연결(로그인, RPC 호출, 실시간 구독, 계정 관리 함수 호출)
+  login-id.js            한글 아이디 ↔ 로그인 이메일 변환
   csv.js                 CSV 읽기(인코딩 판별, 열 인식, 이름 규칙), 내보내기
   kakao.js               카카오맵 연결
   coord.js               좌표 처리
@@ -81,13 +84,14 @@ scripts/
   dev.mjs                로컬 개발 서버(config.js 생성 + public/ 서빙)
   build.mjs              배포용 빌드(public/ → dist/, config.js 생성, 캐시 스탬프)
   write-config.mjs       환경변수 → config.js 생성기
-  create-users.mjs       한글 아이디 계정 일괄 생성(Supabase Admin API)
+  create-users.mjs       한글 아이디 계정 일괄 생성·관리자 지정(Supabase Admin API, 비상용)
   login-email.mjs        아이디 → 로그인 이메일 변환 출력
 supabase/
-  config.toml            Supabase 프로젝트 설정
-  migrations/            DB 구조 변경 이력(테이블, 권한, 함수)
+  config.toml            Supabase 프로젝트 설정(Edge Function 설정 포함)
+  functions/admin-users/ 계정 관리 Edge Function(index.ts 진입점, handler.js 처리 로직)
+  migrations/            DB 구조 변경 이력(테이블, 권한, 함수, 관리자 지정)
   tests/                 마이그레이션 검증(run.sh, tests.sql 등)
-test/                    자동 테스트(CSV 읽기, 미션명, 색상표, 빌드 스탬프)
+test/                    자동 테스트(CSV 읽기, 미션명, 색상표, 빌드 스탬프, 아이디 변환, 계정 관리 함수)
 samples/                 예시 CSV
 .github/workflows/       자동 배포 워크플로
 .env.example             로컬 설정 예시
@@ -119,11 +123,11 @@ npm start
 ## 테스트
 
 ```bash
-npm test          # CSV 읽기, 미션명 풀이, 상태 색상표, 빌드 캐시 스탬프
-npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수) 검증
+npm test          # CSV 읽기, 미션명 풀이, 상태 색상표, 빌드 캐시 스탬프, 아이디 변환, 계정 관리 함수 처리 로직
+npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수·관리자 지정) 검증
 ```
 
-- `npm test`는 Node 내장 테스트 러너를 씁니다. 네트워크나 Supabase 연결이 필요 없습니다.
+- `npm test`는 Node 내장 테스트 러너를 씁니다. 네트워크나 Supabase 연결이 필요 없습니다. 계정 관리 Edge Function은 처리 로직(`handler.js`)을 Deno 없이 가짜 Admin API로 검사합니다.
 - `npm run test:sql`은 이 컴퓨터에 설치된 PostgreSQL 바이너리(`initdb`, `pg_ctl`, `psql`)로 임시 클러스터를 5499 포트에 띄우고, Supabase 환경을 흉내 낸 뒤 마이그레이션과 `supabase/tests/tests.sql`을 실행합니다. 끝나면 임시 클러스터를 내리므로 평소 쓰는 5432 서버는 건드리지 않습니다. Docker나 Supabase CLI는 필요 없습니다.
   - `pg_ctl`이 PATH에 없으면 `PGBIN` 환경변수로 경로를 알려 주세요(예: `PGBIN=/opt/homebrew/bin npm run test:sql`).
   - 새 테이블 자동 노출 설정이 꺼진 경우와 켜진 경우를 둘 다 돌려 어느 쪽에서도 권한이 새지 않는지 확인합니다.
@@ -141,18 +145,23 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수) 검�
    - "Enable automatic RLS": 켬
    - 프로젝트를 만들 때 정하는 데이터베이스 비밀번호는 따로 적어 두세요(배포 Secrets에 씁니다).
 2. Authentication → Sign In / Providers → Email에서 가입 허용(Allow new users to sign up)을 끕니다. 가입 화면이 없으니 외부 사람이 계정을 만들 수 없게 하는 설정입니다.
-3. 사용할 계정을 만듭니다. 아래 두 방법 중 하나를 고르세요.
-   - 권장, 스크립트로 한꺼번에: Project Settings → API에서 service_role 키를 복사해 `.env`의 `SUPABASE_SERVICE_ROLE_KEY`에 넣고(`SUPABASE_URL`도 채워져 있어야 합니다) 실행합니다. 이미 있는 아이디는 "이미 있음"으로 건너뛰고, 기존 계정의 비밀번호를 바꾸려면 `--reset-password`를 붙입니다.
+3. 관리자 계정을 하나 만듭니다. 나머지 계정은 배포 뒤 관리자가 화면의 "계정 관리"에서 만들면 되므로 처음에는 하나면 됩니다.
+   - 대시보드에서 손으로: `npm run login-email -- 김용문`으로 변환된 이메일 주소를 뽑아, Authentication → Users → "Add user"에 그 주소와 비밀번호를 입력합니다. 이메일 인증 없이 바로 쓰도록 Auto Confirm User를 체크하세요.
+   - 또는 스크립트로: Project Settings → API Keys에서 service_role 키를 복사해 `.env`의 `SUPABASE_SERVICE_ROLE_KEY`에 넣고(`SUPABASE_URL`도 채워져 있어야 합니다) 실행합니다. 이미 있는 아이디는 "이미 있음"으로 건너뛰고, 기존 계정의 비밀번호를 바꾸려면 `--reset-password`를 붙입니다. 다 쓰면 `.env`의 키 값은 비웁니다.
 
      ```bash
-     npm run users -- --password <비밀번호> 손두병 황병용 오성민
+     npm run users -- --password <비밀번호> 김용문
      ```
 
-   - 대안, 대시보드에서 손으로: `npm run login-email -- 손두병`으로 변환된 이메일 주소를 뽑아, Authentication → Users → "Add user"에 그 주소와 비밀번호를 입력합니다. 이메일 인증 없이 바로 쓰도록 Auto Confirm User를 체크하세요.
    - 아이디 규칙: 한글·영문·숫자·밑줄 1~16자. 같은 아이디는 언제나 같은 주소가 되므로 로그인 화면에 아이디만 적으면 됩니다.
    - 비밀번호 최소 길이는 Supabase 설정(Authentication → Sign In / Providers → Email의 최소 길이, 기본 6자)을 따릅니다.
-   - 주소는 가짜(`@sistech.local`)라 메일이 가지 않습니다. 그래서 비밀번호 찾기 메일은 쓸 수 없고, 비밀번호를 잊으면 관리자가 `npm run users -- --password <새 비밀번호> --reset-password 아이디`로 바꾸거나 대시보드 Users에서 직접 바꿉니다.
-4. 아래 값을 확인해 둡니다.
+   - 주소는 가짜(`@sistech.local`)라 메일이 가지 않습니다. 그래서 비밀번호 찾기 메일은 쓸 수 없고, 비밀번호를 잊으면 관리자가 화면의 "계정 관리"에서 재설정합니다. 관리자 본인이 잊었으면 대시보드 Users에서 바꾸거나 `npm run users -- --password <새 비밀번호> --reset-password 김용문`을 씁니다.
+4. 관리자를 지정합니다. 관리자 표시는 Supabase 사용자 정보의 `app_metadata.role = "admin"`이며, 브라우저에서는 바꿀 수 없고 아래 방법으로만 넣습니다.
+   - 자동: 마이그레이션 `20261106170000_admin_role.sql`이 배포 때 김용문(`xn--4k0bz9vb1i@sistech.local`)에 관리자 표시를 넣습니다. 그 계정이 아직 없거나 DB 권한이 모자라면 배포를 멈추지 않고 알림만 남기므로, 아래 방법 중 하나로 직접 넣습니다.
+   - 스크립트: `.env`에 service_role 키를 넣고 `npm run users -- --admin 김용문`(다른 사람을 관리자로 추가할 때도 같은 명령).
+   - SQL Editor: `update auth.users set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}' where email = '<변환된 이메일>';`
+   - 관리자 표시를 넣은 뒤에는 그 계정이 다시 로그인해야 "계정 관리" 버튼이 보입니다(로그인 정보가 갱신될 때 반영).
+5. 아래 값을 확인해 둡니다.
 
 | 값 | 위치 | 쓰는 곳 |
 | --- | --- | --- |
@@ -162,7 +171,7 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수) 검�
 | Access Token | 계정 메뉴 → Account Settings → Access Tokens에서 새로 발급 | `SUPABASE_ACCESS_TOKEN` |
 | 데이터베이스 비밀번호 | 프로젝트 만들 때 정한 값. 잊었으면 Project Settings → Database에서 재설정 | `SUPABASE_DB_PASSWORD` |
 
-> 경고: service_role 키와 secret 키는 계정 생성 스크립트(`npm run users`)를 돌릴 때 로컬 `.env`에만 넣습니다. GitHub Secrets, `config.js`, 코드, 채팅에는 절대 넣지 마세요. 이 키는 RLS를 건너뛰는 관리자 키라 화면에 한 번이라도 들어가면 누구나 모든 데이터를 지울 수 있습니다. 화면에는 anon(공개) 키만 씁니다. 계정을 다 만들었으면 `.env`에서 지워도 됩니다.
+> 경고: service_role 키와 secret 키는 비상용 스크립트(`npm run users`)를 돌릴 때만 로컬 `.env`에 넣고, 다 쓰면 값을 비웁니다. GitHub Secrets, `config.js`, 코드, 채팅에는 절대 넣지 마세요. 이 키는 RLS를 건너뛰는 관리자 키라 화면에 한 번이라도 들어가면 누구나 모든 데이터를 지울 수 있습니다. 화면에는 anon(공개) 키만 씁니다. 평소 계정 관리는 화면의 "계정 관리"로 하며, 그때 쓰이는 키는 Supabase가 Edge Function 안에만 넣어 두는 것이라 우리 손을 거치지 않습니다.
 
 ## 배포 (GitHub Actions)
 
@@ -185,18 +194,19 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수) 검�
 
 ### 2. 카카오 개발자 콘솔
 
-developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사이트 도메인에 배포 주소 `https://<계정>.github.io`를 추가합니다. 도메인은 주소의 출처(origin)만 적습니다. `/저장소이름` 경로는 붙이지 않습니다. 등록하지 않으면 배포 사이트에서 지도가 뜨지 않습니다. 제품 설정 → 카카오맵 → 사용 설정이 켜져 있어야 합니다.
+developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사이트 도메인에 배포 주소를 추가합니다. 사용자 지정 도메인을 쓰면 그 주소(현재 `https://sistech.dpdns.org`), 아니면 `https://<계정>.github.io`입니다. 도메인은 주소의 출처(origin)만 적습니다. `/저장소이름` 경로는 붙이지 않습니다. 등록하지 않으면 배포 사이트에서 지도가 뜨지 않습니다. 제품 설정 → 카카오맵 → 사용 설정이 켜져 있어야 합니다.
 
 ### 3. 워크플로 흐름
 
 ```
 테스트(npm ci, npm test)
-  └▶ DB 마이그레이션(supabase link → supabase db push --remote --yes)
+  └▶ DB 마이그레이션·함수 배포(supabase link → supabase db push --remote --yes → supabase functions deploy admin-users)
        └▶ 페이지 배포(build.mjs <커밋 해시 7자리> → dist 업로드 → Pages)
 ```
 
 - 테스트가 실패하면 마이그레이션과 배포는 실행되지 않습니다. 마이그레이션이 실패해도 배포되지 않습니다. 어느 단계에서 멈추든 사이트는 이전 버전 그대로 유지됩니다.
 - 마이그레이션은 `supabase/migrations/`에 새로 추가된 파일만 적용합니다. 이미 적용된 파일은 고치지 말고 새 파일을 추가하세요.
+- Edge Function은 매 배포마다 `supabase/functions/admin-users/`를 통째로 다시 올립니다. 새 Secret은 필요 없습니다(기존 `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_ID`로 올리고, 함수가 쓰는 키는 Supabase가 넣어 줍니다).
 - 빌드는 `public/`을 `dist/`로 복사하고, Secrets 값으로 `config.js`를 새로 만들고, HTML과 JS가 부르는 파일 뒤에 `?v=<커밋 해시>`를 붙입니다. 배포할 때마다 주소가 달라져 브라우저가 옛 파일을 쓰지 않게 합니다.
 - 같은 배포가 겹치면 차례로 실행합니다. 진행 중인 배포는 끊지 않습니다.
 - 되돌리기: 문제가 생긴 커밋을 `git revert <커밋>`으로 되돌리고 push하면 이전 상태가 다시 배포됩니다. DB 구조를 되돌릴 때는 되돌리는 마이그레이션을 새 파일로 추가하세요.
@@ -233,6 +243,23 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 - 좌표는 소수점 7자리(약 1cm)로 맞춰 저장해서 중복 판정이 부동소수 오차에 흔들리지 않습니다.
 - 시각은 UTC ISO 8601 문자열로 내려줍니다.
 - 실시간 구독 대상은 `places`, `missions` 두 표입니다.
+
+### 계정 관리 함수 (Edge Function `admin-users`)
+
+계정 만들기는 service_role 키가 있어야 해서 DB 함수가 아니라 Supabase Edge Function(`supabase/functions/admin-users/`)으로 둡니다. 화면은 `supabase-js`의 `functions.invoke('admin-users', { body })`로 부르고, 로그인 토큰은 자동으로 함께 갑니다.
+
+- 권한: 함수가 Supabase 안에서 토큰을 검증하고(`auth.getUser`) 그 사용자의 `app_metadata.role`이 `admin`일 때만 처리합니다. 토큰이 없거나 틀리면 401, 관리자가 아니면 403입니다. 화면 버튼을 숨기는 것과 별개로 서버에서 막습니다.
+- 요청(POST JSON): `{ action, login_id?, password?, user_id? }`
+
+| action | 입력 | 성공 응답 | 오류 |
+| --- | --- | --- | --- |
+| `list` | 없음 | `{ ok: true, users: [{ id, login_id, email, created_at, last_sign_in_at, is_admin }] }` | — |
+| `create` | `login_id`(아이디 규칙), `password`(6자 이상) | `{ ok: true, user }` | 400 규칙 위반, 409 이미 있는 아이디 |
+| `reset_password` | `user_id`, `password` | `{ ok: true }` | 400 규칙 위반, 404 없는 계정 |
+
+- 실패 응답은 해당 상태 코드와 `{ ok: false, error: "한국어 메시지" }`이고 화면은 메시지를 그대로 보여 줍니다.
+- 아이디 → 이메일 변환 규칙은 `public/login-id.js`와 같습니다(함수 쪽에 같은 규칙을 두고, 두 결과가 같은지 테스트로 묶어 둡니다).
+- 비밀번호 재설정은 Supabase가 그 계정의 세션을 모두 끊으므로 재설정된 사람은 다시 로그인해야 합니다.
 
 ## CSV 형식
 
@@ -281,7 +308,7 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 �
 지도는 카카오맵 JavaScript SDK로 그립니다. 코드는 `public/kakao.js`와 `public/app.js`의 지도 영역에 있습니다.
 
 - 키: 카카오 개발자 콘솔(developers.kakao.com › 플랫폼 키 › Web)의 JavaScript 키를 로컬은 `.env`의 `KAKAO_JS_KEY`, 배포는 GitHub Secret `KAKAO_JS_KEY`에 넣습니다. 빌드 때 `config.js`에 들어가 화면이 읽습니다. 키가 비어 있으면 지도 자리에 안내 문구가 뜹니다(목록·미션 기능은 그대로 동작).
-- 도메인 등록: 키는 콘솔의 Web 플랫폼 › 사이트 도메인에 등록한 주소에서만 동작합니다. 로컬 개발용 `http://localhost:4100`과 배포용 `https://<계정>.github.io`가 등록되어 있어야 합니다. 다른 주소(포트)로 열면 지도 자리에 "이 주소가 등록되어 있는지 확인" 안내가 뜹니다.
+- 도메인 등록: 키는 콘솔의 Web 플랫폼 › 사이트 도메인에 등록한 주소에서만 동작합니다. 로컬 개발용 `http://localhost:4100`과 배포 주소(현재 `https://sistech.dpdns.org`)가 등록되어 있어야 합니다. 다른 주소(포트)로 열면 지도 자리에 "이 주소가 등록되어 있는지 확인" 안내가 뜹니다.
 - 비용: 카카오맵 JavaScript API는 무료이며 지도 로드 기준 하루 30만 건 한도입니다.
 - 이전 이력: OpenStreetMap 공용 타일 서버는 자동화 테스트 트래픽만으로 이용 정책 위반으로 차단됐고, CARTO는 키가 필요해져서, OpenFreeMap을 거쳐 카카오맵으로 정했습니다. Leaflet·MapLibre 의존성은 제거했습니다.
 - 자동 검증(헤드리스 브라우저)은 카카오 서버를 부르지 않도록 가짜 SDK를 주입해서 돌립니다. 실제 지도 확인은 등록된 주소에서 페이지를 한 번 여는 것으로 합니다.
@@ -291,9 +318,10 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 �
 - 공개되어도 되는 값: `SUPABASE_ANON_KEY`(anon 키)와 `KAKAO_JS_KEY`는 브라우저에 내려가는 공개용 키입니다. `config.js`로 화면에 들어가므로 누구나 볼 수 있다고 전제합니다.
   - anon 키로는 데이터를 못 봅니다. 표의 권한은 로그인한 사용자에게만 열려 있고 RLS가 켜져 있어서, 로그인하지 않은 요청은 거절됩니다. 함수 실행 권한도 로그인한 사용자에게만 있습니다.
   - 카카오 JavaScript 키는 콘솔에 등록한 도메인에서만 동작하도록 제한됩니다.
-- 로그인 필수: 가입 기능을 꺼 두었고 계정은 관리자가 직접 만듭니다. 계정이 있는 사람은 모든 장소를 보고 고치고 지울 수 있습니다(사용자별 권한 구분은 없습니다).
+- 로그인 필수: 가입 기능을 꺼 두었고 계정은 관리자가 화면의 "계정 관리"에서 만듭니다. 계정이 있는 사람은 모든 장소를 보고 고치고 지울 수 있습니다(장소 데이터에는 권한 구분이 없습니다).
+- 관리자: `app_metadata.role = "admin"` 표시가 있는 계정만 계정 관리 함수를 쓸 수 있습니다. 이 표시는 Supabase가 관리하는 값이라 사용자가 화면이나 API로 바꿀 수 없고, 마이그레이션·`npm run users -- --admin`·SQL Editor로만 넣습니다. 함수는 토큰을 서버에서 검증하므로 버튼을 억지로 눌러도 관리자가 아니면 거절됩니다.
 - 진짜 비밀: `SUPABASE_ACCESS_TOKEN`과 `SUPABASE_DB_PASSWORD`는 GitHub Actions 안의 마이그레이션 단계에서만 쓰입니다. 화면 파일(`dist/`)에는 들어가지 않고, 깃에도 올리지 않습니다.
-- service_role 키는 내 컴퓨터의 `.env`에서 계정 생성 스크립트로만 씁니다(`.env`는 깃 제외). 화면 파일, `config.js`, GitHub Secrets, 배포 과정에는 들어가지 않으며 스크립트도 키를 출력하지 않습니다.
+- service_role 키는 두 곳에서만 쓰입니다. 하나는 Supabase가 Edge Function 실행 환경에 자동으로 넣어 주는 것(우리는 저장하지 않음), 다른 하나는 비상용 스크립트를 돌릴 때 내 컴퓨터의 `.env`(깃 제외, 쓰고 나면 비움)입니다. 화면 파일, `config.js`, GitHub Secrets, 배포 과정에는 들어가지 않으며 스크립트도 키를 출력하지 않습니다.
 - 로그인이 만료되거나 권한 오류가 나면 화면이 로그인 화면으로 돌아가 이전 데이터를 지웁니다.
 
 ## 운영 주의
@@ -307,7 +335,8 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 �
 
 ## 알려진 한계
 
-- 계정이 있는 사람은 권한 차이 없이 모두 같은 일을 할 수 있습니다.
+- 장소 데이터에는 권한 차이가 없습니다. 계정이 있는 사람은 모두 같은 일을 할 수 있고, 관리자 표시는 계정 관리에만 쓰입니다.
+- 계정 삭제는 화면에 없습니다. 필요하면 Supabase 대시보드 Authentication → Users에서 지웁니다(로그인 기록은 남습니다).
 - CSV를 다시 가져와 미션 범위가 줄어들면(예: `~ _40` → `~ _34`) 범위 밖 미션의 기록은 DB에 남지만 화면에는 보이지 않고 진행도에도 세지 않습니다.
 - 이름은 분기(Q1, Q2 …)를 떼고 저장합니다. 다음 분기 CSV에 같은 이름·같은 좌표의 홈포인트가 있으면 새 장소로 추가되지 않고 미션명만 새 분기 것으로 바뀝니다.
 - 서로 다른 지역 코드가 같은 짧은 이름(SW_01)이 되면 목록에서 구분되지 않습니다(이름 규칙상 의도).
@@ -319,3 +348,4 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 �
 - 지도: OpenStreetMap 타일이 차단돼 OpenFreeMap을 거쳐 카카오맵으로 정함. 지도·위성·하이브리드·필지 배경.
 - 미션: 미션명 펼치기, 미션별 기록, 기기 간 충돌 감지(`version`), 상태 색상 자동화, 시군별 접이식 목록.
 - 2026-11-06 전환: Express + SQLite 서버를 없애고 GitHub Pages(정적) + Supabase(Postgres·Auth·Realtime) 구조로 바꿈. 로그인 필수와 실시간 반영을 추가하고, CSV 읽기를 브라우저로 옮기고, API를 DB 함수 5개로 대체. GitHub Actions로 테스트 → 마이그레이션 → 배포를 자동화.
+- 2026-11-06 계정: 한글 아이디 로그인, 로그인 기록(DB에만), 관리자 전용 계정 관리(Edge Function `admin-users`, 관리자 표시는 `app_metadata.role`). 사이트 주소를 `https://sistech.dpdns.org`로 변경.

@@ -22,8 +22,14 @@ create table auth.users (
   id                 uuid primary key,
   email              text,
   raw_user_meta_data jsonb default '{}',
+  raw_app_meta_data  jsonb default '{}',   -- GoTrue의 app_metadata(사용자가 못 바꿈). 관리자 role이 여기 들어간다.
   created_at         timestamptz default now()
 );
+-- 관리자 지정 마이그레이션(20261106170000_admin_role.sql)이 찾을 계정을 미리 넣어 둔다(shim은 마이그레이션보다 먼저 실행됨).
+-- 김용문은 관리자가 되어야 하고, 손두병은 건드리지 않아야 한다. 김용문은 기존 app_metadata(provider)가 보존되는지도 본다.
+insert into auth.users (id, email, raw_user_meta_data, raw_app_meta_data) values
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'xn--4k0bz9vb1i@sistech.local', '{"login_id":"김용문"}', '{"provider":"email"}'),
+  ('aaaaaaaa-0000-0000-0000-000000000002', 'xn--hu1b84nd3d@sistech.local', '{"login_id":"손두병"}', '{"provider":"email"}');
 create table auth.sessions (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid references auth.users,

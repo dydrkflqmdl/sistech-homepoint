@@ -520,6 +520,35 @@ set role rls_probe;
 select t.ok('정책 없는 롤은 login_logs도 RLS로 0행', (select count(*) from public.login_logs) = 0);
 reset role;
 
+-- ===================================================================
+-- 관리자 지정(supabase/migrations/20261106170000_admin_role.sql)
+-- shim이 김용문·손두병 행을 넣어 두었고, 마이그레이션이 김용문에게만 role=admin을 병합했어야 한다.
+-- ===================================================================
+select t.eq('김용문은 app_metadata.role = admin(기존 provider 보존)',
+  (select raw_app_meta_data from auth.users where email = 'xn--4k0bz9vb1i@sistech.local'),
+  '{"provider":"email","role":"admin"}');
+select t.ok('손두병은 role 없음',
+  (select raw_app_meta_data ->> 'role' is null from auth.users where email = 'xn--hu1b84nd3d@sistech.local'));
+select t.ok('role=admin은 김용문 한 명뿐',
+  (select count(*) from auth.users where raw_app_meta_data ->> 'role' = 'admin') = 1);
+-- 멱등: 같은 마이그레이션을 다시 실행해도 모든 행이 그대로다.
+create temp table t_users_before as select id, email, raw_user_meta_data, raw_app_meta_data from auth.users;
+\ir ../migrations/20261106170000_admin_role.sql
+select t.ok('관리자 마이그레이션 재실행 → auth.users 변화 없음(멱등)',
+  not exists (
+    (select id, email, raw_user_meta_data, raw_app_meta_data from auth.users
+     except select * from t_users_before)
+    union all
+    (select * from t_users_before
+     except select id, email, raw_user_meta_data, raw_app_meta_data from auth.users)));
+-- auth.users 권한이 없는 롤(rls_probe: auth 스키마 USAGE조차 없음)로 실행해도 오류로 멈추지 않아야 한다(배포가 멈추지 않게).
+-- ON_ERROR_STOP이 켜져 있으므로 DO 블록이 오류를 삼키지 못하면 여기서 테스트 파일 전체가 중단된다.
+set role rls_probe;
+\ir ../migrations/20261106170000_admin_role.sql
+reset role;
+select t.ok('auth.users 권한 없는 롤로 재실행 → 오류 없이 지나가고 데이터도 그대로',
+  (select count(*) from auth.users where raw_app_meta_data ->> 'role' = 'admin') = 1);
+
 -- ---------- 결과 ----------
 \o
 \echo
