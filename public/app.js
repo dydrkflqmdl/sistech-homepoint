@@ -1,21 +1,10 @@
-import { kakaoMapViewUrl, openKakaoMapRoute } from './kakao.js';
-import { missionNames, missionProgress } from './mission.js';
 // csv.js·login-id.js는 다른 담당이 함수를 더해 가는 파일이라 이름공간으로 가져온다.
 // 아직 없는 이름(nearDuplicates·isValidPassword 등)을 이름으로 가져오면 모듈 전체가 안 열리므로, 쓸 때 있는지 보고 쓴다.
 import * as csv from './csv.js';
 import * as loginId from './login-id.js';
 import * as api from './api.js';
 import { $, fill, h, refocus, toast } from './dom.js';
-import {
-  collapseAllGroups,
-  config,
-  hooks,
-  isPlaceGone,
-  placeColor,
-  state,
-  touchPlace,
-  visiblePlaces,
-} from './state.js';
+import { collapseAllGroups, config, hooks, placeColor, state, visiblePlaces } from './state.js';
 import {
   LOGIN_ENDED_MESSAGE,
   authEpoch,
@@ -34,19 +23,8 @@ import {
   showView,
   signedIn,
 } from './session.js';
-import { fitToPlaces, mapState, panToPlace, renderMarkers, startMap } from './map-ui.js';
-import {
-  anyUnsavedMemo,
-  discardMemo,
-  flushAllMemos,
-  flushMemo,
-  memoDrafts,
-  memoStatusView,
-  memoText,
-  onMemoInput,
-  retryFailedMemos,
-  saveAllMemos,
-} from './memo-ui.js';
+import { fitToPlaces, mapState, renderMarkers, startMap } from './map-ui.js';
+import { anyUnsavedMemo, discardMemo, flushAllMemos, memoDrafts, retryFailedMemos, saveAllMemos } from './memo-ui.js';
 import {
   flushRemote,
   loadPlaces,
@@ -57,144 +35,21 @@ import {
   resetSync,
   setRemoteChangedWhileImporting,
 } from './sync.js';
+import { cancelSearch, renderFilters, renderList } from './list-ui.js';
 import {
-  cancelSearch,
-  districtOf,
-  groupHeadSelector,
-  listItemSelector,
-  missionBadge,
-  placeDot,
-  renderFilters,
-  renderList,
-} from './list-ui.js';
-import {
-  cancelMissionDraft,
   confirmDiscardDraft,
   confirmDiscardMissionDraft,
   draftDirty,
-  draftMatches,
   missionAborts,
   missionDraftDirty,
-  missionDraftFor,
-  missionEditing,
-  missionForm,
-  missionKey,
-  missionRecord,
   missionSaving,
-  missionView,
-  toggleMission,
 } from './missions-ui.js';
+import { dropGonePlace, renderDetail, renderDetailUnlessComposing, requestSelect } from './detail-ui.js';
 
 // 아래쪽 모듈이 부르는 함수를 넘겨준다(state.js의 hooks 설명 참고).
 Object.assign(hooks, { dropGonePlace, leaveApp, render, renderDetail, renderKeepingInput, renderListAndMap, requestSelect });
 
 let unsubscribeChanges = null;
-
-// ── 화면 그리기 ───────────────────────────────────────────
-
-function renderDetail() {
-  const box = $('#detail');
-  const p = state.places.find((x) => x.id === state.selectedId);
-  box.hidden = !p;
-  if (!p) {
-    box.replaceChildren();
-    delete box.dataset.placeId;
-    return;
-  }
-  box.dataset.placeId = p.id;
-
-  // 저장하지 않은(또는 저장 중인) 메모가 있으면 서버 값 대신 그것을 보여 준다. 실시간으로 다시 그려도 적던 글이 덮이지 않는다.
-  const memo = h(
-    'textarea',
-    {
-      id: 'memo-input',
-      rows: 2,
-      maxlength: 2000,
-      placeholder: '메모를 남겨 두세요',
-      'aria-describedby': 'memo-status',
-      oninput: (e) => onMemoInput(p.id, e.target.value),
-      // 칸을 떠나면(change) 1초를 기다리지 않고 바로 저장한다.
-      onchange: (e) => flushMemo(p.id, e.target.value),
-    },
-    memoText(p),
-  );
-  const missions = missionNames(p.mission);
-  const progress = missionProgress(p.mission, p.missions);
-
-  fill(
-    box,
-    h(
-      'div',
-      { class: 'detail-head' },
-      placeDot(p),
-      // 장소를 고르면 초점이 여기로 온다(tabindex=-1: 탭 순서에는 넣지 않고 초점만 받을 수 있게).
-      h('h2', { id: 'detail-title', tabindex: '-1' }, p.name, missionBadge(p)),
-      h('button', { type: 'button', class: 'icon-btn', 'aria-label': '닫기', onclick: closeDetail }, '×'),
-    ),
-    // 주소에는 시군이 들어 있지 않다(목록은 시군별로 묶여 보이므로). 상세 카드만 시군을 작은 표시로 앞에 붙인다.
-    (p.address || p.phone || p.district) &&
-      h(
-        'div',
-        { class: 'meta' },
-        (p.address || p.district) &&
-          h('span', { class: 'addr-line' }, p.district && h('span', { class: 'district' }, p.district), p.address && h('span', {}, p.address)),
-        p.phone && h('a', { href: `tel:${p.phone}` }, p.phone),
-      ),
-    h(
-      'div',
-      { class: 'route-actions' },
-      h('button', { type: 'button', class: 'btn primary', onclick: () => openKakaoMapRoute(p) }, '카카오맵 길찾기'),
-      h('a', { class: 'btn', href: kakaoMapViewUrl(p), target: '_blank', rel: 'noopener' }, '카카오맵에서 보기'),
-    ),
-    h(
-      'div',
-      { class: 'memo' },
-      h('label', { for: 'memo-input' }, '메모'),
-      memo,
-      // 저장 상태는 메모 아래에 고정해 보여 준다(알림처럼 사라지지 않는다).
-      h('div', { id: 'memo-status', class: 'memo-status', role: 'status' }, memoStatusView(p.id)),
-    ),
-    missions.length > 0 &&
-      h(
-        'section',
-        { class: 'missions' },
-        h('h3', {}, `미션 ${progress.done}/${progress.total}`),
-        // 이름이 거의 같아서 맨 뒤 번호를 굵게 보여 준다. 고른 미션 바로 아래 줄에 기록 입력 칸을 펼친다.
-        h(
-          'ol',
-          { class: 'mission-list' },
-          missions.flatMap((m) => {
-            const [, head, num] = m.match(/^(.*?)(\d+)$/) ?? [m, m, ''];
-            const record = missionRecord(p, m);
-            const open = m === state.selectedMission;
-            return [
-              h(
-                'li',
-                {},
-                h(
-                  'button',
-                  {
-                    type: 'button',
-                    // 아래 입력 칸 안의 버튼과 구분되도록 미션 버튼에만 붙인다.
-                    class: record.done ? 'mission-item done' : 'mission-item',
-                    'data-mission': m,
-                    'aria-current': open ? 'true' : null,
-                    'aria-expanded': String(open),
-                    onclick: () => toggleMission(m),
-                  },
-                  h('span', { class: 'mission-name' }, head, num && h('b', {}, num)),
-                  record.done && [h('span', { class: 'mission-check', 'aria-hidden': 'true' }, '✓'), h('span', { class: 'sr-only' }, '완료')],
-                ),
-              ),
-              open && h('li', { class: 'mission-editor' }, missionEditing(p, m) ? missionForm(p, missionDraftFor(p, m)) : missionView(p, record)),
-            ];
-          }),
-        ),
-      ),
-    // 실수로 누르지 않게 다른 버튼과 떨어뜨려 맨 아래에 둔다(styles.css .delete-place).
-    h('div', { class: 'delete-place' }, h('button', { type: 'button', class: 'link danger', onclick: () => removePlace(p) }, '이 장소 삭제')),
-  );
-}
 
 // "저장 10 · 중복 0(그중 0 갱신) · 오류 0". 서버의 중복 수에는 갱신한 장소도 들어 있어서 괄호로 묶는다.
 // 좁은 화면에서 "오류 / 0"처럼 숫자만 다음 줄로 떨어지지 않게 항목마다 묶는다.
@@ -867,37 +722,6 @@ $('#accounts-panel').addEventListener('keydown', (e) => {
   else closeAccounts();
 });
 
-// 상세 정보 안에서 한글을 조합하는 중이면(IME) 상세 정보는 다시 그리지 않고 미뤄 둔다.
-// 조합 중에 입력 칸을 새로 만들면 휴대폰 키보드에서 글자가 겹치거나 사라진다. 조합이 끝나면 그때 그린다.
-let detailComposing = false;
-let detailRenderPending = false;
-$('#detail').addEventListener('compositionstart', () => {
-  detailComposing = true;
-});
-function endDetailComposing() {
-  detailComposing = false;
-  if (!detailRenderPending) return;
-  detailRenderPending = false;
-  // compositionend 바로 뒤에 오는 input을 먼저 받게 한 박자 늦춘다.
-  setTimeout(renderKeepingInput, 0);
-}
-$('#detail').addEventListener('compositionend', endDetailComposing);
-// 조합 중이던 칸에서 초점이 빠지면 조합은 끝난 것이다(칸이 사라지거나 브라우저에 따라 compositionend가 안 올 수 있다).
-$('#detail').addEventListener('focusout', () => {
-  if (detailComposing) endDetailComposing();
-});
-
-function renderDetailUnlessComposing() {
-  // 고른 장소가 바뀌었거나 상세 정보가 닫히는 경우, 초점이 상세 정보 밖에 있는 경우는 미루지 않는다.
-  const shown = Number($('#detail').dataset.placeId);
-  if (detailComposing && shown === state.selectedId && $('#detail').contains(document.activeElement)) {
-    detailRenderPending = true;
-    return;
-  }
-  detailRenderPending = false;
-  renderDetail();
-}
-
 function render() {
   // 미션 저장으로 그 상태의 장소가 하나도 안 남으면 칩도 사라지므로, 아무 칩도 눌리지 않은 채 걸러지지 않게 전체로 되돌린다.
   if (state.filterColor && !state.places.some((p) => placeColor(p) === state.filterColor)) state.filterColor = null;
@@ -906,53 +730,6 @@ function render() {
   renderList(visible);
   renderMarkers(visible);
   renderDetailUnlessComposing();
-}
-
-// ── 동작 ────────────────────────────────────────────────
-
-function select(id, { pan = false } = {}) {
-  if (id !== state.selectedId) {
-    state.selectedMission = null;
-    state.missionDraft = null;
-    // 떠나는 장소의 메모가 이미 저장됐으면 초안을 지운다(다시 열 때 옛 "저장됨"이 남지 않게). 저장 중·실패한 것은 둔다.
-    if (memoDrafts.get(state.selectedId)?.status === 'saved') discardMemo(state.selectedId);
-  }
-  state.selectedId = id;
-  render();
-  const p = state.places.find((x) => x.id === id);
-  if (!p) return;
-  if (pan) panToPlace(p);
-  $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-// 사람이 다른 장소를 고를 때 쓴다. 저장 안 한 미션 기록·메모가 버려지면 먼저 묻고, 그만두면 false.
-function requestSelect(id, opts) {
-  if (id !== state.selectedId && !confirmDiscardDraft()) return false;
-  select(id, opts);
-  return true;
-}
-
-// 상세 정보를 닫고(×·Esc) 그 장소의 목록 항목으로, 목록에 없으면 검색 칸으로 초점을 옮긴다.
-function closeDetail() {
-  const id = state.selectedId;
-  if (id === null || !confirmDiscardDraft()) return;
-  const district = districtOf(state.places.find((p) => p.id === id) ?? {});
-  select(null);
-  // 닫으면 그 시군이 다시 접힐 수 있어서, 줄이 안 보이면 시군 머리로 초점을 옮긴다.
-  const row = $(listItemSelector(id));
-  if (row && row.offsetParent !== null) refocus(listItemSelector(id));
-  else if ($(groupHeadSelector(district))) refocus(groupHeadSelector(district));
-  else refocus('#search');
-}
-
-// 다른 기기에서 지워진 장소: 목록에서 빼고 상세 정보를 닫는다. DB 함수는 "장소를 찾을 수 없습니다." 예외를 던진다.
-function dropGonePlace(id) {
-  state.places = state.places.filter((p) => p.id !== id);
-  touchPlace(id);
-  discardMemo(id);
-  if (state.selectedId === id) select(null);
-  else render();
-  toast('이 장소는 다른 기기에서 삭제되었습니다.');
 }
 
 // render()는 상세 정보를 새로 만들므로, 사용자가 쓰고 있던 칸의 초점이 사라진다(휴대폰에서는 키보드까지 닫힌다).
@@ -982,36 +759,6 @@ function renderKeepingInput() {
 }
 
 // ── 메모: 입력 후 1초 뒤 저절로 저장 ─────────────────────────
-
-async function removePlace(place) {
-  if (!confirmDiscardDraft()) return;
-  // 미션 기록도 함께 지워지므로 몇 건인지 같이 알린다.
-  const records = place.missions?.length ?? 0;
-  const question = `"${place.name}"을(를) 삭제할까요?${records > 0 ? `\n미션 기록 ${records}건도 함께 삭제됩니다.` : ''}`;
-  if (!confirm(question)) return;
-  const epoch = authEpoch;
-  try {
-    const removed = await api.deletePlace(place.id);
-    if (epoch !== authEpoch) return;
-    if (!removed) {
-      dropGonePlace(place.id);
-      return;
-    }
-    state.places = state.places.filter((p) => p.id !== place.id);
-    touchPlace(place.id);
-    discardMemo(place.id);
-    state.selectedId = null;
-    state.selectedMission = null;
-    state.missionDraft = null;
-    render();
-    refocus('#search');
-    toast('삭제했습니다.');
-  } catch (err) {
-    if (authFailed(err) || epoch !== authEpoch) return;
-    if (isPlaceGone(err)) dropGonePlace(place.id);
-    else toast(err.message);
-  }
-}
 
 const isCsvFile = (f) => /\.(csv|tsv|txt)$/i.test(f.name) || f.type === 'text/csv';
 
@@ -1264,24 +1011,6 @@ $('#export-button').addEventListener('click', () => {
 $('#csv-input').addEventListener('change', (e) => {
   if (e.target.files.length > 0) startImport(e.target.files);
   e.target.value = '';
-});
-
-// Esc: 미션 기록을 고치는 중이면 먼저 [취소], 그다음 Esc에 상세 정보를 닫는다.
-// 미션 입력 칸 안에서는 아무것도 안 고쳤을 때만 취소한다(적던 값을 실수로 날리지 않게). 다른 입력 칸에서는 아무것도 안 한다.
-document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || state.selectedId === null) return;
-  const inField = e.target.closest?.('input, textarea, select');
-  const p = state.places.find((x) => x.id === state.selectedId);
-  const d = state.missionDraft;
-  if (p && d && draftMatches(p, state.selectedMission)) {
-    if (inField && (!e.target.closest('.mission-form') || missionDraftDirty())) return;
-    if (missionSaving.has(missionKey(p.id, d.mission))) return;
-    if (!confirmDiscardMissionDraft()) return;
-    cancelMissionDraft(p, d.mission);
-    return;
-  }
-  if (inField) return;
-  closeDetail();
 });
 
 // 화면 어디든 CSV를 끌어다 놓으면 가져오기를 시작한다. 로그인 전에는 받지 않는다(놓은 파일로 페이지가 바뀌지 않게 기본 동작만 막는다).
