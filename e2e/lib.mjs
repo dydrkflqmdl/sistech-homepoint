@@ -65,7 +65,7 @@ export const PAGE_HELPERS = `(() => {
 export const csv = () => import(path.join(PROJECT, 'public/csv.js'));
 
 // 미션 기록 내보내기 머리글(계약 C11)
-export const MISSION_CSV_HEADER = '시기,시군,이름,미션명,완료,작업자,비행시간,배터리 번호,배터리 남은 용량,마지막 저장';
+export const MISSION_CSV_HEADER = '시군,이름,미션명,완료,작업자,비행시간,배터리 번호,배터리 남은 용량,마지막 저장';
 
 // launch({ csvShim: 'legacy' })로 브라우저가 받는 csv.js에서 toMissionCsv를 감춘다(파일은 그대로).
 // 옛 csv.js에서 [내보내기]가 메뉴 없이 바로 장소를 내보내는지 보려고 쓴다.

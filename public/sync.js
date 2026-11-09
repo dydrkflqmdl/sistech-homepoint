@@ -6,8 +6,6 @@ import {
   localSeq,
   localTouch,
   ownWrites,
-  periodOf,
-  periodPlaces,
   state,
   touchPlace,
   touchedSince,
@@ -135,7 +133,7 @@ export async function loadPlaces({ fit = false } = {}) {
   state.loadError = null;
   render();
   try {
-    if ((await reloadPlaces()) && fit && epoch === authEpoch) fitToPlaces(periodPlaces());
+    if ((await reloadPlaces()) && fit && epoch === authEpoch) fitToPlaces(state.places);
   } catch (err) {
     if (authFailed(err) || epoch !== authEpoch) return;
     api.logCause('장소 목록 받기 실패', err);
@@ -187,9 +185,8 @@ export function onRemoteChange(change) {
 }
 
 // 알림의 새 값이 화면에 있는 값과 같으면 true. 알림에 없는 칸이 있으면 모르는 것으로 보고 다시 받는다.
-// 시기(period, 계약 C10)는 아직 그 칸이 없는 서버도 있어서, 알림·화면 모두 없으면 ''로 보고 비교한다.
 const PLACE_COLUMNS = ['name', 'district', 'address', 'phone', 'memo', 'mission', 'lat', 'lng'];
-const samePlaceRow = (row, p) => PLACE_COLUMNS.every((k) => k in row && row[k] === p[k]) && periodOf(row) === periodOf(p);
+const samePlaceRow = (row, p) => PLACE_COLUMNS.every((k) => k in row && row[k] === p[k]);
 function placeRowMatches(row) {
   const p = row && findPlace(row.id);
   return Boolean(p) && samePlaceRow(row, p);

@@ -1,23 +1,10 @@
-// CSV 가져오기 창(파일 고르기·끌어다 놓기, 가져오기 전 확인 C7·시기별 새 장소, 파일별 결과)과 내보내기 메뉴(장소/미션 기록).
+// CSV 가져오기 창(파일 고르기·끌어다 놓기, 가져오기 전 확인 C7, 파일별 결과)과 내보내기 메뉴(장소/미션 기록).
 import { $, fill, h, refocus, toast } from './dom.js';
-import {
-  activePeriod,
-  collapseAllGroups,
-  comparePeriodDesc,
-  hooks,
-  periodOf,
-  periodPlaces,
-  periodSuffix,
-  setPeriodChoice,
-  state,
-  visiblePlaces,
-} from './state.js';
+import { hooks, state, visiblePlaces } from './state.js';
 import { authEpoch, authFailed, signedIn } from './session.js';
 import { fitToPlaces } from './map-ui.js';
 import { flushRemote, reloadPlaces, remoteChangedWhileImporting, setRemoteChangedWhileImporting } from './sync.js';
 import { confirmDiscardDraft, draftDirty } from './missions-ui.js';
-import { dropSelectionOutsidePeriod } from './list-ui.js';
-import { roundCoord } from './coord.js';
 // csv.js는 다른 담당이 함수를 더해 가는 파일이라 이름공간으로 가져온다.
 // 아직 없는 이름(nearDuplicates 등)을 이름으로 가져오면 모듈 전체가 안 열리므로, 쓸 때 있는지 보고 쓴다.
 import * as csv from './csv.js';
@@ -132,17 +119,6 @@ function importReviewView(review) {
     'section',
     { class: 'import-review', 'aria-labelledby': 'import-review-title' },
     h('h3', { id: 'import-review-title' }, '가져오기 전에 확인해 주세요'),
-    review.periods.length > 0 &&
-      h(
-        'div',
-        { class: 'review-group review-periods' },
-        h('h4', {}, '시기별 새 장소'),
-        h(
-          'ul',
-          { class: 'review-list' },
-          review.periods.map(({ period, count }) => h('li', {}, h('b', {}, period || '시기 없음'), ` 새 장소 ${count}개`)),
-        ),
-      ),
     review.changes.length > 0 &&
       h(
         'div',
@@ -305,36 +281,7 @@ async function sendImportFile(parsed) {
   };
 }
 
-// 시기별로 새로 생길 장소 수(계약 C10: 이름·좌표·시기가 모두 같은 기존 장소가 없으면 새 장소).
-// 가져오는 파일에 시기가 하나도 없으면 [](예전처럼 따로 보이지 않는다). 최신 시기가 앞, "시기 없음"은 맨 뒤.
-function newPlacesByPeriod(parsedFiles) {
-  const key = (p) => `${p.name}|${roundCoord(p.lat)}|${roundCoord(p.lng)}|${periodOf(p)}`;
-  const known = new Set(state.places.map(key));
-  const counts = new Map();
-  let named = false;
-  for (const { parsed } of parsedFiles) {
-    for (const p of parsed?.places ?? []) {
-      if (periodOf(p)) named = true;
-      const k = key(p);
-      if (known.has(k)) continue;
-      known.add(k);
-      counts.set(periodOf(p), (counts.get(periodOf(p)) ?? 0) + 1);
-    }
-  }
-  if (!named) return [];
-  return [...counts]
-    .sort(([a], [b]) => (a === '') - (b === '') || comparePeriodDesc(a, b))
-    .map(([period, count]) => ({ period, count }));
-}
-
-// 가져온 파일들에서 가장 최신 시기(없으면 null). 가져온 뒤 시기 칩을 이것으로 고른다.
-function latestPeriodIn(parsedList) {
-  const periods = parsedList.flatMap((parsed) => (parsed?.places ?? []).map(periodOf)).filter(Boolean);
-  return periods.length > 0 ? periods.sort(comparePeriodDesc)[0] : null;
-}
-
 // 가져오기 전에 확인받을 것(계약 C7): 행 경고, 같은 이름·시군인데 좌표가 다른 기존 장소(근접 중복), 미션명이 바뀌는 기존 장소.
-// 확인할 것이 있어 멈출 때는 시기별 새 장소 수도 함께 보여 준다. 시기만으로는 멈추지 않는다(가져온 뒤 알림으로 알린다).
 // csv.js에 탐지 함수가 아직 없으면 그 항목은 건너뛴다. 확인할 것이 없으면 null.
 function importReview(parsedFiles) {
   const multi = parsedFiles.length > 1;
@@ -353,8 +300,7 @@ function importReview(parsedFiles) {
       api.logCause('가져오기 전 확인(근접 중복·미션명 변경) 실패 — 확인 없이 진행', err);
     }
   }
-  const periods = newPlacesByPeriod(parsedFiles);
-  return warnings.length || near.length || changes.length ? { warnings, near, changes, periods } : null;
+  return warnings.length || near.length || changes.length ? { warnings, near, changes } : null;
 }
 
 // 파일을 하나씩 읽고, 확인할 것이 있으면 멈춰 묻고, 없으면 바로 보낸다.
@@ -424,10 +370,6 @@ async function sendImport(parsedFiles, epoch) {
   state.importing = true;
   setRemoteChangedWhileImporting(false);
   const wasEmpty = state.places.length === 0;
-  // 보내기 전의 목록 기준으로 시기별 새 장소 수를 세어 둔다(가져온 뒤 알림 "Q2 새 장소 12개").
-  const periodSummary = newPlacesByPeriod(parsedFiles.filter((item) => item.parsed))
-    .map(({ period, count }) => `${period || '시기 없음'} 새 장소 ${count}개`)
-    .join(', ');
   const results = [];
   for (const [i, item] of parsedFiles.entries()) {
     state.importProgress = i + 1;
@@ -445,19 +387,8 @@ async function sendImport(parsedFiles, epoch) {
     }
     if (epoch !== authEpoch) return;
   }
-  // 방금 가져온 파일의 시기(여럿이면 최신)로 시기 칩을 고른다. 보내지 못한 파일은 빼고 본다.
-  const importedPeriod = latestPeriodIn(parsedFiles.filter((_, i) => results[i]?.result).map((item) => item.parsed));
-  const periodChanged = importedPeriod !== null && importedPeriod !== activePeriod();
-  if (importedPeriod !== null) setPeriodChoice(importedPeriod);
   try {
-    const reloaded = await reloadPlaces();
-    if (periodChanged && epoch === authEpoch) {
-      // 열어 둔 장소가 새 시기에 없으면 닫는다(미션 기록 초안은 가져오기를 시작할 때 이미 정리했다).
-      dropSelectionOutsidePeriod();
-      collapseAllGroups();
-      render();
-    }
-    if (reloaded && (wasEmpty || periodChanged || results.some((r) => r.result?.imported > 0))) fitToPlaces(visiblePlaces());
+    if ((await reloadPlaces()) && (wasEmpty || results.some((r) => r.result?.imported > 0))) fitToPlaces(visiblePlaces());
   } catch (err) {
     if (!authFailed(err)) toast(err.message);
   }
@@ -467,10 +398,7 @@ async function sendImport(parsedFiles, epoch) {
     const single = files.length === 1 && state.importSkipped.length === 0;
     // 파일 하나가 실패하면 예전처럼 알림만 띄우고 [가져오기] 화면에 남는다.
     if (single && results[0].error) toast(results[0].error);
-    else {
-      state.importResults = results;
-      if (periodSummary && results.some((r) => r.result?.imported > 0)) toast(periodSummary);
-    }
+    else state.importResults = results;
   }
   state.importing = false;
   state.importProgress = 0;
@@ -502,20 +430,15 @@ function downloadCsv(text, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
 
-// 파일명에 넣을 시기: 시기를 골랐으면 "Q1-", 전체·시기 없는 데이터면 ''. 파일명에 못 쓰는 글자는 _로 바꾼다.
-const periodFilePart = (period) => (period === null ? '' : `${(period || '시기없음').replace(/[\\/:*?"<>|\s]+/g, '_')}-`);
-
-// 장소 내보내기: 지금 시기의 장소(시기를 고르지 않았거나 시기가 없는 데이터면 전체)를 다시 가져올 수 있는 형식으로.
+// 장소 내보내기: 저장된 장소 전부를 다시 가져올 수 있는 형식으로.
 function exportPlaces() {
-  const period = activePeriod();
-  downloadCsv(csv.toCsv(periodPlaces(period)), `places-${periodFilePart(period)}${localDateStamp()}.csv`);
+  downloadCsv(csv.toCsv(state.places), `places-${localDateStamp()}.csv`);
 }
 
-// 미션 기록 내보내기(계약 C11): 지금 시기의 장소를 csv.toMissionCsv로. csv.js에 함수가 없으면 메뉴 자체를 띄우지 않는다.
+// 미션 기록 내보내기(계약 C11): 저장된 장소 전부를 csv.toMissionCsv로. csv.js에 함수가 없으면 메뉴 자체를 띄우지 않는다.
 function exportMissions() {
   if (typeof csv.toMissionCsv !== 'function') return;
-  const period = activePeriod();
-  downloadCsv(csv.toMissionCsv(periodPlaces(period)), `missions-${periodFilePart(period)}${localDateStamp()}.csv`);
+  downloadCsv(csv.toMissionCsv(state.places), `missions-${localDateStamp()}.csv`);
 }
 
 // [내보내기]: csv.js에 미션 기록 내보내기(toMissionCsv)가 있으면 단추 아래에 작은 메뉴(장소 / 미션 기록)를 띄운다.
@@ -538,7 +461,6 @@ export function closeExportMenu({ focus = false } = {}) {
 }
 
 function openExportMenu() {
-  const suffix = periodSuffix();
   const item = (id, label, run) =>
     h(
       'button',
@@ -554,7 +476,7 @@ function openExportMenu() {
       },
       label,
     );
-  fill(exportMenu, item('export-places', `장소 내보내기${suffix}`, exportPlaces), item('export-missions', `미션 기록 내보내기${suffix}`, exportMissions));
+  fill(exportMenu, item('export-places', '장소 내보내기', exportPlaces), item('export-missions', '미션 기록 내보내기', exportMissions));
   exportMenu.hidden = false;
   exportButton.setAttribute('aria-expanded', 'true');
   placeExportMenu();
