@@ -126,8 +126,6 @@ const HEADER_ALIASES = {
   mission: ['미션명', '미션', '미션이름', 'mission', 'missions', 'missionname'],
   // 소티(완료/전체)는 미션명과 개수가 맞는지 확인하는 데만 쓰고 저장하지 않는다. "소티(완료/전체)"는 정규화하면 "소티"다.
   sortie: ['소티', '완료/전체', 'sortie'],
-  // 시기(예: Q1). 같은 이름·좌표라도 시기가 다르면 다른 장소다.
-  period: ['시기', '분기', '기간', 'period', 'quarter', 'phase'],
 };
 
 // 읽기만 하고 장소에는 넣지 않는 필드. readPlaces의 columns(저장하는 열 목록)에도 넣지 않는다.
@@ -250,12 +248,6 @@ const guard = (s) => (needsGuard(s) ? `'${s}` : s);
 const unguard = (s) => (s.startsWith("'") && needsGuard(s.slice(1)) ? s.slice(1) : s);
 
 const MAX_ERRORS = 200;
-const MAX_PERIOD = 20;
-
-// DB(import_places)가 같은 장소로 보는 기준: 이름·시기가 똑같고 좌표가 소수 7자리까지 같다.
-// 기존 장소에 period가 없으면 빈 칸('')으로 본다. JSON 배열로 묶어 이름에 |가 있어도 키가 섞이지 않게 한다.
-const periodOf = (p) => String(p.period ?? '').trim();
-const placeKey = (p) => JSON.stringify([p.name, periodOf(p), roundCoord(p.lat), roundCoord(p.lng)]);
 
 // 대한민국 범위(대략). 이 밖이면 저장은 하되 경고한다(독도 131.87, 마라도 33.11, 백령도 124.6 포함).
 const KOREA = { latMin: 33, latMax: 39, lngMin: 124, lngMax: 132 };
@@ -289,7 +281,7 @@ export function readPlaces(buffer) {
     reason: `'${headerLabel(header[index])}' 열은 '${headerLabel(header[kept])}' 열과 같은 뜻이라 무시했습니다.`,
   }));
   let doneWarned = false;
-  const firstLineOf = new Map(); // 이름·시기·좌표 → 처음 나온 줄
+  const firstLineOf = new Map(); // 이름|위도|경도 → 처음 나온 줄
   for (const { line, cells } of rows) {
     // 메모는 앞뒤 공백도 내용으로 보고 그대로 둔다. 나머지 칸은 앞뒤 공백을 지운다.
     const raw = (field) => unguard(columns[field] === undefined ? '' : (cells[columns[field]] ?? ''));
@@ -321,15 +313,10 @@ export function readPlaces(buffer) {
       errors.push({ line, reason: `좌표 범위를 벗어났습니다. (위도: ${lat}, 경도: ${lng})` });
       continue;
     }
-    const period = get('period');
-    if (Array.from(period).length > MAX_PERIOD) {
-      errors.push({ line, reason: `시기는 ${MAX_PERIOD}자 이하여야 합니다.` });
-      continue;
-    }
     // 한 파일 안에 같은 장소가 두 번 있으면 뒤 행이 앞 행을 조용히 덮지 않도록 건너뛰고 알려 준다. 판정 기준은 DB(import_places)와 같다.
-    const key = placeKey({ name, period, lat, lng });
+    const key = `${name}|${roundCoord(lat)}|${roundCoord(lng)}`;
     if (firstLineOf.has(key)) {
-      errors.push({ line, reason: `${firstLineOf.get(key)}행과 같은 장소(이름·시기·좌표)라서 건너뜁니다.` });
+      errors.push({ line, reason: `${firstLineOf.get(key)}행과 같은 장소(이름·좌표)라서 건너뜁니다.` });
       continue;
     }
     firstLineOf.set(key, line);
@@ -358,7 +345,6 @@ export function readPlaces(buffer) {
     places.push({
       line,
       name,
-      period,
       district: clip(get('district'), 200),
       address: clip(stripDistrict(get('district'), get('address')), 200),
       // 주소 칸이 비었으면 이미 있는 장소의 주소를 지우지 않는다(import_places).
@@ -383,8 +369,7 @@ export function readPlaces(buffer) {
 }
 
 // ── 가져오기 전 확인용 탐지(화면의 가져오기 확인창이 쓴다). 둘 다 순수 함수다. ──
-// existing: DB에 있는 장소 [{id, name, period, district, lat, lng, address, mission, missions}]. missions는 미션 기록 배열.
-// 같은 장소 판정에는 시기(period)도 들어간다. period가 없는 기존 장소는 빈 칸('')으로 본다.
+// existing: DB에 있는 장소 [{id, name, district, lat, lng, address, mission, missions}]. missions는 미션 기록 배열.
 
 // 두 좌표 사이 거리(미터, 하버사인).
 const EARTH_RADIUS_M = 6371008.8;
@@ -396,6 +381,8 @@ function distanceMeters(a, b) {
   return 2 * EARTH_RADIUS_M * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+// DB(import_places)가 같은 장소로 보는 기준: 이름이 똑같고 좌표가 소수 7자리까지 같다.
+const placeKey = (p) => `${p.name}|${roundCoord(p.lat)}|${roundCoord(p.lng)}`;
 
 const groupByName = (list) => {
   const map = new Map();
@@ -406,7 +393,7 @@ const groupByName = (list) => {
   return map;
 };
 
-// 새 장소와 이름·시군·시기가 같은데 좌표가 다른 기존 장소. 가져오면 새 장소가 따로 생겨 같은 이름이 둘이 된다.
+// 새 장소와 이름·시군이 같은데 좌표가 다른 기존 장소. 가져오면 새 장소가 따로 생겨 같은 이름이 둘이 된다.
 // 좌표까지 같은 기존 장소가 있으면 그 장소를 갱신하는 경로라 새 장소가 생기지 않으므로 그 행은 아예 빼고 본다.
 // 반환: [{line, name, district, distanceM(정수 미터), existing: {id, name, lat, lng, address}}], 행 순서 → 가까운 순.
 export function nearDuplicates(places, existing) {
@@ -416,9 +403,8 @@ export function nearDuplicates(places, existing) {
   for (const p of places ?? []) {
     if (exact.has(placeKey(p))) continue;
     const district = String(p.district ?? '').trim();
-    const period = periodOf(p);
     const found = (byName.get(p.name) ?? [])
-      .filter((e) => String(e.district ?? '').trim() === district && periodOf(e) === period)
+      .filter((e) => String(e.district ?? '').trim() === district)
       .map((e) => ({
         line: p.line,
         name: p.name,
@@ -432,7 +418,7 @@ export function nearDuplicates(places, existing) {
   return out;
 }
 
-// 이름·시기·좌표가 같은 기존 장소의 미션명이 CSV 값으로 바뀌는 경우. CSV 미션명이 비어 있으면 저장된 값을 지우지 않으므로 빼고 본다.
+// 이름·좌표가 같은 기존 장소의 미션명이 CSV 값으로 바뀌는 경우. CSV 미션명이 비어 있으면 저장된 값을 지우지 않으므로 빼고 본다.
 // 미션명이 바뀌면 이전 미션의 기록(recordCount개)은 DB에 남지만 화면 진행도에서 빠진다.
 // 반환: [{line, name, district, from, to, recordCount}]. district는 가져온 뒤의 시군(CSV 값, 비었으면 기존 값).
 export function missionChanges(places, existing) {
@@ -461,7 +447,6 @@ export function missionChanges(places, existing) {
 // 미션 개수가 맞는지만 확인하고 저장하지 않는다(완료가 있으면 "완료 기록은 가져오지 않습니다" 경고).
 const EXPORT_COLUMNS = [
   ['이름', (p) => p.name],
-  ['시기', (p) => p.period ?? ''],
   ['시군', (p) => p.district],
   ['주소', (p) => p.address],
   ['전화번호', (p) => p.phone],
@@ -495,7 +480,7 @@ export function toCsv(places) {
 // 지금 미션명에 없는(범위 밖) 기록도 버리지 않고 맨 아래에 모아, 미션명 뒤에 ' (범위 밖)'을 붙여 내보낸다.
 // 기록 필드는 DB mission_json과 같다: {mission, done, worker, flightTime, batteryNo, batteryLeft, version, updatedAt}.
 // snake_case(flight_time, updated_at 등)로 들어와도 읽는다. 남은 용량은 % 없이 숫자만. 다시 가져오는 형식은 아니다.
-const MISSION_EXPORT_HEADER = ['시기', '시군', '이름', '미션명', '완료', '작업자', '비행시간', '배터리 번호', '배터리 남은 용량', '마지막 저장'];
+const MISSION_EXPORT_HEADER = ['시군', '이름', '미션명', '완료', '작업자', '비행시간', '배터리 번호', '배터리 남은 용량', '마지막 저장'];
 const OUT_OF_SCOPE = '(범위 밖)';
 
 const cellText = (v) => String(v ?? '').trim();
@@ -503,7 +488,6 @@ const pick = (r, camel, snake) => cellText(r?.[camel] ?? r?.[snake]);
 
 function missionRow(p, missionLabel, r) {
   return [
-    cellText(p.period),
     cellText(p.district),
     cellText(p.name),
     missionLabel,
