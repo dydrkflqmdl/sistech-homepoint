@@ -6,3 +6,11 @@ public/config.js
 dist/
 supabase/.temp/
 supabase/.branches/
+# 헤드리스 E2E 실패 화면
+e2e/shots/
+# DB 백업(공개 저장소라 절대 커밋하지 않음)
+sistech-db-*
+*.tar.gz.enc
+/roles.sql
+/schema.sql
+/data.sql
