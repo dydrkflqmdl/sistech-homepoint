@@ -97,6 +97,8 @@ export function rememberOwnWrite(entry) {
 // 아래쪽 모듈이 app.js 등 위쪽 모듈의 함수(다시 그리기·로그인 화면으로 보내기 등)를 부를 때 거치는 자리.
 // app.js가 시작할 때 채운다. 아래쪽 모듈이 위쪽 모듈을 import하면 순환 import가 되므로 이렇게 넘겨받는다.
 export const hooks = {
+  dropGonePlace: null,
   leaveApp: null,
+  renderListAndMap: null,
   requestSelect: null,
 };
