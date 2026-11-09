@@ -144,21 +144,37 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수·관�
    - "Automatically expose new tables"(새 테이블 자동 노출): 끔. 마이그레이션이 로그인한 사용자에게만 권한을 줍니다.
    - "Enable automatic RLS": 켬
    - 프로젝트를 만들 때 정하는 데이터베이스 비밀번호는 따로 적어 두세요(배포 Secrets에 씁니다).
-2. Authentication → Sign In / Providers → Email에서 가입 허용(Allow new users to sign up)을 끕니다. 가입 화면이 없으니 외부 사람이 계정을 만들 수 없게 하는 설정입니다.
+2. 인증 설정을 아래 표대로 맞춥니다. `supabase/config.toml`에도 같은 값이 있지만 그 파일은 로컬 실행과 `supabase config push`용이고, 배포 워크플로는 인증 설정을 올리지 않습니다. 운영 프로젝트는 대시보드에서 직접 바꿔야 합니다.
+
+   | 대시보드 위치 | 항목 | 값 | `config.toml` |
+   | --- | --- | --- | --- |
+   | Authentication → Sign In / Providers | Allow new users to sign up | 끔 | `[auth] enable_signup = false` |
+   | Authentication → Sign In / Providers → Email | (이메일 가입 허용) | 끔 | `[auth.email] enable_signup = false` |
+   | Authentication → Sign In / Providers → Email | Minimum password length | `10` | `[auth] minimum_password_length = 10` |
+   | Authentication → Sign In / Providers → Email | Password Requirements | Letters and digits | `[auth] password_requirements = "letters_digits"` |
+   | Authentication → Sign In / Providers → Email | Secure password change | 켬 | `[auth.email] secure_password_change = true` |
+
+   - 가입 화면이 없으니 외부 사람이 계정을 만들 수 없게 가입을 끕니다. 계정은 관리자가 "계정 관리"에서만 만듭니다.
+   - 비밀번호 규칙은 화면·함수(`public/login-id.js`, `admin-users/handler.js`의 `PASSWORD_MIN`·`PASSWORD_MAX`)와 같은 값이어야 합니다. 대시보드 값이 더 느슨해도 함수가 먼저 막지만, 대시보드에서 손으로 만드는 계정까지 막으려면 같은 값으로 맞춥니다.
+   - Secure password change는 본인이 비밀번호를 바꿀 때 최근 로그인을 요구합니다. 화면에는 본인 비밀번호 변경 기능이 없고, 관리자 재설정(Admin API)에는 영향이 없습니다.
 3. 관리자 계정을 하나 만듭니다. 나머지 계정은 배포 뒤 관리자가 화면의 "계정 관리"에서 만들면 되므로 처음에는 하나면 됩니다.
    - 대시보드에서 손으로: `npm run login-email -- 김용문`으로 변환된 이메일 주소를 뽑아, Authentication → Users → "Add user"에 그 주소와 비밀번호를 입력합니다. 이메일 인증 없이 바로 쓰도록 Auto Confirm User를 체크하세요.
-   - 또는 스크립트로: Project Settings → API Keys에서 service_role 키를 복사해 `.env`의 `SUPABASE_SERVICE_ROLE_KEY`에 넣고(`SUPABASE_URL`도 채워져 있어야 합니다) 실행합니다. 이미 있는 아이디는 "이미 있음"으로 건너뛰고, 기존 계정의 비밀번호를 바꾸려면 `--reset-password`를 붙입니다. 다 쓰면 `.env`의 키 값은 비웁니다.
+   - 또는 스크립트로: Project Settings → API Keys에서 service_role 키를 복사해 `.env`의 `SUPABASE_SERVICE_ROLE_KEY`에 넣고(`SUPABASE_URL`도 채워져 있어야 합니다) 실행합니다. 비밀번호는 실행 중에 두 번 묻습니다(입력은 화면에 보이지 않음). 이미 있는 아이디는 "이미 있음"으로 건너뛰고, 기존 계정의 비밀번호를 바꾸려면 `--reset-password`를 붙입니다. 다 쓰면 `.env`의 키 값은 비웁니다.
 
      ```bash
-     npm run users -- --password <비밀번호> 김용문
+     npm run users -- 김용문                     # 비밀번호를 물어봄
+     npm run users -- --reset-password 김용문    # 이미 있는 계정의 비밀번호 바꾸기
      ```
 
-   - 아이디 규칙: 한글·영문·숫자·밑줄 1~16자. 같은 아이디는 언제나 같은 주소가 되므로 로그인 화면에 아이디만 적으면 됩니다.
-   - 비밀번호 최소 길이는 Supabase 설정(Authentication → Sign In / Providers → Email의 최소 길이, 기본 6자)을 따릅니다.
-   - 주소는 가짜(`@sistech.local`)라 메일이 가지 않습니다. 그래서 비밀번호 찾기 메일은 쓸 수 없고, 비밀번호를 잊으면 관리자가 화면의 "계정 관리"에서 재설정합니다. 관리자 본인이 잊었으면 대시보드 Users에서 바꾸거나 `npm run users -- --password <새 비밀번호> --reset-password 김용문`을 씁니다.
+   - 비밀번호는 명령줄 인자로 받지 않습니다. 셸 기록(`~/.zsh_history` 등)과 프로세스 목록에 남기 때문입니다. 예전처럼 `--password <값>`을 주면 경고하고 아무것도 하지 않습니다. 이때 입력한 값은 노출됐다고 보고 다른 비밀번호를 쓰세요. 터미널이 없는 곳(자동화)에서는 환경변수 `USERS_PASSWORD`로 넘기고, 다 쓰면 지웁니다.
+   - 스크립트도 아래 아이디·비밀번호 규칙으로 먼저 검사하고, 아이디를 `user_metadata.login_id`와 `app_metadata.login_id`에 함께 넣습니다(계정 목록의 아이디 표시 기준).
+   - 아이디 규칙: **한글 또는 영문으로 시작**하는 한글·영문·숫자·밑줄 1~16자. 숫자나 밑줄로 시작할 수 없습니다. 숫자로 시작하는 아이디는 주소 변환 과정에서 IP 주소로 읽혀, `123`·`0x7b`·`0173`이 모두 `0.0.0.123@sistech.local` 한 계정이 되는 문제가 있었기 때문입니다. 지금 있는 계정(모두 한글 이름)은 주소가 바뀌지 않습니다. 같은 아이디는 언제나 같은 주소가 되므로 로그인 화면에 아이디만 적으면 됩니다. 영문 대소문자는 구분하지 않습니다(`Admin`과 `admin`은 같은 계정).
+   - 비밀번호 규칙: **10자 이상 72자 이하, 영문과 숫자를 각각 1자 이상**. 72는 bcrypt 한계라 바이트로 셉니다(한글은 1자에 3바이트). 어기면 "비밀번호는 10자 이상 72자 이하이고 영문과 숫자를 모두 포함해야 합니다."를 보여 줍니다.
+   - 이전 규칙(6자 이상)으로 만든 기존 계정: Supabase는 비밀번호 규칙을 비밀번호를 정하거나 바꿀 때만 검사하므로, 새 규칙을 적용한 뒤에도 **기존 비밀번호로 그대로 로그인됩니다**. 관리자가 비밀번호를 재설정하거나 새 계정을 만들 때부터 새 규칙이 적용됩니다. 6자 숫자 비밀번호는 쉽게 추측되므로, 정책을 바꾼 뒤 "계정 관리"에서 기존 계정 비밀번호를 새 규칙에 맞게 재설정하는 것을 권장합니다.
+   - 주소는 가짜(`@sistech.local`)라 메일이 가지 않습니다. 그래서 비밀번호 찾기 메일은 쓸 수 없고, 비밀번호를 잊으면 관리자가 화면의 "계정 관리"에서 재설정합니다. 관리자 본인이 잊었으면 대시보드 Users에서 바꾸거나 `npm run users -- --reset-password 김용문`을 씁니다.
 4. 관리자를 지정합니다. 관리자 표시는 Supabase 사용자 정보의 `app_metadata.role = "admin"`이며, 브라우저에서는 바꿀 수 없고 아래 방법으로만 넣습니다.
    - 자동: 마이그레이션 `20261106170000_admin_role.sql`이 배포 때 김용문(`xn--4k0bz9vb1i@sistech.local`)에 관리자 표시를 넣습니다. 그 계정이 아직 없거나 DB 권한이 모자라면 배포를 멈추지 않고 알림만 남기므로, 아래 방법 중 하나로 직접 넣습니다.
-   - 스크립트: `.env`에 service_role 키를 넣고 `npm run users -- --admin 김용문`(다른 사람을 관리자로 추가할 때도 같은 명령).
+   - 스크립트: `.env`에 service_role 키를 넣고 `npm run users -- --admin 김용문`(다른 사람을 관리자로 추가할 때도 같은 명령). `--admin`만 쓰면 비밀번호를 묻지 않고 이미 있는 계정만 지정합니다. `USERS_PASSWORD`를 함께 주거나 `--reset-password`를 붙이면 계정을 만들거나 비밀번호를 바꾼 뒤 지정합니다.
    - SQL Editor: `update auth.users set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}' where email = '<변환된 이메일>';`
    - 관리자 표시를 넣은 뒤에는 그 계정이 다시 로그인해야 "계정 관리" 버튼이 보입니다(로그인 정보가 갱신될 때 반영).
 5. 아래 값을 확인해 둡니다.
@@ -170,6 +186,8 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수·관�
 | Project ID(Reference ID) | Project Settings → General | `SUPABASE_PROJECT_ID` |
 | Access Token | 계정 메뉴 → Account Settings → Access Tokens에서 새로 발급 | `SUPABASE_ACCESS_TOKEN` |
 | 데이터베이스 비밀번호 | 프로젝트 만들 때 정한 값. 잊었으면 Project Settings → Database에서 재설정 | `SUPABASE_DB_PASSWORD` |
+
+> 빌드(`config.js` 생성)는 `SUPABASE_ANON_KEY`가 `sb_secret_`로 시작하거나 JWT의 `role`이 `anon`이 아니면(예: `service_role`) 멈춥니다. 실수로 비밀 키를 넣었다면 anon/publishable 키로 바꾸고, 그 비밀 키는 노출됐다고 보고 대시보드에서 새로 발급하세요.
 
 > 경고: service_role 키와 secret 키는 비상용 스크립트(`npm run users`)를 돌릴 때만 로컬 `.env`에 넣고, 다 쓰면 값을 비웁니다. GitHub Secrets, `config.js`, 코드, 채팅에는 절대 넣지 마세요. 이 키는 RLS를 건너뛰는 관리자 키라 화면에 한 번이라도 들어가면 누구나 모든 데이터를 지울 수 있습니다. 화면에는 anon(공개) 키만 씁니다. 평소 계정 관리는 화면의 "계정 관리"로 하며, 그때 쓰이는 키는 Supabase가 Edge Function 안에만 넣어 두는 것이라 우리 손을 거치지 않습니다.
 
@@ -254,11 +272,28 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 | action | 입력 | 성공 응답 | 오류 |
 | --- | --- | --- | --- |
 | `list` | 없음 | `{ ok: true, users: [{ id, login_id, email, created_at, last_sign_in_at, is_admin }] }` | — |
-| `create` | `login_id`(아이디 규칙), `password`(6자 이상) | `{ ok: true, user }` | 400 규칙 위반, 409 이미 있는 아이디 |
-| `reset_password` | `user_id`, `password` | `{ ok: true }` | 400 규칙 위반, 404 없는 계정 |
+| `create` | `login_id`(아이디 규칙), `password`(비밀번호 규칙) | `{ ok: true, user }` | 400 규칙 위반, 409 이미 있는 아이디 |
+| `reset_password` | `user_id`, `password`(비밀번호 규칙) | `{ ok: true }` | 400 규칙 위반, 404 없는 계정 |
+
+- 아이디 규칙: 한글 또는 영문으로 시작하는 한글·영문·숫자·밑줄 1~16자. 비밀번호 규칙: 10자 이상 72자 이하(상한은 바이트), 영문과 숫자를 각각 1자 이상. 어기면 400과 각각 "아이디는 한글 또는 영문으로 시작하는 한글·영문·숫자·밑줄 1~16자여야 합니다.", "비밀번호는 10자 이상 72자 이하이고 영문과 숫자를 모두 포함해야 합니다."입니다.
+- `create`는 아이디를 `user_metadata.login_id`와 `app_metadata.login_id`에 함께 저장합니다. `user_metadata`는 본인이 바꿀 수 있지만 `app_metadata`는 서버만 쓸 수 있습니다.
+- 응답의 `login_id`는 다음 순서로 정합니다. ① `app_metadata.login_id` ② `user_metadata.login_id`(그 아이디를 변환한 주소가 계정 이메일과 같을 때만. 본인이 남의 이름으로 바꿔도 목록에 그 이름이 나오지 않게 함) ③ `@sistech.local` 이메일을 아이디로 되살린 값(대시보드에서 만든 계정 등). 다른 도메인 이메일 계정은 `null`이고 화면은 이메일을 보여 줍니다.
+- 요청 제한
+
+  | 제한 | 값 | 넘으면 |
+  | --- | --- | --- |
+  | 본문 크기 | 16KB(16,384바이트) | 413 "요청 본문이 너무 큽니다." `Content-Length`가 넘으면 토큰 검증 전에, 없으면 읽는 도중에 끊습니다. |
+  | 관리자별 요청 수 | 1분(이동 창)에 20회 | 429 "요청이 너무 많습니다. 1분 뒤에 다시 시도해 주세요." + `Retry-After`(초). 관리자 확인 뒤에 세므로 다른 사람의 요청이 관리자 몫을 쓰지 않습니다. 함수 인스턴스 메모리에만 세므로 인스턴스가 여러 개이거나 다시 뜨면 따로 셉니다(대략적인 상한). |
+  | 출처(Origin) | 함수 Secret `ALLOWED_ORIGINS`(쉼표 구분) | 설정하면 목록의 출처에만 그 값을 `Access-Control-Allow-Origin`으로 돌려주고, 목록 밖 출처의 요청은 403 "허용되지 않은 출처에서 온 요청입니다."로 아무것도 하지 않습니다. `Origin` 헤더가 없는 서버 간 호출은 통과합니다(관리자 토큰은 여전히 필요). 설정하지 않으면 예전처럼 `*`입니다. |
+
+  `ALLOWED_ORIGINS` 설정 예(대시보드 Edge Functions → Secrets, 또는 CLI):
+
+  ```bash
+  supabase secrets set ALLOWED_ORIGINS=https://sistech.dpdns.org,http://localhost:4100,http://127.0.0.1:4100
+  ```
 
 - 실패 응답은 해당 상태 코드와 `{ ok: false, error: "한국어 메시지" }`이고 화면은 메시지를 그대로 보여 줍니다.
-- 아이디 → 이메일 변환 규칙은 `public/login-id.js`와 같습니다(함수 쪽에 같은 규칙을 두고, 두 결과가 같은지 테스트로 묶어 둡니다).
+- 아이디 → 이메일 변환 규칙과 비밀번호 규칙은 `public/login-id.js`와 같습니다. 배포 번들러가 함수 폴더 밖 파일을 넣지 못해 `handler.js`에 같은 규칙을 복사해 두었고, `test/login-id.test.js`가 두 파일의 상수(`LOGIN_DOMAIN`, `LOGIN_ID_MAX`, `LOGIN_ID_RULE`, `PASSWORD_MIN`, `PASSWORD_MAX`, `PASSWORD_RULE`)와 허용·거부 결과가 같은지 검사합니다. 한쪽만 고치면 `npm test`가 실패합니다.
 - 비밀번호 재설정은 Supabase가 그 계정의 세션을 모두 끊으므로 재설정된 사람은 다시 로그인해야 합니다.
 
 ## CSV 형식
