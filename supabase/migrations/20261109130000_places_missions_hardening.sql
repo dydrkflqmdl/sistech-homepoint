@@ -258,7 +258,7 @@ begin
   end if;
 
   -- 1단계: 파일 순서대로 검사하고 값을 정리한다. 첫 오류에서 멈추고 아무것도 쓰지 않는다.
-  for r in select value from jsonb_array_elements(rows) loop
+  for r in select e.value from jsonb_array_elements(rows) with ordinality as e (value, n) order by e.n loop
     i := i + 1;
     v_where := case
       when jsonb_typeof(r -> 'line') = 'number' and (r ->> 'line') ~ '^[1-9][0-9]{0,8}$' then (r ->> 'line') || '행'
