@@ -1,12 +1,16 @@
 // 시기(계약 C10)와 미션 기록 내보내기(계약 C11).
 // 시기 칩(기본은 최신·기억·전체), 시기가 목록·칩 수·지도 핀·검색에 모두 적용되는지, 상세 배지, 시기를 바꾸면 상세 닫힘,
 // 가져오기 확인창의 "시기별 새 장소", 가져온 뒤 자동 선택, [내보내기] 메뉴(장소 / 미션 기록, 시기 반영 파일명·내용).
-// csv.js에 시기·toMissionCsv가 아직 없는 판에서도 돌도록 브라우저가 받는 csv.js에 계약 모양을 덧붙인다(lib.mjs csvShim).
+// 옛 csv.js(toMissionCsv 없음)에서의 동작은 브라우저가 받는 csv.js에서 그 함수를 감춰 본다(lib.mjs csvShim 'legacy').
+import fs from 'node:fs';
 import path from 'node:path';
-import { FIXTURES, MISSION_CSV_HEADER, launch, prepare, q1Rows, reporter, sleep } from './lib.mjs';
+import { FIXTURES, MISSION_CSV_HEADER, launch, prepare, reporter, sleep } from './lib.mjs';
 
 const { check, finish } = reporter('ux-period');
 const PERIOD_CSV = path.join(FIXTURES, 'period-q3.csv');
+// 확인할 점(대한민국 밖 좌표)이 있는 시기 파일: 확인창에 시기별 새 장소 수가 함께 나와야 한다. 실행할 때 다시 쓴다.
+const PERIOD_WARN_CSV = path.join(FIXTURES, 'period-q4-warn.csv');
+fs.writeFileSync(PERIOD_WARN_CSV, ['이름,시기,시군,주소,위도,경도,미션명', 'NEW_Q4,Q4,서산,대산읍,36.9,126.4,', 'FAR_Q4,Q4,해외,어딘가,10.5,100.5,'].join('\n') + '\n');
 // Q1 3곳, Q2 2곳. SW_01은 두 시기에 같은 이름·좌표로 있다(다른 장소).
 const places = [
   { name: 'SW_01', period: 'Q1', district: '태안', address: '가람면 하늘리', lat: 37.277767, lng: 126.717126, mission: 'M_01 ~ _03',
@@ -18,7 +22,7 @@ const places = [
   { name: 'SW_03', period: 'Q2', district: '태안', address: '가람면 바람리', lat: 37.2, lng: 126.7, mission: 'N_01 ~ _02' },
 ];
 
-const b = await launch('ux-period', { csvShim: 'contract' });
+const b = await launch('ux-period');
 const ev = b.ev;
 const view = () => ev(`(() => {
   const chips = [...document.querySelectorAll('#period-filters .chip')];
@@ -154,29 +158,39 @@ exp = await lastExport();
 want = splitRows(await expectedMissions(null));
 check('[전체]: 메뉴 문구 "(전체)", 파일명 missions-YYYY-MM-DD.csv, 전체 장소의 미션 행', items === '장소 내보내기(전체)|미션 기록 내보내기(전체)' && exp.download === `missions-${today}.csv` && splitRows(exp.text).length === want.length, { items, download: exp.download });
 
-// ── 가져오기: 시기별 새 장소 수, 가져온 뒤 최신 시기 자동 선택 ──
+// ── 가져오기: 확인할 것이 없으면 바로 가져오고 알림에 시기별 새 장소 수, 가져온 뒤 최신 시기 자동 선택 ──
 await prepare(b, { places });
 await ev(`__e2e.row('SW_01').click()`); await sleep(300);
 const before = await ev(`__fake.store().length`);
 await b.setFiles('#csv-input', [PERIOD_CSV]); await sleep(200);
 await ev(`document.querySelector('#import-panel .btn.primary').click()`);
-await b.waitFor(`!!document.querySelector('#import-panel .import-review')`, 5000);
-const review = await ev(`document.querySelector('#import-panel .review-periods')?.textContent.replace(/\\s+/g, ' ') ?? null`);
-check('확인창: "시기별 새 장소 · Q3 새 장소 3개 · Q2 새 장소 1개"(이미 있는 Q2 SW_03은 빼고 셈)', review !== null && /Q3 새 장소 3개.*Q2 새 장소 1개/.test(review) && !/Q1/.test(review), review);
-check('확인창: 시기가 같은 장소만 같은 장소로 봄 → 미션명 변경·근접 중복 없음', await ev(`!document.querySelector('#import-panel .review-changes') && !document.querySelector('#import-panel .review-near')`));
-await ev(`document.querySelector('#import-review-continue').click()`);
 await b.waitFor(`!/가져오는 중/.test(document.querySelector('#import-panel')?.textContent ?? '') && !!document.querySelector('#period-filters [data-period="Q3"]')`, 8000);
 await sleep(300);
 v = await view();
+const toastText = await ev(`document.querySelector('#toast').textContent`);
+check('시기가 같은 장소만 같은 장소로 봄 → 경고가 없으니 확인창 없이 바로 가져옴', await ev(`!document.querySelector('#import-panel .import-review')`) && (await ev(`__fake.calls.filter((c) => c.name === 'import_places').length`)) === 1);
+check('가져온 뒤 알림: "Q3 새 장소 3개, Q2 새 장소 1개"(이미 있는 Q2 SW_03은 빼고 셈)', toastText === 'Q3 새 장소 3개, Q2 새 장소 1개', toastText);
 const store = await ev(`__fake.store()`);
 check('가져온 뒤 DB: 새 장소 4곳(Q3 3 + Q2 1), Q3 SW_01은 Q2 SW_01과 다른 장소', store.length === before + 4 && store.filter((p) => p.name === 'SW_01').map((p) => p.period).sort().join() === 'Q1,Q2,Q3', store.map((p) => `${p.name}/${p.period}`));
 check('가져온 파일의 최신 시기(Q3)를 자동 선택·기억, 핀 3개', v.labels.join() === '전체,Q3,Q2,Q1' && v.pressed.join() === 'Q3' && v.stored === '{"value":"Q3"}' && v.summary === '장소 3개' && v.pins === 3, v);
 check('열어 두었던 Q2 장소의 상세 정보는 닫힘', await ev(`document.querySelector('#detail').hidden`));
 
-// ── 시기가 없는 데이터: 칩 줄 없음(예전 화면) ──
-await prepare(b, { rows: await q1Rows() });
+// 확인할 점이 있는 시기 파일 → 확인창에 "시기별 새 장소"가 함께 나오고, [계속] 뒤 Q4 자동 선택
+await ev(`[...document.querySelectorAll('#import-panel .btn')].find((x) => x.textContent === '닫기')?.click()`);
+await b.setFiles('#csv-input', [PERIOD_WARN_CSV]); await sleep(200);
+await ev(`document.querySelector('#import-panel .btn.primary').click()`);
+await b.waitFor(`!!document.querySelector('#import-panel .import-review')`, 5000);
+const review = await ev(`document.querySelector('#import-panel .review-periods')?.textContent.replace(/\\s+/g, ' ') ?? null`);
+check('경고가 있으면 확인창에 "시기별 새 장소 · Q4 새 장소 2개"', review !== null && /시기별 새 장소/.test(review) && /Q4 새 장소 2개/.test(review) && (await ev(`!!document.querySelector('#import-panel .review-warnings')`)), review);
+await ev(`document.querySelector('#import-review-continue').click()`);
+await b.waitFor(`!!document.querySelector('#period-filters [data-period="Q4"][aria-pressed="true"]')`, 8000);
 v = await view();
-check('시기가 모두 빈 데이터 → 시기 칩 줄 숨김, 목록은 전체', !v.shown && v.labels.length === 0 && /^장소 \d+개$/.test(v.summary), v);
+check('[계속] → Q4 자동 선택, 2곳', v.pressed.join() === 'Q4' && v.summary === '장소 2개', v);
+
+// ── 시기가 없는 데이터: 칩 줄 없음(예전 화면) ──
+await prepare(b, { places: places.map(({ period, ...p }) => p) });
+v = await view();
+check('시기가 모두 빈 데이터 → 시기 칩 줄 숨김, 목록은 전체', !v.shown && v.labels.length === 0 && v.summary === '장소 5개', v);
 await ev(`document.querySelector('#export-button').click()`); await sleep(100);
 check('시기가 없으면 메뉴 문구에 시기 표시 없음', (await ev(`[...document.querySelectorAll('#export-menu .menu-item')].map((x) => x.textContent).join('|')`)) === '장소 내보내기|미션 기록 내보내기');
 await ev(`document.querySelector('#export-button').click()`);

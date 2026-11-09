@@ -2540,7 +2540,7 @@ function latestPeriodIn(parsedList) {
 }
 
 // 가져오기 전에 확인받을 것(계약 C7): 행 경고, 같은 이름·시군인데 좌표가 다른 기존 장소(근접 중복), 미션명이 바뀌는 기존 장소.
-// 시기가 있는 파일이면 시기별 새 장소 수도 보여 준다(새 장소가 생길 때만 멈춰 묻는다).
+// 확인할 것이 있어 멈출 때는 시기별 새 장소 수도 함께 보여 준다. 시기만으로는 멈추지 않는다(가져온 뒤 알림으로 알린다).
 // csv.js에 탐지 함수가 아직 없으면 그 항목은 건너뛴다. 확인할 것이 없으면 null.
 function importReview(parsedFiles) {
   const multi = parsedFiles.length > 1;
@@ -2560,7 +2560,7 @@ function importReview(parsedFiles) {
     }
   }
   const periods = newPlacesByPeriod(parsedFiles);
-  return warnings.length || near.length || changes.length || periods.length ? { warnings, near, changes, periods } : null;
+  return warnings.length || near.length || changes.length ? { warnings, near, changes, periods } : null;
 }
 
 // 파일을 하나씩 읽고, 확인할 것이 있으면 멈춰 묻고, 없으면 바로 보낸다.
@@ -2630,6 +2630,10 @@ async function sendImport(parsedFiles, epoch) {
   state.importing = true;
   remoteChangedWhileImporting = false;
   const wasEmpty = state.places.length === 0;
+  // 보내기 전의 목록 기준으로 시기별 새 장소 수를 세어 둔다(가져온 뒤 알림 "Q2 새 장소 12개").
+  const periodSummary = newPlacesByPeriod(parsedFiles.filter((item) => item.parsed))
+    .map(({ period, count }) => `${period || '시기 없음'} 새 장소 ${count}개`)
+    .join(', ');
   const results = [];
   for (const [i, item] of parsedFiles.entries()) {
     state.importProgress = i + 1;
@@ -2669,7 +2673,10 @@ async function sendImport(parsedFiles, epoch) {
     const single = files.length === 1 && state.importSkipped.length === 0;
     // 파일 하나가 실패하면 예전처럼 알림만 띄우고 [가져오기] 화면에 남는다.
     if (single && results[0].error) toast(results[0].error);
-    else state.importResults = results;
+    else {
+      state.importResults = results;
+      if (periodSummary && results.some((r) => r.result?.imported > 0)) toast(periodSummary);
+    }
   }
   state.importing = false;
   state.importProgress = 0;
