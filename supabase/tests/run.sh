@@ -27,6 +27,13 @@ trap '"$PGBIN/pg_ctl" -D "$DATA" -m fast stop >/dev/null' EXIT
 
 MIGRATION="$(ls "$REPO"/supabase/migrations/*.sql | sort)"
 CASES="$(node "$S/mission-cases.mjs" "$REPO/public/mission.js")"
+# 좌표 반올림 비교 사례(public/coord.js의 roundCoord 결과). 사례 파일이 아직 없는 브랜치에서는 빈 배열로 건너뛴다.
+# 파일이 있는데 node가 실패하면 set -e로 멈춘다(빈 배열로 조용히 넘어가지 않게).
+if [ -f "$S/coord-cases.mjs" ]; then
+  COORD_CASES="$(node "$S/coord-cases.mjs" "$REPO/public/coord.js")"
+else
+  COORD_CASES='[]'
+fi
 TOTAL_FAILED=0
 
 for EXPOSED in 0 1; do
@@ -38,7 +45,7 @@ for EXPOSED in 0 1; do
   for f in $MIGRATION; do
     "${PSQL[@]}" -d $DB -v ON_ERROR_STOP=1 -1 -f "$f"
   done
-  "${PSQL[@]}" -d $DB -v ON_ERROR_STOP=1 -v cases="$CASES" -v conn="host=127.0.0.1 port=$PORT dbname=$DB user=postgres" -f "$S/tests.sql"
+  "${PSQL[@]}" -d $DB -v ON_ERROR_STOP=1 -v cases="$CASES" -v coord_cases="$COORD_CASES" -v conn="host=127.0.0.1 port=$PORT dbname=$DB user=postgres" -f "$S/tests.sql"
 
   FAILED="$("${PSQL[@]}" -d $DB -Atc 'select count(*) from t.results where not pass')"
   TOTAL="$("${PSQL[@]}" -d $DB -Atc 'select count(*) from t.results')"
