@@ -98,4 +98,5 @@ export function rememberOwnWrite(entry) {
 // app.js가 시작할 때 채운다. 아래쪽 모듈이 위쪽 모듈을 import하면 순환 import가 되므로 이렇게 넘겨받는다.
 export const hooks = {
   leaveApp: null,
+  requestSelect: null,
 };
