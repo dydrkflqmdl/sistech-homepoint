@@ -26,7 +26,8 @@ const HEADER_ONLY = fx('header-only.csv', '이름,위도,경도\n');
 const ROW_ERRORS = fx('row-errors.csv', '이름,위도,경도\nOK_1,36.1,127.1\n,36.2,127.2\nBAD_COORD,abc,127.3\nZERO,0,0\nOK_1,36.1,127.1\n');
 const NOT_CSV = fx('notes.pdf', '%PDF-1.4 fake');
 // 같은 장소(Q1 SW_01·SW_02) 다시: SW_01은 주소·미션명이 바뀌고, SW_02는 주소 칸이 비어 있다(addressGiven=false → 주소 유지)
-const UPDATE = fx('update.csv', '이름,시군,주소,위도,경도,미션명\nSW_01,태안,가람면 하늘리 바뀜,37.277767,126.717126,Q1_A_TA_SW__01_01 ~ _40\nSW_02,태안,,37.167923,126.815733,\n');
+// 시기(C10)가 같아야 같은 장소다: 홈포인트_Q1.csv의 장소는 시기 Q1이라 갱신 파일에도 시기 Q1을 적는다.
+const UPDATE = fx('update.csv', '이름,시기,시군,주소,위도,경도,미션명\nSW_01,Q1,태안,가람면 하늘리 바뀜,37.277767,126.717126,Q1_A_TA_SW__01_01 ~ _40\nSW_02,Q1,태안,,37.167923,126.815733,\n');
 
 const expectRows = (file) => readPlaces(fs.readFileSync(file)).places;
 const b = await launch('import');
@@ -57,7 +58,7 @@ check('import_places 3번(장소 있는 파일만, 고른 순서)', calls.length
 check('import_places 인자 = Node readPlaces() 결과(sample.csv)', JSON.stringify(calls[0]) === JSON.stringify(expected[0]), `${calls[0]?.length}행`);
 check('import_places 인자 = readPlaces() 결과(홈포인트_Q1.csv, BOM·괄호 머리글)', JSON.stringify(calls[1]) === JSON.stringify(expected[1]), `${calls[1]?.length}행`);
 check('import_places 인자 = readPlaces() 결과(EUC-KR 파일, 시군 접두 주소 제거·따옴표 쉼표)', JSON.stringify(calls[2]) === JSON.stringify(expected[2]) && calls[2]?.[0]?.address === '대산읍 인근' && calls[2]?.[0]?.memo === '쉼표, 메모', JSON.stringify(calls[2]?.[0]));
-check('행 객체 키(line·name·district·address·addressGiven·phone·memo·mission·lat·lng)', JSON.stringify(Object.keys(calls[0]?.[0] ?? {})) === JSON.stringify(['line', 'name', 'district', 'address', 'addressGiven', 'phone', 'memo', 'mission', 'lat', 'lng']), JSON.stringify(Object.keys(calls[0]?.[0] ?? {})));
+check('행 객체 키(line·name·period·district·address·addressGiven·phone·memo·mission·lat·lng)', JSON.stringify(Object.keys(calls[0]?.[0] ?? {})) === JSON.stringify(['line', 'name', 'period', 'district', 'address', 'addressGiven', 'phone', 'memo', 'mission', 'lat', 'lng']), JSON.stringify(Object.keys(calls[0]?.[0] ?? {})));
 check('파일별 결과: sample.csv 저장 7', /sample\.csv — 저장 7 · 중복 0\(그중 0 갱신\) · 오류 0/.test(panel));
 check('파일별 결과: 홈포인트_Q1.csv 저장 10', /홈포인트_Q1\.csv — 저장 10 · 중복 0\(그중 0 갱신\) · 오류 0/.test(panel));
 check('파일별 결과: extra-euckr.csv 저장 2', /extra-euckr\.csv — 저장 2 · 중복 0\(그중 0 갱신\) · 오류 0/.test(panel));
@@ -66,6 +67,9 @@ check('실패 파일: empty.csv "CSV 파일 내용이 없습니다."', /empty\.c
 check('건너뛴 파일: notes.pdf', /notes\.pdf — 건너뜀: CSV 파일이 아닙니다/.test(panel));
 check('합계: 저장 19 · 중복 0 · 오류 0 · 파일 오류 2개', /합계: 저장 19 · 중복 0\(그중 0 갱신\) · 오류 0 · 파일 오류 2개/.test(panel));
 const db1 = await ev('__fake.store()');
+// 가져온 뒤에는 그 파일들의 최신 시기(Q1)가 골라진다(C10). 전체 목록을 보려고 시기 [전체]를 누른다.
+await ev(`document.querySelector('#period-filters [data-all]')?.click()`);
+await sleep(200);
 // 접힌 시군의 줄은 DOM에 없다(화면 성능 개선). 목록 수는 요약 문구로, 펼치면 19줄인지도 본다.
 const list1 = await ev(`(() => { const summary = document.querySelector('#list-summary').textContent; const collapsedRows = document.querySelectorAll('#place-list button[data-id]').length; __e2e.openAll(); const rows = document.querySelectorAll('#place-list button[data-id]').length; __e2e.collapseAll(); return { summary, collapsedRows, rows, groups: [...document.querySelectorAll('#place-list .group-name')].map(g => g.textContent) }; })()`);
 check('DB 19곳·목록 19곳(다시 받음, 접힌 시군은 줄을 만들지 않고 펼치면 19줄)', db1.length === 19 && list1.summary === '장소 19개' && list1.collapsedRows === 0 && list1.rows === 19, { db: db1.length, list1 });
