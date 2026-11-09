@@ -183,11 +183,11 @@ enable_anonymous_sign_ins = false
 enable_manual_linking = false
 # Passwords shorter than this value will be rejected as weak. Minimum 6, recommended 8 or more.
 # public/login-id.js · admin-users/handler.js 의 PASSWORD_MIN 과 같아야 한다.
-minimum_password_length = 10
+minimum_password_length = 6
 # Passwords that do not meet the following requirements will be rejected as weak. Supported values
 # are: `letters_digits`, `lower_upper_letters_digits`, `lower_upper_letters_digits_symbols`
-# 영문과 숫자를 각각 1자 이상(handler.js 의 비밀번호 규칙과 같음).
-password_requirements = "letters_digits"
+# 문자 조건 없음: 관리자가 정한 비밀번호를 그대로 쓴다.
+password_requirements = ""
 
 # Configure passkey sign-ins.
 # [auth.passkey]

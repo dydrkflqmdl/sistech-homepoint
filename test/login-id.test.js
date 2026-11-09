@@ -102,9 +102,9 @@ test('두 구현의 상수가 같다', () => {
     assert.ok(key in browser && key in edge, `${key}가 두 파일 모두에서 export 되어야 한다`);
     assert.equal(edge[key], browser[key], key);
   }
-  assert.equal(browser.PASSWORD_MIN, 10);
+  assert.equal(browser.PASSWORD_MIN, 6);
   assert.equal(browser.PASSWORD_MAX, 72);
-  assert.equal(browser.PASSWORD_RULE, '비밀번호는 10자 이상 72자 이하이고 영문과 숫자를 모두 포함해야 합니다.');
+  assert.equal(browser.PASSWORD_RULE, '비밀번호는 6자 이상 72자 이하여야 합니다.');
 });
 
 // 결과를 { ok, value | message } 로 바꿔 두 구현을 비교한다.
@@ -171,25 +171,23 @@ test('punycode 복호화 코드가 두 구현에서 같다', () => {
 
 const PASSWORD_CASES = [
   // [값, 허용 여부]
-  ['abcdefghi1', true], // 10자 경계
-  ['Password12', true],
-  ['1234567890a', true],
-  ['비밀번호는길게써요a1', true], // 한글 포함, 32바이트
-  ['a'.repeat(71) + '1', true], // 72바이트 경계
-  ['abcdefgh1', false], // 9자
-  ['abcdefghij', false], // 숫자 없음
-  ['1234567890', false], // 영문 없음
-  ['비밀번호비밀번호비밀번호1', false], // 영문 없음(한글은 영문으로 치지 않음)
-  ['a'.repeat(72) + '1', false], // 73바이트
-  ['a1' + '가'.repeat(24), false], // 26자지만 74바이트(bcrypt 한계 초과)
+  ['123456', true], // 6자 경계, 숫자만이어도 된다(문자 조건 없음)
+  ['abcdef', true], // 영문만
+  ['!@#$%^', true], // 기호만
+  ['      ', true], // 공백도 관리자가 정한 그대로
+  ['비밀번호여섯', true], // 한글만 6자(18바이트)
+  ['a'.repeat(72), true], // 72바이트 경계
+  ['a' + '가'.repeat(23), true], // 24자, 1+69 = 70바이트
+  ['12345', false], // 5자
   ['', false],
-  ['123456', false], // 예전 6자 규칙으로 만든 비밀번호
+  ['a'.repeat(73), false], // 73바이트
+  ['a1' + '가'.repeat(24), false], // 26자지만 74바이트(bcrypt 한계 초과)
   [null, false],
   [undefined, false],
-  [1234567890, false],
+  [1234567890, false], // 문자열이 아님
 ];
 
-test('비밀번호 규칙이 두 구현에서 같다(10~72, 영문·숫자 포함)', () => {
+test('비밀번호 규칙이 두 구현에서 같다(6~72바이트, 문자 조건 없음)', () => {
   for (const [pw, expected] of PASSWORD_CASES) {
     const label = JSON.stringify(pw) ?? String(pw);
     assert.equal(browser.isValidPassword(pw), expected, label);
