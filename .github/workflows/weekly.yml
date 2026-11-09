@@ -1,0 +1,131 @@
+# 주간 운영: Supabase 무료 플랜 휴면 방지 + DB 백업(암호화해서 Actions 아티팩트로 90일 보관).
+# 매주 월·목 새벽 3시 17분(KST)에 돈다. GitHub 은 저장소에 60일 동안 활동이 없으면 예약 실행을 멈추므로 README "운영 주의"를 보세요.
+# 저장소가 공개라 아티팩트도 GitHub 로그인 사용자 누구나 받을 수 있다. 그래서 백업은 반드시 BACKUP_PASSPHRASE 로 암호화하고,
+# 비밀번호 Secret 이 없으면 올리지 않고 실패시킨다. 백업 파일은 절대 커밋하지 않는다.
+name: 주간 점검
+
+on:
+  schedule:
+    - cron: '17 18 * * 0,3' # UTC 일·수 18:17 = KST 월·목 03:17
+  workflow_dispatch:
+
+concurrency:
+  group: weekly
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  keepalive:
+    name: 휴면 방지
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+    steps:
+      # anon 은 places 권한이 없어 401/403 이 정상이다. 그래도 요청은 PostgREST 를 거쳐 DB 에서 권한 검사까지 실행된다.
+      # 일시정지된 프로젝트는 5xx·540 등으로 응답하거나 연결이 안 되므로 그때만 실패로 본다.
+      # 실제 DB 접속(덤프)은 아래 backup 잡이 하므로 둘 중 하나만 성공해도 활동으로 남는다.
+      - name: Supabase 깨우기(REST·Auth)
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 "$SUPABASE_URL/rest/v1/places?select=id&limit=1" -H "apikey: $SUPABASE_ANON_KEY" || true)"
+          echo "REST places: HTTP $code"
+          case "$code" in
+            200|401|403) ;;
+            *) echo "::error::REST 응답이 HTTP $code 입니다. 프로젝트가 일시정지됐을 수 있습니다. Supabase 대시보드에서 Restore 하세요."; exit 1 ;;
+          esac
+          curl -fsS --max-time 30 "$SUPABASE_URL/auth/v1/settings" -H "apikey: $SUPABASE_ANON_KEY" \
+            | jq -e '.disable_signup == true' >/dev/null \
+            || { echo "::error::Auth 설정을 읽지 못했거나 회원 가입이 켜져 있습니다."; exit 1; }
+          echo "Auth: 응답 정상, 가입 차단 유지"
+
+  backup:
+    name: DB 백업
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+    steps:
+      - name: 암호 Secret 확인
+        run: |
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::BACKUP_PASSPHRASE Secret 이 없습니다. 공개 저장소라 암호화하지 않은 백업은 올리지 않습니다(README 운영 주의 참고)."
+            exit 1
+          fi
+      - name: 코드 내려받기
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Supabase CLI 설치
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        with:
+          version: 3.0.0
+      - name: Supabase 프로젝트 연결
+        run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+      # schema.sql: public 등 우리 스키마 구조(auth·storage 같은 Supabase 관리 스키마는 빠짐)
+      # data.sql  : 모든 스키마의 데이터. auth.users(비밀번호 해시)·auth.sessions 도 들어간다 → 반드시 암호화.
+      # roles.sql : 직접 만든 DB 역할(없으면 거의 빈 파일)
+      - name: 덤프
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/backup"   # 작업 폴더(저장소) 밖에 둔다: 실수로라도 커밋되지 않게
+          mkdir -p "$out"
+          supabase db dump --remote -f "$out/roles.sql" --role-only
+          supabase db dump --remote -f "$out/schema.sql"
+          supabase db dump --remote -f "$out/data.sql" --data-only --use-copy
+          # 데이터 내용은 로그에 찍지 않는다. 크기와 표 개수만 남긴다.
+          ls -l "$out"
+          echo "COPY 블록 수: $(grep -c '^COPY ' "$out/data.sql" || true)"
+          test -s "$out/schema.sql"
+          test -s "$out/data.sql"
+      - name: 암호화
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          name="sistech-db-$(date -u +%Y%m%dT%H%MZ)"
+          tar czf "$name.tar.gz" -C backup roles.sql schema.sql data.sql
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BACKUP_PASSPHRASE -in "$name.tar.gz" -out "$name.tar.gz.enc"
+          # 평문은 바로 지운다.
+          rm -rf backup "$name.tar.gz"
+          mkdir -p out && mv "$name.tar.gz.enc" out/
+          ls -l out
+      - name: 백업 올리기(90일 보관)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-backup-${{ github.run_number }}
+          path: ${{ runner.temp }}/out/*.tar.gz.enc
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 0 # 이미 압축·암호화된 파일
+
+  notify:
+    name: 실패 알림
+    needs: [keepalive, backup]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RESULTS: "휴면 방지=${{ needs.keepalive.result }}, 백업=${{ needs.backup.result }}"
+    steps:
+      - name: 이슈 만들기
+        run: |
+          set -euo pipefail
+          title="[주간 점검 실패] 휴면 방지 또는 백업이 실패했습니다"
+          body="$(printf '결과: %s\n실행 기록: %s\n\n휴면 방지 실패는 Supabase 프로젝트가 일시정지됐을 가능성이 큽니다. 대시보드에서 Restore 하고 이 워크플로를 수동 실행(Run workflow)해 확인하세요.\n대응 절차는 README 의 \"운영 주의 → 장애 대응\" 표를 보세요. 해결하면 이 이슈를 닫아 주세요.' "$RESULTS" "$RUN_URL")"
+          num="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number // ""')"
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi

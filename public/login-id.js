@@ -5,9 +5,26 @@
 
 export const LOGIN_DOMAIN = 'sistech.local';
 export const LOGIN_ID_MAX = 16;
-export const LOGIN_ID_RULE = `아이디는 한글·영문·숫자·밑줄 1~${LOGIN_ID_MAX}자여야 합니다.`;
+export const LOGIN_ID_RULE = `아이디는 한글 또는 영문으로 시작하는 한글·영문·숫자·밑줄 1~${LOGIN_ID_MAX}자여야 합니다.`;
 
-const ID_PATTERN = /^[가-힣A-Za-z0-9_]+$/;
+// 첫 글자는 한글·영문만. 숫자로 시작하면 URL 파서가 IPv4 주소로 읽어
+// '123', '0x7b', '0173'이 모두 '0.0.0.123'이 되는 충돌이 생기므로 막는다(계약 C5).
+const ID_PATTERN = /^[가-힣A-Za-z][가-힣A-Za-z0-9_]*$/;
+// 변환된 이메일 앞부분이 가질 수 있는 모양(점·콜론 없는 한 덩어리). IP 주소 꼴이 섞여 들어오는 것을 한 번 더 막는다.
+const LOCAL_PATTERN = /^[a-z0-9_-]+$/;
+
+// 비밀번호 규칙: 관리자가 정한 비밀번호를 그대로 쓰고 길이만 본다(문자 조건 없음).
+// 6은 Supabase Auth가 허용하는 최솟값(minimum_password_length = 6), 72는 bcrypt 한계.
+// Edge Function(handler.js)과 같은 값이어야 한다.
+export const PASSWORD_MIN = 6;
+export const PASSWORD_MAX = 72; // bcrypt 한계(UTF-8 바이트)
+export const PASSWORD_RULE = `비밀번호는 ${PASSWORD_MIN}자 이상 ${PASSWORD_MAX}자 이하여야 합니다.`;
+
+// 비밀번호 길이가 맞으면 true. 하한은 글자 수, 상한은 UTF-8 바이트 수(bcrypt·Supabase 기준)로 센다.
+export function isValidPassword(raw) {
+  if (typeof raw !== 'string' || raw.length < PASSWORD_MIN) return false;
+  return new TextEncoder().encode(raw).length <= PASSWORD_MAX;
+}
 
 // 앞뒤 공백을 떼고 한글 조합 형태를 통일한다. 규칙에 어긋나면 null.
 export function normalizeLoginId(raw) {
@@ -28,7 +45,7 @@ export function loginIdToEmail(raw) {
   } catch {
     throw new Error(LOGIN_ID_RULE);
   }
-  if (!local || local.length > 64) throw new Error(LOGIN_ID_RULE);
+  if (!local || local.length > 64 || !LOCAL_PATTERN.test(local)) throw new Error(LOGIN_ID_RULE);
   return `${local}@${LOGIN_DOMAIN}`;
 }
 
