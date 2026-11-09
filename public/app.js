@@ -11,6 +11,7 @@ import {
   collapseAllGroups,
   config,
   findPlace,
+  hooks,
   isPlaceGone,
   localSeq,
   localTouch,
@@ -24,13 +25,30 @@ import {
   touchedSince,
   visiblePlaces,
 } from './state.js';
+import {
+  LOGIN_ENDED_MESSAGE,
+  authEpoch,
+  authFailed,
+  bumpAuthEpoch,
+  currentUser,
+  currentWorkerName,
+  displayName,
+  loggingOut,
+  setCurrentUser,
+  setLoggingOut,
+  setLoginError,
+  setLoginNotice,
+  setLoginPasswordShown,
+  showBootMessage,
+  showUserName,
+  showView,
+  signedIn,
+} from './session.js';
 
-// 로그인할 때마다 하나씩 올린다. 응답을 기다리는 사이 로그아웃·다른 계정 로그인이 있었으면 그 응답은 버린다.
-let authEpoch = 0;
-let currentUser = null; // { id, email, name, admin } — name은 머리글에 보여 줄 아이디, admin은 계정 관리 버튼을 보일지
+// 아래쪽 모듈이 부르는 함수를 넘겨준다(state.js의 hooks 설명 참고).
+Object.assign(hooks, { leaveApp });
+
 let unsubscribeChanges = null;
-let loggingOut = false;
-const signedIn = () => currentUser !== null;
 
 // ── 지도 (카카오맵) ─────────────────────────────────────
 
@@ -701,9 +719,6 @@ const draftMatches = (p, name) => state.missionDraft?.placeId === p.id && state.
 
 // 아직 저장한 적 없는 미션은 바로 입력 화면, 저장한 미션은 [수정]을 누르기 전까지 보기 화면이다.
 const missionEditing = (p, name) => draftMatches(p, name) || !isMissionSaved(p, name);
-
-// 미션 기록의 '이름': 지금 로그인한 사람의 표시 아이디(C4 순서, 머리글과 같은 값). 사람이 고칠 수 없다.
-const currentWorkerName = () => String(currentUser?.name ?? '').trim();
 
 // 사람이 고칠 수 있는 칸(이름은 빠진다). 초안을 고쳤는지 볼 때 쓴다.
 const EDITABLE_MISSION_FIELDS = MISSION_FIELDS.filter((f) => !f.readonly);
@@ -1380,14 +1395,14 @@ function cancelReset() {
 
 // 본인 비밀번호를 바꿨으면 이 기기에서도 로그아웃하고, 로그인 화면에 "새 비밀번호로 다시 로그인" 안내를 띄운다.
 async function signOutAfterOwnPasswordChange() {
-  loggingOut = true;
+  setLoggingOut(true);
   try {
     await api.signOut();
   } catch (err) {
     // 서버가 이미 모든 세션을 끊었으면 실패할 수 있다. 이 기기의 화면은 어차피 로그인으로 돌린다.
     api.logCause('본인 비밀번호 변경 뒤 로그아웃 실패(무시)', err);
   } finally {
-    loggingOut = false;
+    setLoggingOut(false);
   }
   leaveApp(null, { notice: PASSWORD_CHANGED_NOTICE });
 }
@@ -2813,69 +2828,6 @@ $('#home-link').addEventListener('click', (e) => {
 
 // ── 로그인 ──────────────────────────────────────────────
 
-const LOGIN_ENDED_MESSAGE = '로그인이 만료되었거나 다른 창에서 로그아웃했습니다. 다시 로그인해 주세요.';
-
-// 한 번에 하나만 보인다: 'boot'(설정 없음·불러오는 중), 'login', 'app'.
-function showView(view) {
-  $('#boot-message').hidden = view !== 'boot';
-  $('#login').hidden = view !== 'login';
-  $('.app').hidden = view !== 'app';
-}
-
-function showBootMessage(...lines) {
-  fill($('#boot-message'), lines.map((t) => h('p', {}, t)));
-  showView('boot');
-}
-
-function setLoginError(message, invalidField = null) {
-  const el = $('#login-error');
-  el.textContent = message ?? '';
-  el.hidden = !message;
-  for (const name of ['id', 'password']) {
-    const input = $(`#login-${name}`);
-    if (invalidField === name) input.setAttribute('aria-invalid', 'true');
-    else input.removeAttribute('aria-invalid');
-  }
-}
-
-// 오류가 아닌 안내(비밀번호를 바꿔 다시 로그인해 달라는 말 등). 오류 칸(빨강, role=alert)과 따로 둔다.
-function setLoginNotice(message) {
-  const el = $('#login-notice');
-  el.textContent = message ?? '';
-  el.hidden = !message;
-}
-
-// 로그인 비밀번호 칸의 [보기]. 로그인하거나 로그인 화면으로 돌아오면 다시 가린다.
-function setLoginPasswordShown(shown) {
-  $('#login-password').type = shown ? 'text' : 'password';
-  $('#login-password-toggle').setAttribute('aria-pressed', String(shown));
-}
-$('#login-password-toggle').addEventListener('click', () => {
-  setLoginPasswordShown($('#login-password-toggle').getAttribute('aria-pressed') !== 'true');
-});
-
-// RPC가 세션 만료·권한 없음으로 실패했으면 로그인 화면으로 보내고 true.
-function authFailed(err) {
-  if (!err?.auth) return false;
-  leaveApp(err.message);
-  return true;
-}
-
-// 머리글·미션 기록 이름에 쓰는 아이디(계약 C4): app_metadata.login_id(서버가 정한 값) → user_metadata.login_id
-// → 이메일(xn--…@sistech.local)을 한글로 되살린 값. 계정 목록의 login_id도 서버가 같은 순서로 준다.
-const displayName = (user) =>
-  String(user.app_metadata?.login_id ?? '').trim() ||
-  String(user.user_metadata?.login_id ?? '').trim() ||
-  loginId.emailToLoginId(user.email ?? '');
-
-function showUserName() {
-  const el = $('#user-name');
-  el.textContent = currentUser?.name ?? '';
-  el.title = currentUser?.name ?? '';
-  // 계정 관리 버튼은 관리자에게만. 역할은 JWT(app_metadata)에서 오므로 토큰을 새로 받을 때마다 다시 본다.
-  $('#accounts-button').hidden = !currentUser?.admin;
-}
-
 function enterApp(session) {
   const user = session.user;
   if (currentUser?.id === user.id) {
@@ -2892,8 +2844,8 @@ function enterApp(session) {
     return;
   }
   if (currentUser) leaveApp(null);
-  authEpoch++;
-  currentUser = { id: user.id, email: user.email ?? '', name: displayName(user), admin: api.isAdmin(user) };
+  bumpAuthEpoch();
+  setCurrentUser({ id: user.id, email: user.email ?? '', name: displayName(user), admin: api.isAdmin(user) });
   showUserName();
   // 로그인 폼에서 왔으면 초점이 숨는 칸에 남지 않게 제목으로 옮긴다(저장된 세션으로 바로 열 때는 건드리지 않는다).
   const fromLogin = $('#login').contains(document.activeElement);
@@ -2919,8 +2871,8 @@ function enterApp(session) {
 // errorMessage는 빨간 오류 칸에, notice는 보통 안내 칸에 보인다.
 function leaveApp(errorMessage, { notice = null } = {}) {
   if (signedIn()) {
-    authEpoch++;
-    currentUser = null;
+    bumpAuthEpoch();
+    setCurrentUser(null);
     unsubscribeChanges?.();
     unsubscribeChanges = null;
     clearTimeout(realtimeTimer);
@@ -3022,12 +2974,12 @@ $('#logout-button').addEventListener('click', async () => {
     return;
   }
   if (!confirmDiscardDraft()) return;
-  loggingOut = true;
+  setLoggingOut(true);
   const button = $('#logout-button');
   button.disabled = true;
   button.textContent = '로그아웃 중…';
   const restore = () => {
-    loggingOut = false;
+    setLoggingOut(false);
     button.disabled = false;
     button.textContent = '로그아웃';
   };
