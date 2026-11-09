@@ -1,0 +1,17 @@
+# 워크플로의 액션(커밋 SHA 로 고정)을 매주 확인해 새 버전이 있으면 PR 을 올린다.
+# PR 은 SHA 와 뒤의 "# vX.Y.Z" 주석을 함께 바꾼다. 테스트 잡이 통과하는지 보고 합친다.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ['*']
+    commit-message:
+      prefix: 'CI'

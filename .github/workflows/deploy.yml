@@ -1,4 +1,5 @@
-# main 에 푸시하면 테스트 → DB 마이그레이션 → GitHub Pages 배포 순으로 실행한다.
+# main 에 푸시하면 테스트 → DB 마이그레이션·함수 배포(바뀐 경우만) → GitHub Pages 배포 순으로 실행한다.
+# 액션은 모두 커밋 SHA 로 고정한다(태그는 옮겨질 수 있음). 갱신은 .github/dependabot.yml 이 주마다 PR 로 올린다.
 name: 배포
 
 on:
@@ -11,56 +12,150 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+# 기본 권한은 없음. 잡마다 필요한 것만 연다.
+permissions: {}
+
 jobs:
   test:
     name: 테스트
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - name: 코드 내려받기
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Node 22 준비
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
           cache: npm
       - name: 의존성 설치
         run: npm ci
-      - name: 테스트 실행
+      - name: 단위 테스트
         run: npm test
+      - name: 린트
+        run: npm run lint
+      # public/vendor/supabase-js.js 가 package-lock 의 supabase-js 를 그대로 묶은 것인지 확인한다(손으로 고친 파일 차단).
+      - name: supabase-js 자체 호스팅 파일 확인
+        run: node scripts/vendor.mjs --check
+      # ubuntu-latest(24.04)에는 PostgreSQL 16 이 깔려 있다(서비스는 꺼져 있음). 바이너리만 써서 임시 클러스터를 띄운다.
+      - name: SQL 테스트(마이그레이션·권한·함수)
+        run: |
+          PGBIN=/usr/lib/postgresql/16/bin
+          if [ ! -x "$PGBIN/pg_ctl" ]; then
+            PGBIN="$(ls -d /usr/lib/postgresql/*/bin 2>/dev/null | sort -V | tail -n 1)"
+          fi
+          echo "PostgreSQL: $("$PGBIN/postgres" --version)"
+          PGBIN="$PGBIN" TEST_PG_DATA="$RUNNER_TEMP/pg-test" npm run test:sql
+      - name: Deno 준비
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.6
+      - name: Edge Function 타입 검사
+        run: deno check --no-lock supabase/functions/admin-users/index.ts
+      # e2e/ 가 저장소에 들어온 뒤부터 실행된다. 가짜 supabase 를 주입하고 외부 주소를 막으므로 네트워크·Secrets 가 필요 없다.
+      - name: 헤드리스 E2E
+        if: hashFiles('e2e/run-all.mjs') != ''
+        run: CHROME_BIN="$(which google-chrome)" E2E_PORT=4198 node e2e/run-all.mjs
+      - name: E2E 실패 화면 올리기
+        if: failure() && hashFiles('e2e/run-all.mjs') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-shots-${{ github.run_number }}
+          path: e2e/shots/**
+          retention-days: 14
+          if-no-files-found: ignore
 
   migrate:
     name: DB 마이그레이션·함수 배포
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
+      actions: read # 마지막 성공 배포의 커밋을 찾을 때
     env:
       SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
       SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
       SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
     steps:
       - name: 코드 내려받기
-        uses: actions/checkout@v7
-      - name: Supabase CLI 설치
-        uses: supabase/setup-cli@v3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          version: latest
+          fetch-depth: 0 # 마지막 성공 배포와 비교하려면 이력이 필요하다
+          persist-credentials: false
+      # 아무나 가입할 수 있으면 공개 저장소·공개 anon 키로 누구든 계정을 만들어 데이터를 볼 수 있다. 그 상태로는 배포하지 않는다.
+      - name: 가입 차단 확인
+        run: |
+          set -euo pipefail
+          if ! settings="$(curl -fsS --max-time 20 "$SUPABASE_URL/auth/v1/settings" -H "apikey: $SUPABASE_ANON_KEY")"; then
+            echo "::error::Supabase Auth 설정을 읽지 못했습니다. 프로젝트가 일시정지(휴면)됐거나 SUPABASE_URL/SUPABASE_ANON_KEY Secret 이 틀렸습니다."
+            exit 1
+          fi
+          if ! jq -e '.disable_signup == true' <<<"$settings" >/dev/null; then
+            echo "::error::Supabase 에서 회원 가입이 켜져 있습니다. 대시보드 Authentication → Sign In / Providers → 'Allow new users to sign up' 을 끄고 다시 실행하세요."
+            exit 1
+          fi
+          echo "가입 차단 확인됨(disable_signup = true)"
+      # 비교 기준은 '이 워크플로가 마지막으로 성공한 커밋'이다. 직전 push(github.event.before)와 비교하면
+      # 마이그레이션 적용이 실패한 뒤 다른 커밋을 push 했을 때 그 마이그레이션을 영영 건너뛸 수 있다.
+      - name: 바뀐 부분 확인
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          db=true; fn=true
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "수동 실행: 마이그레이션과 함수 배포를 모두 실행합니다."
+          else
+            base="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow deploy.yml --branch main --status success --limit 1 --json headSha --jq '.[0].headSha // ""' || true)"
+            if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+              echo "비교할 성공 배포를 찾지 못해 모두 실행합니다."
+            else
+              files="$(git diff --name-only "$base" "$GITHUB_SHA")"
+              echo "마지막 성공 배포 ${base:0:7} 이후 바뀐 파일:"
+              printf '%s\n' "$files" | sed 's/^/  /'
+              db=false; fn=false
+              if grep -qE '^supabase/(migrations/|config\.toml$)' <<<"$files"; then db=true; fi
+              if grep -qE '^supabase/(functions/|config\.toml$)' <<<"$files"; then fn=true; fi
+            fi
+          fi
+          echo "마이그레이션: $db, 함수 배포: $fn"
+          echo "db=$db" >> "$GITHUB_OUTPUT"
+          echo "fn=$fn" >> "$GITHUB_OUTPUT"
+      - name: Supabase CLI 설치
+        if: steps.changes.outputs.db == 'true' || steps.changes.outputs.fn == 'true'
+        uses: supabase/setup-cli@689adcfb80d947100a1eab127289b97d1fb07b13 # v3.2.0
+        with:
+          version: 3.0.0
       - name: Supabase 프로젝트 연결
+        if: steps.changes.outputs.db == 'true' || steps.changes.outputs.fn == 'true'
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+      # 이미 적용된 파일은 건너뛰고 새 파일만 적용한다. 되돌리지 않으므로 마이그레이션은 '추가만' 하게 쓴다(README 배포 절).
       - name: 마이그레이션 적용
+        if: steps.changes.outputs.db == 'true'
         run: supabase db push --remote --yes
-      # 위에서 link 한 프로젝트에 배포한다. --use-api: 러너에 Docker 없이 Supabase 서버 쪽에서 번들한다.
+      # --use-api: 러너에 Docker 없이 Supabase 서버 쪽에서 번들한다.
       # --yes: 비대화형 실행에서는 확인 프롬프트를 띄울 수 없어 미리 승인한다(db push와 같은 이유).
       # verify_jwt 설정은 config.toml([functions.admin-users])을 따른다.
       - name: Edge Function 배포
+        if: steps.changes.outputs.fn == 'true'
         run: supabase functions deploy admin-users --use-api --yes
 
   deploy:
     name: 페이지 배포
-    needs: migrate
+    needs: [test, migrate]
+    # migrate 가 통째로 건너뛰어져도(skipped) 배포는 돈다. 테스트·마이그레이션이 실패하면 배포하지 않는다.
+    if: always() && needs.test.result == 'success' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       pages: write
       id-token: write
@@ -74,19 +169,66 @@ jobs:
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
     steps:
       - name: 코드 내려받기
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Node 22 준비
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: 정적 파일 빌드
         run: node scripts/build.mjs "${GITHUB_SHA::7}"
       - name: Pages 설정
-        uses: actions/configure-pages@v6
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: 빌드 결과 업로드
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: dist
       - name: Pages 배포
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+      # 배포된 사이트의 version.json 이 이번 커밋을 가리키는지 확인한다(캐시를 피하려고 매번 다른 쿼리를 붙임).
+      - name: 배포 확인(version.json)
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          want="${GITHUB_SHA::7}"
+          url="${PAGE_URL%/}/version.json"
+          for i in $(seq 1 20); do
+            got="$(curl -fsS --max-time 10 "$url?t=$(date +%s)-$i" | jq -r '.build' 2>/dev/null || true)"
+            if [ "$got" = "$want" ]; then
+              echo "배포 확인: $url → $got"
+              exit 0
+            fi
+            echo "기다리는 중($i/20): ${got:-응답 없음} ≠ $want"
+            sleep 15
+          done
+          echo "::error::5분이 지나도 $url 이 $want 를 가리키지 않습니다. Settings → Pages 와 도메인 연결을 확인하세요."
+          exit 1
+
+  # 어느 잡이든 실패하면 이슈를 연다(이메일만으로는 놓치기 쉬움). 같은 제목의 열린 이슈가 있으면 댓글만 단다.
+  notify:
+    name: 실패 알림
+    needs: [test, migrate, deploy]
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      RESULTS: "테스트=${{ needs.test.result }}, 마이그레이션=${{ needs.migrate.result }}, 페이지 배포=${{ needs.deploy.result }}"
+    steps:
+      - name: 이슈 만들기
+        run: |
+          set -euo pipefail
+          title="[배포 실패] 배포 워크플로가 실패했습니다"
+          body="$(printf '커밋: %s\n결과: %s\n실행 기록: %s\n\n대응 절차는 README 의 \"운영 주의 → 장애 대응\" 표를 보세요. 해결하면 이 이슈를 닫아 주세요.' "${GITHUB_SHA::7}" "$RESULTS" "$RUN_URL")"
+          num="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"$title\"" --json number --jq '.[0].number // ""')"
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+          fi
