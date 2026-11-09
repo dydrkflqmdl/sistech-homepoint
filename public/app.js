@@ -1,6 +1,7 @@
 import { PALETTE, colorLabel, paletteEntry, progressColor } from './palette.js';
 import { kakaoMapViewUrl, openKakaoMapRoute } from './kakao.js';
 import { missionNames, missionProgress } from './mission.js';
+import { roundCoord } from './coord.js';
 // csv.js·login-id.js는 다른 담당이 함수를 더해 가는 파일이라 이름공간으로 가져온다.
 // 아직 없는 이름(nearDuplicates·isValidPassword 등)을 이름으로 가져오면 모듈 전체가 안 열리므로, 쓸 때 있는지 보고 쓴다.
 import * as csv from './csv.js';
@@ -215,6 +216,55 @@ const writeStorage = (key, value) => {
   }
 };
 
+// ── 시기(계약 C10) ───────────────────────────────────────
+// 장소마다 시기(period, 예: "Q1")가 있다. 같은 이름·좌표라도 시기가 다르면 다른 장소다. 아직 시기가 없는 서버·CSV에서는 ''.
+// 시기가 하나라도 있으면 상태 칩 위에 시기 칩 줄을 보이고, 고른 시기의 장소만 목록·칩 수·지도 핀·검색·내보내기에 쓴다.
+// 고른 시기는 이 기기에 기억한다. 고른 적이 없거나 기억한 시기가 없어졌으면 가장 최신(정렬 첫 번째)을 쓴다.
+const PERIOD_STORAGE_KEY = 'period';
+const periodOf = (p) => String(p?.period ?? '').trim();
+// 최신이 앞: "Q2"가 "Q1"보다, "2026Q1"이 "2025Q4"보다 앞. 숫자는 값으로 비교한다("Q10" > "Q9").
+const comparePeriodDesc = (a, b) => b.localeCompare(a, 'ko', { numeric: true });
+
+// 칩에 보일 시기: 비어 있지 않은 시기를 최신 순으로. 하나도 없으면 [](칩 줄을 숨기고 예전 화면 그대로).
+// 시기가 빈 장소가 섞여 있으면 맨 뒤에 ''("시기 없음")를 둔다(그 장소들도 고를 수 있게).
+function periodsOf(places) {
+  const set = new Set(places.map(periodOf));
+  const named = [...set].filter(Boolean).sort(comparePeriodDesc);
+  if (named.length === 0) return [];
+  return set.has('') ? [...named, ''] : named;
+}
+
+// 사람이 고른 시기: null(고른 적 없음 → 최신) | { all: true }(전체) | { value: '시기' }
+function readPeriodChoice() {
+  try {
+    const v = JSON.parse(readStorage(PERIOD_STORAGE_KEY) ?? 'null');
+    if (v?.all === true) return { all: true };
+    if (typeof v?.value === 'string') return { value: v.value };
+  } catch {
+    // 망가진 값이면 고른 적 없는 것으로 본다.
+  }
+  return null;
+}
+let periodChoice = readPeriodChoice();
+function setPeriodChoice(value) {
+  periodChoice = value === null ? { all: true } : { value };
+  writeStorage(PERIOD_STORAGE_KEY, JSON.stringify(periodChoice));
+}
+
+// 지금 적용하는 시기. null이면 거르지 않는다(시기가 없는 데이터이거나 [전체]를 골랐다).
+function activePeriod() {
+  const periods = periodsOf(state.places);
+  if (periods.length === 0 || periodChoice?.all) return null;
+  if (periodChoice && periods.includes(periodChoice.value)) return periodChoice.value;
+  return periods[0];
+}
+const inPeriod = (p, period) => period === null || periodOf(p) === period;
+// 지금 시기의 장소(상태 칩 수·시군 묶음·지도·내보내기의 기준)
+const periodPlaces = (period = activePeriod()) => (period === null ? state.places : state.places.filter((p) => periodOf(p) === period));
+// 메뉴·안내에 붙이는 시기 표시: 시기가 없는 데이터면 '', 전체면 "(전체)", 아니면 "(Q1)"
+const periodSuffix = (period = activePeriod()) =>
+  periodsOf(state.places).length === 0 ? '' : `(${period === null ? '전체' : period || '시기 없음'})`;
+
 function syncMapToggles() {
   for (const btn of document.querySelectorAll('.layer-toggle [data-layer]')) {
     btn.setAttribute('aria-pressed', String(btn.dataset.layer === baseLayerKey));
@@ -413,18 +463,84 @@ function panToPlace(p) {
 
 function visiblePlaces() {
   const q = state.query.trim().toLowerCase();
+  const period = activePeriod();
   // 고르고 있는 장소는 거르기·검색과 상관없이 보여 준다. 미션을 저장해 진행 상태가 바뀌어도 열어 둔 상세 정보 밑에서 사라지지 않게 한다.
+  // (시기를 바꾸면 그 시기에 없는 장소의 상세 정보는 닫는다 — choosePeriod)
   return state.places.filter(
     (p) =>
       p.id === state.selectedId ||
-      ((!state.filterColor || placeColor(p) === state.filterColor) &&
+      (inPeriod(p, period) &&
+        (!state.filterColor || placeColor(p) === state.filterColor) &&
         (!q || [p.name, p.address, p.phone, p.memo].some((v) => v.toLowerCase().includes(q)))),
   );
 }
 
-function renderFilters() {
+// 시기 칩 줄: [전체] [Q2] [Q1] … 시기가 하나도 없으면 줄 자체를 숨긴다.
+function renderPeriodFilters() {
+  const box = $('#period-filters');
+  const periods = periodsOf(state.places);
+  box.hidden = periods.length === 0;
+  if (periods.length === 0) {
+    box.replaceChildren();
+    return;
+  }
+  const active = activePeriod();
   const counts = new Map();
-  for (const p of state.places) {
+  for (const p of state.places) counts.set(periodOf(p), (counts.get(periodOf(p)) ?? 0) + 1);
+  const chip = (value, label, count) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'chip period-chip',
+        'data-period': value,
+        'data-all': value === null ? 'true' : null,
+        'aria-pressed': String(active === value),
+        onclick: () => choosePeriod(value),
+      },
+      label,
+      h('span', { class: 'count' }, String(count)),
+    );
+  fill(
+    box,
+    h('span', { class: 'chips-label', 'aria-hidden': 'true' }, '시기'),
+    chip(null, '전체', state.places.length),
+    periods.map((v) => chip(v, v || '시기 없음', counts.get(v))),
+  );
+}
+
+const periodChipSelector = (value) => (value === null ? '#period-filters [data-all]' : `#period-filters [data-period="${CSS.escape(value)}"]`);
+
+// 고른 장소가 시기 밖이면 상세 정보를 닫는다(적던 미션 기록은 버린다. 메모는 따로 저장되고 있다).
+function dropSelectionOutsidePeriod() {
+  const p = findPlace(state.selectedId);
+  if (!p || inPeriod(p, activePeriod())) return;
+  if (memoDrafts.get(p.id)?.status === 'saved') discardMemo(p.id);
+  state.selectedId = null;
+  state.selectedMission = null;
+  state.missionDraft = null;
+}
+
+// 시기 칩을 눌렀을 때. value가 null이면 전체.
+function choosePeriod(value) {
+  if (value === activePeriod()) return;
+  const selected = findPlace(state.selectedId);
+  // 열어 둔 장소가 새 시기에 없어 상세 정보가 닫히면, 저장하지 않은 미션 기록·메모가 있을 때 먼저 묻는다.
+  if (selected && !inPeriod(selected, value) && !confirmDiscardDraft()) return;
+  setPeriodChoice(value);
+  dropSelectionOutsidePeriod();
+  // 상태 칩을 바꿀 때처럼 시군 묶음은 모두 접는다.
+  collapseAllGroups();
+  render();
+  fitToPlaces(periodPlaces());
+  refocus(periodChipSelector(value));
+}
+
+function renderFilters() {
+  renderPeriodFilters();
+  const scope = periodPlaces();
+  const counts = new Map();
+  for (const p of scope) {
     const color = placeColor(p);
     counts.set(color, (counts.get(color) ?? 0) + 1);
   }
@@ -455,7 +571,7 @@ function renderFilters() {
 
   fill(
     $('#color-filters'),
-    state.places.length > 0 && [chip(null, '전체', state.places.length), ...colors.map((c) => chip(c, colorLabel(c), counts.get(c)))],
+    scope.length > 0 && [chip(null, '전체', scope.length), ...colors.map((c) => chip(c, colorLabel(c), counts.get(c)))],
   );
 }
 
@@ -513,6 +629,9 @@ function toggleGroup(district, places) {
   refocus(groupHeadSelector(district));
 }
 
+// 목록 줄에 시기 표시를 붙일지(renderList가 정한다): 시기가 있는 데이터를 [전체]로 볼 때만.
+let listShowsPeriod = false;
+
 function placeRow(p) {
   return h(
     'li',
@@ -528,7 +647,13 @@ function placeRow(p) {
         },
       },
       placeDot(p),
-      h('span', { class: 'text' }, h('span', { class: 'name' }, p.name, missionBadge(p)), h('span', { class: 'addr' }, p.address)),
+      h(
+        'span',
+        { class: 'text' },
+        // [전체] 시기를 볼 때만 이름 옆에 시기를 작게 붙인다(같은 이름이 두 시기에 있을 수 있다).
+        h('span', { class: 'name' }, p.name, listShowsPeriod && periodOf(p) && h('span', { class: 'period-tag' }, periodOf(p)), missionBadge(p)),
+        h('span', { class: 'addr' }, p.address),
+      ),
       memoIcon(p),
     ),
   );
@@ -607,10 +732,13 @@ function renderListStatus() {
 
 let lastListKey = null;
 function renderList(visible) {
-  const total = state.places.length;
+  // 개수는 지금 시기의 장소 기준이다(시기가 없는 데이터면 전체와 같다).
+  const period = activePeriod();
+  const total = periodPlaces(period).length;
+  listShowsPeriod = period === null && periodsOf(state.places).length > 0;
   renderListStatus();
   // "아직 저장한 장소가 없습니다"는 목록을 받은 뒤 0곳일 때만. 받는 중·실패 중에 보이면 데이터가 지워진 것처럼 보인다.
-  $('#empty').hidden = !(state.loaded && !state.loading && !state.loadError && total === 0);
+  $('#empty').hidden = !(state.loaded && !state.loading && !state.loadError && state.places.length === 0);
   $('#list-summary').textContent =
     total === 0 ? ''
     : visible.length === total ? `장소 ${total}개`
@@ -618,7 +746,7 @@ function renderList(visible) {
     : `${visible.length}개 / 전체 ${total}개`;
 
   // 검색어·거르기·선택이 바뀌면 "이번만 접어 둔" 묶음을 잊고 저절로 펼치는 규칙을 다시 따른다.
-  const listKey = `${state.query.trim()}|${state.filterColor}|${state.selectedId}`;
+  const listKey = `${state.query.trim()}|${state.filterColor}|${state.selectedId}|${period}`;
   if (listKey !== lastListKey) state.closedGroups.clear();
   lastListKey = listKey;
 
@@ -684,7 +812,13 @@ function renderDetail() {
       { class: 'detail-head' },
       placeDot(p),
       // 장소를 고르면 초점이 여기로 온다(tabindex=-1: 탭 순서에는 넣지 않고 초점만 받을 수 있게).
-      h('h2', { id: 'detail-title', tabindex: '-1' }, p.name, missionBadge(p)),
+      h(
+        'h2',
+        { id: 'detail-title', tabindex: '-1' },
+        p.name,
+        periodOf(p) && h('span', { class: 'period-badge', title: '시기' }, periodOf(p)),
+        missionBadge(p),
+      ),
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': '닫기', onclick: closeDetail }, '×'),
     ),
     // 주소에는 시군이 들어 있지 않다(목록은 시군별로 묶여 보이므로). 상세 카드만 시군을 작은 표시로 앞에 붙인다.
@@ -1163,6 +1297,17 @@ function importReviewView(review) {
     'section',
     { class: 'import-review', 'aria-labelledby': 'import-review-title' },
     h('h3', { id: 'import-review-title' }, '가져오기 전에 확인해 주세요'),
+    review.periods.length > 0 &&
+      h(
+        'div',
+        { class: 'review-group review-periods' },
+        h('h4', {}, '시기별 새 장소'),
+        h(
+          'ul',
+          { class: 'review-list' },
+          review.periods.map(({ period, count }) => h('li', {}, h('b', {}, period || '시기 없음'), ` 새 장소 ${count}개`)),
+        ),
+      ),
     review.changes.length > 0 &&
       h(
         'div',
@@ -1761,7 +1906,7 @@ function renderDetailUnlessComposing() {
 
 function render() {
   // 미션 저장으로 그 상태의 장소가 하나도 안 남으면 칩도 사라지므로, 아무 칩도 눌리지 않은 채 걸러지지 않게 전체로 되돌린다.
-  if (state.filterColor && !state.places.some((p) => placeColor(p) === state.filterColor)) state.filterColor = null;
+  if (state.filterColor && !periodPlaces().some((p) => placeColor(p) === state.filterColor)) state.filterColor = null;
   const visible = visiblePlaces();
   renderFilters();
   renderList(visible);
@@ -2366,7 +2511,36 @@ async function sendImportFile(parsed) {
   };
 }
 
+// 시기별로 새로 생길 장소 수(계약 C10: 이름·좌표·시기가 모두 같은 기존 장소가 없으면 새 장소).
+// 가져오는 파일에 시기가 하나도 없으면 [](예전처럼 따로 보이지 않는다). 최신 시기가 앞, "시기 없음"은 맨 뒤.
+function newPlacesByPeriod(parsedFiles) {
+  const key = (p) => `${p.name}|${roundCoord(p.lat)}|${roundCoord(p.lng)}|${periodOf(p)}`;
+  const known = new Set(state.places.map(key));
+  const counts = new Map();
+  let named = false;
+  for (const { parsed } of parsedFiles) {
+    for (const p of parsed?.places ?? []) {
+      if (periodOf(p)) named = true;
+      const k = key(p);
+      if (known.has(k)) continue;
+      known.add(k);
+      counts.set(periodOf(p), (counts.get(periodOf(p)) ?? 0) + 1);
+    }
+  }
+  if (!named) return [];
+  return [...counts]
+    .sort(([a], [b]) => (a === '') - (b === '') || comparePeriodDesc(a, b))
+    .map(([period, count]) => ({ period, count }));
+}
+
+// 가져온 파일들에서 가장 최신 시기(없으면 null). 가져온 뒤 시기 칩을 이것으로 고른다.
+function latestPeriodIn(parsedList) {
+  const periods = parsedList.flatMap((parsed) => (parsed?.places ?? []).map(periodOf)).filter(Boolean);
+  return periods.length > 0 ? periods.sort(comparePeriodDesc)[0] : null;
+}
+
 // 가져오기 전에 확인받을 것(계약 C7): 행 경고, 같은 이름·시군인데 좌표가 다른 기존 장소(근접 중복), 미션명이 바뀌는 기존 장소.
+// 시기가 있는 파일이면 시기별 새 장소 수도 보여 준다(새 장소가 생길 때만 멈춰 묻는다).
 // csv.js에 탐지 함수가 아직 없으면 그 항목은 건너뛴다. 확인할 것이 없으면 null.
 function importReview(parsedFiles) {
   const multi = parsedFiles.length > 1;
@@ -2385,7 +2559,8 @@ function importReview(parsedFiles) {
       api.logCause('가져오기 전 확인(근접 중복·미션명 변경) 실패 — 확인 없이 진행', err);
     }
   }
-  return warnings.length || near.length || changes.length ? { warnings, near, changes } : null;
+  const periods = newPlacesByPeriod(parsedFiles);
+  return warnings.length || near.length || changes.length || periods.length ? { warnings, near, changes, periods } : null;
 }
 
 // 파일을 하나씩 읽고, 확인할 것이 있으면 멈춰 묻고, 없으면 바로 보낸다.
@@ -2472,8 +2647,19 @@ async function sendImport(parsedFiles, epoch) {
     }
     if (epoch !== authEpoch) return;
   }
+  // 방금 가져온 파일의 시기(여럿이면 최신)로 시기 칩을 고른다. 보내지 못한 파일은 빼고 본다.
+  const importedPeriod = latestPeriodIn(parsedFiles.filter((_, i) => results[i]?.result).map((item) => item.parsed));
+  const periodChanged = importedPeriod !== null && importedPeriod !== activePeriod();
+  if (importedPeriod !== null) setPeriodChoice(importedPeriod);
   try {
-    if ((await reloadPlaces()) && (wasEmpty || results.some((r) => r.result?.imported > 0))) fitToPlaces(visiblePlaces());
+    const reloaded = await reloadPlaces();
+    if (periodChanged && epoch === authEpoch) {
+      // 열어 둔 장소가 새 시기에 없으면 닫는다(미션 기록 초안은 가져오기를 시작할 때 이미 정리했다).
+      dropSelectionOutsidePeriod();
+      collapseAllGroups();
+      render();
+    }
+    if (reloaded && (wasEmpty || periodChanged || results.some((r) => r.result?.imported > 0))) fitToPlaces(visiblePlaces());
   } catch (err) {
     if (!authFailed(err)) toast(err.message);
   }
@@ -2610,7 +2796,7 @@ async function loadPlaces({ fit = false } = {}) {
   state.loadError = null;
   render();
   try {
-    if ((await reloadPlaces()) && fit && epoch === authEpoch) fitToPlaces(state.places);
+    if ((await reloadPlaces()) && fit && epoch === authEpoch) fitToPlaces(periodPlaces());
   } catch (err) {
     if (authFailed(err) || epoch !== authEpoch) return;
     api.logCause('장소 목록 받기 실패', err);
@@ -2680,10 +2866,12 @@ function onRemoteChange(change) {
 }
 
 // 알림의 새 값이 화면에 있는 값과 같으면 true. 알림에 없는 칸이 있으면 모르는 것으로 보고 다시 받는다.
+// 시기(period, 계약 C10)는 아직 그 칸이 없는 서버도 있어서, 알림·화면 모두 없으면 ''로 보고 비교한다.
 const PLACE_COLUMNS = ['name', 'district', 'address', 'phone', 'memo', 'mission', 'lat', 'lng'];
+const samePlaceRow = (row, p) => PLACE_COLUMNS.every((k) => k in row && row[k] === p[k]) && periodOf(row) === periodOf(p);
 function placeRowMatches(row) {
   const p = row && findPlace(row.id);
-  return Boolean(p) && PLACE_COLUMNS.every((k) => k in row && row[k] === p[k]);
+  return Boolean(p) && samePlaceRow(row, p);
 }
 const MISSION_COLUMNS = [
   ['done', 'done'],
@@ -2711,7 +2899,7 @@ function takeOwnWrite(c) {
   const i = ownWrites.findIndex((w) =>
     w.placeId === c.placeId && c.row &&
     (c.table === 'places'
-      ? Boolean(w.place) && PLACE_COLUMNS.every((k) => k in c.row && c.row[k] === w.place[k])
+      ? Boolean(w.place) && samePlaceRow(c.row, w.place)
       : w.mission === c.row.mission && w.version === c.row.version),
   );
   if (i < 0) return false;
@@ -2791,18 +2979,115 @@ function localDateStamp(d = new Date()) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// 내보내기: 지금 목록을 CSV로 만들어 내려받게 한다. toCsv가 엑셀용 UTF-8 BOM을 앞에 붙여 준다.
-$('#export-button').addEventListener('click', () => {
-  if (!signedIn()) return;
-  const blob = new Blob([csv.toCsv(state.places)], { type: 'text/csv;charset=utf-8' });
+// CSV 글을 파일로 내려받게 한다. toCsv·toMissionCsv가 엑셀용 UTF-8 BOM을 앞에 붙여 준다.
+function downloadCsv(text, filename) {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
-  const link = h('a', { href: url, download: `places-${localDateStamp()}.csv`, hidden: true });
+  const link = h('a', { href: url, download: filename, hidden: true });
   document.body.append(link);
   link.click();
   link.remove();
   // 바로 지우면 일부 브라우저에서 내려받기가 끊긴다.
   setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+// 파일명에 넣을 시기: 시기를 골랐으면 "Q1-", 전체·시기 없는 데이터면 ''. 파일명에 못 쓰는 글자는 _로 바꾼다.
+const periodFilePart = (period) => (period === null ? '' : `${(period || '시기없음').replace(/[\\/:*?"<>|\s]+/g, '_')}-`);
+
+// 장소 내보내기: 지금 시기의 장소(시기를 고르지 않았거나 시기가 없는 데이터면 전체)를 다시 가져올 수 있는 형식으로.
+function exportPlaces() {
+  const period = activePeriod();
+  downloadCsv(csv.toCsv(periodPlaces(period)), `places-${periodFilePart(period)}${localDateStamp()}.csv`);
+}
+
+// 미션 기록 내보내기(계약 C11): 지금 시기의 장소를 csv.toMissionCsv로. csv.js에 함수가 없으면 메뉴 자체를 띄우지 않는다.
+function exportMissions() {
+  if (typeof csv.toMissionCsv !== 'function') return;
+  const period = activePeriod();
+  downloadCsv(csv.toMissionCsv(periodPlaces(period)), `missions-${periodFilePart(period)}${localDateStamp()}.csv`);
+}
+
+// [내보내기]: csv.js에 미션 기록 내보내기(toMissionCsv)가 있으면 단추 아래에 작은 메뉴(장소 / 미션 기록)를 띄운다.
+// 메뉴는 화면에 겹쳐 뜨므로(position: fixed) 머리글 높이·줄 수는 그대로다. 없으면 예전처럼 바로 장소를 내보낸다.
+const exportButton = $('#export-button');
+const exportMenu = $('#export-menu');
+const hasMissionExport = () => typeof csv.toMissionCsv === 'function';
+if (hasMissionExport()) {
+  exportButton.setAttribute('aria-haspopup', 'menu');
+  exportButton.setAttribute('aria-expanded', 'false');
+  exportButton.setAttribute('aria-controls', 'export-menu');
+}
+
+function closeExportMenu({ focus = false } = {}) {
+  if (exportMenu.hidden) return;
+  exportMenu.hidden = true;
+  exportMenu.replaceChildren();
+  exportButton.setAttribute('aria-expanded', 'false');
+  if (focus) exportButton.focus();
+}
+
+function openExportMenu() {
+  const suffix = periodSuffix();
+  const item = (id, label, run) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        role: 'menuitem',
+        class: 'menu-item',
+        id,
+        onclick: () => {
+          closeExportMenu({ focus: true });
+          if (signedIn()) run();
+        },
+      },
+      label,
+    );
+  fill(exportMenu, item('export-places', `장소 내보내기${suffix}`, exportPlaces), item('export-missions', `미션 기록 내보내기${suffix}`, exportMissions));
+  exportMenu.hidden = false;
+  exportButton.setAttribute('aria-expanded', 'true');
+  placeExportMenu();
+  exportMenu.querySelector('.menu-item').focus();
+}
+
+// 단추 바로 아래, 단추 오른쪽 끝에 맞춘다. 화면 밖으로 나가면 안쪽으로 당긴다(양옆 8px).
+function placeExportMenu() {
+  const r = exportButton.getBoundingClientRect();
+  const w = exportMenu.offsetWidth;
+  exportMenu.style.top = `${Math.round(r.bottom + 4)}px`;
+  exportMenu.style.left = `${Math.round(Math.max(8, Math.min(r.right - w, innerWidth - w - 8)))}px`;
+}
+
+exportButton.addEventListener('click', () => {
+  if (!signedIn()) return;
+  if (!hasMissionExport()) {
+    exportPlaces();
+    return;
+  }
+  if (exportMenu.hidden) openExportMenu();
+  else closeExportMenu();
 });
+
+// 메뉴 안 키보드: ↑↓·Home·End로 항목을 옮기고, Esc는 메뉴만 닫는다(상세 정보 닫기로 넘어가지 않게).
+// Tab은 메뉴를 닫고 [내보내기]로 돌아간다(메뉴는 문서 맨 끝에 있어 그대로 두면 초점이 갈 곳이 없다).
+exportMenu.addEventListener('keydown', (e) => {
+  const items = [...exportMenu.querySelectorAll('.menu-item')];
+  const i = items.indexOf(document.activeElement);
+  const to = { ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: items.length - 1 }[e.key];
+  if (e.key === 'Escape' || e.key === 'Tab') {
+    e.preventDefault();
+    e.stopPropagation();
+    closeExportMenu({ focus: true });
+  } else if (to !== undefined) {
+    e.preventDefault();
+    items[(to + items.length) % items.length]?.focus();
+  }
+});
+// 메뉴 밖을 누르거나 화면 크기가 바뀌면 닫는다.
+document.addEventListener('pointerdown', (e) => {
+  if (!exportMenu.hidden && !exportMenu.contains(e.target) && !exportButton.contains(e.target)) closeExportMenu();
+});
+window.addEventListener('resize', () => closeExportMenu());
 
 $('#csv-input').addEventListener('change', (e) => {
   if (e.target.files.length > 0) startImport(e.target.files);
@@ -2904,15 +3189,16 @@ function goHome() {
   state.importSkipped = [];
   state.importResults = null;
   state.importReview = null;
-  // 처음 화면은 시군을 모두 접은 상태다.
+  // 처음 화면은 시군을 모두 접은 상태다. 고른 시기는 그대로 둔다(기억해 둔 설정).
   collapseAllGroups();
+  closeExportMenu();
   // 계정 관리 창도 닫는다(요청 중이면 끝날 때까지 둔다).
   if (accounts.open && !accounts.busy) accountsReset();
   $('#search').value = '';
   renderImport();
   renderAccounts();
   render();
-  fitToPlaces(state.places);
+  fitToPlaces(periodPlaces());
   $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -2929,6 +3215,7 @@ const LOGIN_ENDED_MESSAGE = '로그인이 만료되었거나 다른 창에서 �
 
 // 한 번에 하나만 보인다: 'boot'(설정 없음·불러오는 중), 'login', 'app'.
 function showView(view) {
+  if (view !== 'app') closeExportMenu();
   $('#boot-message').hidden = view !== 'boot';
   $('#login').hidden = view !== 'login';
   $('.app').hidden = view !== 'app';
