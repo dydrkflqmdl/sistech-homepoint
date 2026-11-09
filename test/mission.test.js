@@ -19,6 +19,19 @@ test('첫 미션 번호가 1이 아니면 그 번호부터 센다', () => {
   assert.deepEqual(missionNames('X_05 ~ _07'), ['X_05', 'X_06', 'X_07']);
 });
 
+test('포인트 번호와 미션 번호가 붙은 미션명은 물결 뒤 숫자를 개수로 펼친다', () => {
+  // 홈포인트_Q1_D_GH_GS CSV 형식: Q1DGHGS01(포인트) + 01(미션) ~ 10
+  const gs = missionNames('Q1DGHGS0101 ~ 10');
+  assert.equal(gs.length, 10);
+  assert.equal(gs[0], 'Q1DGHGS0101');
+  assert.equal(gs[9], 'Q1DGHGS0110');
+  assert.deepEqual(missionNames('Q1DGHGS1201 ~ 04'), ['Q1DGHGS1201', 'Q1DGHGS1202', 'Q1DGHGS1203', 'Q1DGHGS1204']);
+  // 물결 뒤에 전체 이름을 써도 같은 결과
+  assert.deepEqual(missionNames('Q1DGHGS0101 ~ Q1DGHGS0103'), ['Q1DGHGS0101', 'Q1DGHGS0102', 'Q1DGHGS0103']);
+  // 자릿수가 같은 거꾸로 된 범위는 여전히 미션 하나
+  assert.deepEqual(missionNames('X_10 ~ _03'), ['X_10 ~ _03']);
+});
+
 test('범위가 아니거나 이상한 범위는 미션 하나로 본다', () => {
   assert.deepEqual(missionNames(''), []);
   assert.deepEqual(missionNames('  '), []);

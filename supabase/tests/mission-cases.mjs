@@ -42,6 +42,15 @@ const inputs = [
   '미션1~미션3 끝4',
   'z00~0',
   'r2~r1',
+  // 포인트 번호와 미션 번호가 붙은 표기(홈포인트_Q1_D_GH_GS CSV)
+  'Q1DGHGS0101 ~ 10',
+  'Q1DGHGS1201 ~ 04',
+  'Q1DGHGS0401 ~ 12',
+  'Q1DGHGS0101 ~ Q1DGHGS0110',
+  'A010 ~ 5',
+  'A100 ~ 99',
+  'B0101~0',
+  'C12345 ~ 7',
 ];
 
 console.log(JSON.stringify(inputs.map((input) => ({ input, output: missionNames(input) }))));
