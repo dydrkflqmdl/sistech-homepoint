@@ -36,19 +36,25 @@ p {
   margin: 0;
 }
 
-/* 레이아웃: 휴대폰은 지도 위·목록 아래, 넓은 화면은 목록 왼쪽·지도 오른쪽 */
+/* 레이아웃: 휴대폰은 지도 위·목록 아래, 넓은 화면은 목록 왼쪽·지도 오른쪽.
+   앱 화면은 문서(페이지) 자체가 스크롤되지 않는다. 스크롤은 목록 패널(.panel) 안에서만 한다.
+   position: relative + overflow: hidden은 안전망이다. 패널 밖으로 새는 요소가 있어도 문서 높이를 늘리지 못한다. */
 .app {
+  position: relative;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas: 'band' 'top' 'main';
   height: 100dvh;
+  overflow: hidden;
 }
 
 .topbar {
+  grid-area: top;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: max(10px, env(safe-area-inset-top)) 16px 10px;
+  padding: max(8px, env(safe-area-inset-top)) 16px 8px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
   /* .app 격자 칸이 머리글 내용 폭만큼 늘어나 휴대폰에서 화면 밖으로 밀리지 않게 한다(.actions의 min-width: 0과 함께). */
@@ -97,10 +103,11 @@ p {
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 6px 8px;
 }
 
 .layout {
+  grid-area: main;
   display: grid;
   grid-template-rows: 42% 1fr;
   /* 문서에서는 목록(패널)이 지도보다 먼저 오지만(키보드·화면 읽기 순서), 휴대폰 화면에서는 지도를 위에 둔다 */
@@ -131,16 +138,27 @@ p {
   color: var(--muted);
   font-size: 14px;
   text-align: center;
+  word-break: keep-all;
   overflow-wrap: anywhere;
 }
 
+.map-message .btn {
+  justify-self: center;
+  margin-top: 6px;
+}
+
+/* position: relative가 중요하다. 패널 안의 화면 읽기 전용 글자(.sr-only)·계정 표 머리 줄은 position: absolute인데,
+   위치를 잡은 조상이 없으면 문서 전체를 기준으로 놓여 패널 스크롤 밖으로 샌다. 계정 관리 창처럼 긴 내용이 위에 열려
+   시군 머리가 화면 아래로 밀리면, 그 글자들이 문서 높이를 늘려 페이지 전체가 한 번 더 스크롤됐다(머리글·지도가 밀려 올라감). */
 .panel {
   grid-area: panel;
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
 }
 
@@ -162,12 +180,13 @@ p {
 }
 
 /* 공통 요소 */
+/* 버튼·칩·아이콘 단추는 손가락으로 누르기 쉽게 최소 44px(애플·구글 권장 크기)로 둔다. */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 38px;
+  min-height: 44px;
   padding: 0 14px;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -201,10 +220,12 @@ p {
   display: none;
 }
 
+/* 아이콘 단추(×)는 보이는 크기는 작게 두고, 누르는 자리(::after)를 44px로 넓힌다. */
 .icon-btn {
+  position: relative;
   flex: none;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -214,13 +235,20 @@ p {
   cursor: pointer;
 }
 
+.icon-btn::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+
 .icon-btn:hover {
   background: var(--bg);
 }
 
 .link {
   align-self: flex-start;
-  padding: 0;
+  min-height: 44px;
+  padding: 0 4px;
   border: 0;
   background: none;
   color: var(--muted);
@@ -232,6 +260,13 @@ p {
 
 .link.danger {
   color: var(--danger);
+}
+
+/* "이 장소 삭제"는 실수로 누르지 않게 위 단추들과 떨어뜨리고 구분선 아래에 둔다. */
+.delete-place {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
 
 .card {
@@ -248,12 +283,35 @@ p {
   display: none;
 }
 
+/* 진행 상태 점: 색에 기호를 함께 그린다(미진행 ○, 진행 중 ◐, 완료 ✓). 색을 구별하기 어려워도 상태를 알 수 있다.
+   기호는 화면 읽기 프로그램이 읽지 않게 대체 글자를 비워 둔다(content: "…" / ""). 상태는 따로 글자로 알린다. */
 .dot {
   flex: none;
-  width: 12px;
-  height: 12px;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: var(--c);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.dot[data-state='todo']::before {
+  content: '○';
+  content: '○' / '';
+}
+
+.dot[data-state='doing']::before {
+  content: '◐';
+  content: '◐' / '';
+}
+
+.dot[data-state='done']::before {
+  content: '✓';
+  content: '✓' / '';
 }
 
 .hint {
@@ -323,6 +381,59 @@ p {
   color: var(--muted);
 }
 
+/* 메모 아래 저장 상태: "저장됨"·"저장 중…"·"저장 안 됨 [다시 저장]"·충돌 안내. 사라지지 않고 남는다. */
+.memo-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-height: 18px;
+  font-size: 13px;
+}
+
+.memo-status:empty {
+  min-height: 0;
+}
+
+.memo-state.saved {
+  color: #1d7a4c;
+}
+
+.memo-state.saved::before {
+  content: '✓ ';
+}
+
+.memo-state.error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.memo-reason {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.memo-conflict {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #f0b37e;
+  border-radius: 8px;
+  background: #fff4e8;
+  color: var(--text);
+}
+
+.memo-conflict-message {
+  font-weight: 700;
+}
+
+.memo-latest {
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .memo textarea {
   min-height: 64px;
   padding: 8px 10px;
@@ -371,7 +482,8 @@ p {
   justify-content: space-between;
   gap: 4px;
   width: 100%;
-  padding: 9px 8px;
+  min-height: 44px;
+  padding: 12px 8px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: var(--bg);
@@ -434,6 +546,7 @@ p {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 44px;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
@@ -455,10 +568,11 @@ p {
   font-size: 13px;
 }
 
-/* 휴대폰(iOS)은 16px보다 작은 입력 칸에 초점이 가면 화면을 확대하므로 16px로 둔다 */
+/* 휴대폰(iOS)은 16px보다 작은 입력 칸에 초점이 가면 화면을 확대하므로 16px로 둔다. 누르기 쉽게 높이는 44px 이상 */
 .mission-form .field input {
   width: 100%;
   min-width: 0;
+  min-height: 44px;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -497,15 +611,48 @@ p {
   font-weight: 600;
 }
 
-/* 다른 기기가 먼저 저장해 막혔을 때 보여 주는 서버의 최신 값 */
+/* 다른 기기가 먼저 저장해 막혔을 때 폼 안에 고정으로 두는 안내: 문구 + 서버의 최신 값 + [최신값 불러오기]/[내 값으로 덮어쓰기] */
 .mission-conflict {
+  display: grid;
+  gap: 6px;
   margin: 0;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--muted);
+  padding: 10px;
+  border: 1px solid #f0b37e;
+  border-radius: 8px;
+  background: #fff4e8;
   font-size: 13px;
   overflow-wrap: anywhere;
+}
+
+.mission-conflict-message {
+  font-weight: 700;
+}
+
+.mission-conflict-latest {
+  color: var(--muted);
+}
+
+.mission-conflict .button-row .btn {
+  flex: 1;
+  white-space: normal;
+}
+
+/* 시간 초과·연결 실패·저장 취소: 적던 값은 그대로 두고 [다시 시도] */
+.mission-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fdecec;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mission-error p {
+  flex: 1 1 180px;
 }
 
 /* 저장·취소·수정 버튼은 입력 칸 폭을 나눠 쓴다 */
@@ -659,7 +806,7 @@ p {
 
 .search {
   width: 100%;
-  height: 40px;
+  height: 44px;
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -682,8 +829,8 @@ p {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface);
@@ -694,8 +841,9 @@ p {
 }
 
 .chip .dot {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
+  font-size: 9px;
 }
 
 .chip .count {
@@ -754,7 +902,7 @@ p {
 }
 
 .list .dot {
-  margin-top: 5px;
+  margin-top: 3px;
 }
 
 /* 메모 말풍선: 메모가 있으면(.on) 진하게, 없으면 흐리게 자리만 지킨다 */
@@ -840,9 +988,10 @@ p {
 }
 
 .list .group-state .dot {
-  width: 10px;
-  height: 10px;
+  width: 14px;
+  height: 14px;
   margin-top: 0;
+  font-size: 9px;
 }
 
 .chevron {
@@ -954,6 +1103,17 @@ p {
   outline: none;
 }
 
+/* 핀 그림은 작아도 누르는 자리는 44px로 넓힌다. */
+.pin::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
 .pin:focus-visible .pin-shape {
   filter: drop-shadow(0 0 0 #fff) drop-shadow(0 0 2px var(--text)) drop-shadow(0 0 2px var(--text));
 }
@@ -980,7 +1140,7 @@ p {
 }
 
 .layer-toggle button {
-  height: 34px;
+  height: 44px;
   padding: 0 14px;
   border: 0;
   background: #fff;
@@ -1091,8 +1251,14 @@ body.dragging .drop-overlay {
   background: var(--accent);
   color: var(--accent-text);
   font-size: 14px;
+  transition: opacity 0.15s;
 }
 
+/* 알릴 글이 없으면 투명하게 둔다(칸은 그대로 있어야 화면 읽기 프로그램이 다음 알림을 읽는다). */
+.toast:empty {
+  opacity: 0;
+  pointer-events: none;
+}
 
 /* 로그인 전 화면. 안내(.boot-message)·로그인(.login)·앱(.app) 중 하나만 보인다.
    .app은 display: grid라서 hidden 속성만으로는 숨지 않으므로 직접 지운다. */
@@ -1157,7 +1323,7 @@ body.dragging .drop-overlay {
 /* 휴대폰(iOS)은 16px보다 작은 입력 칸에 초점이 가면 화면을 확대하므로 16px로 둔다 */
 .login-field input {
   width: 100%;
-  height: 42px;
+  height: 44px;
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 9px;
@@ -1173,6 +1339,65 @@ body.dragging .drop-overlay {
   box-shadow: 0 0 0 1px var(--danger);
 }
 
+/* 비밀번호 칸 + [보기] 단추(로그인·새 계정·재설정이 함께 쓴다). 단추는 칸 오른쪽 안쪽에 붙는다. */
+.pw-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* 오른쪽 안쪽에 [보기] 자리를 비운다. 계정 관리 칸(.accounts .field input)보다 우선하도록 선택자를 하나 더 둔다. */
+.pw-field input,
+.accounts .field .pw-field input {
+  flex: 1;
+  min-width: 0;
+  padding-right: 64px;
+}
+
+.pw-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  min-width: 56px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 0 8px 8px 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* 누른 상태(글자가 보임)는 진하게 표시한다. */
+.pw-toggle[aria-pressed='true'] {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.pw-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 로그인 화면의 안내(오류 아님): 비밀번호를 바꾼 뒤 다시 로그인 등 */
+.login-notice {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #e3f5ea;
+  color: #1d7a4c;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.login-notice[hidden] {
+  display: none;
+}
+
 .login-error {
   color: var(--danger);
   font-size: 13px;
@@ -1184,7 +1409,7 @@ body.dragging .drop-overlay {
 }
 
 .login-card .btn.primary {
-  height: 42px;
+  min-height: 44px;
 }
 
 /* 머리글 오른쪽: 가져오기·내보내기와 계정(아이디·로그인 기록·로그아웃). 좁은 화면에서는 줄을 바꿔 아래로 내려간다. */
@@ -1243,10 +1468,10 @@ body.dragging .drop-overlay {
   gap: 4px;
 }
 
-/* 표 안·머리 줄의 작은 버튼 */
+/* 표 안·머리 줄의 작은 버튼. 글자는 작아도 누르는 높이는 44px을 지킨다. */
 .btn.small {
-  height: 32px;
-  padding: 0 10px;
+  min-height: 44px;
+  padding: 0 12px;
   font-size: 13px;
 }
 
@@ -1365,9 +1590,32 @@ body.dragging .drop-overlay {
   font-size: 14px;
 }
 
+/* 본인 비밀번호 재설정 경고: 눈에 띄는 빨간 상자 */
 .accounts-self-notice {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: #fdecec;
   color: var(--danger);
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.accounts-self-notice::before {
+  content: '⚠';
+  content: '⚠' / '';
+}
+
+.accounts-reset.self {
+  border-color: var(--danger);
+}
+
+/* [바꾸고 로그아웃]처럼 되돌릴 수 없는 일을 하는 주 단추 */
+.btn.primary.danger {
+  background: var(--danger);
+  border-color: var(--danger);
 }
 
 .accounts-create {
@@ -1400,10 +1648,15 @@ body.dragging .drop-overlay {
   font-size: 13px;
 }
 
+.accounts .field > label {
+  color: var(--muted);
+}
+
 /* 휴대폰(iOS)은 16px보다 작은 입력 칸에 초점이 가면 화면을 확대하므로 16px로 둔다 */
 .accounts .field input {
   width: 100%;
   min-width: 0;
+  min-height: 44px;
   padding: 8px 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1431,4 +1684,137 @@ body.dragging .drop-overlay {
   .accounts .button-row .btn {
     flex: none;
   }
+}
+
+/* ── 화면 위 띠(오프라인·새 버전) ───────────────────────── */
+
+.bands {
+  grid-area: band;
+}
+
+.band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 6px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.band[hidden] {
+  display: none;
+}
+
+.offline-band {
+  background: #3a3a3c;
+  color: #fff;
+}
+
+.update-banner {
+  background: #e8f1ff;
+  color: #0b4aa2;
+}
+
+/* ── 목록 상태(불러오는 중·실패) ────────────────────────── */
+
+.list-status[hidden] {
+  display: none;
+}
+
+.list-status-text {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.list-status.failed {
+  border-color: #f3b4b6;
+  background: #fdecec;
+}
+
+.list-status.failed .list-status-text {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ── 가져오기 전 확인 ──────────────────────────────────── */
+
+.import-review {
+  display: grid;
+  gap: 10px;
+}
+
+.import-review h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.review-group {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.review-group h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.review-changes {
+  border-color: #f0b37e;
+  background: #fff4e8;
+}
+
+.review-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.review-more {
+  color: var(--muted);
+}
+
+/* ── 지도 접기(높이가 낮은 화면) ───────────────────────── */
+
+.btn.map-toggle {
+  display: none;
+}
+
+@media (max-height: 500px) {
+  .btn.map-toggle {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+
+  .app.map-collapsed .map-area {
+    display: none;
+  }
+
+  .app.map-collapsed .layout {
+    grid-template-rows: 1fr;
+    grid-template-columns: 1fr;
+    grid-template-areas: 'panel';
+  }
+}
+
+/* 안내 상자 안의 한글은 낱말 중간에서 줄을 바꾸지 않는다(긴 영문·숫자는 overflow-wrap으로 나눈다). */
+.accounts-self-notice,
+.mission-conflict,
+.mission-error,
+.memo-conflict,
+.memo-status,
+.list-status,
+.import-review,
+.band,
+.login-notice,
+.login-error {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
