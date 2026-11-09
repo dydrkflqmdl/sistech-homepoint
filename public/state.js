@@ -100,6 +100,7 @@ export const hooks = {
   dropGonePlace: null,
   leaveApp: null,
   render: null,
+  renderDetail: null,
   renderKeepingInput: null,
   renderListAndMap: null,
   requestSelect: null,
