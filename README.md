@@ -486,7 +486,7 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 �
 - GitHub Pages는 파일을 최대 10분 정도 캐시합니다. 배포 직후 옛 화면이 보이면 잠시 뒤 새로고침하세요. 파일 주소에 커밋 해시를 붙여 두어 대부분은 바로 바뀝니다. 지금 사이트가 몇 번 배포인지는 `https://sistech.dpdns.org/version.json`으로 확인합니다.
 - 기존 Express + SQLite 서버의 데이터(`data/places.db`)는 자동으로 옮겨지지 않습니다. 옛 서버에서 CSV로 내보낸 뒤 새 사이트에서 다시 가져오세요. 단, 메모는 CSV에 포함되어 다시 가져와지지만 미션 기록(완료·이름·비행시간·배터리)은 CSV에 없어서 옮겨지지 않습니다. 필요하면 옛 DB 파일을 따로 보관하세요.
 - 백업: Supabase 무료 플랜은 자동 백업이 없어서 주간 점검 워크플로가 암호화한 DB 덤프를 90일 보관합니다(배포 절 5). 중요한 작업 전에는 Actions → 주간 점검 → Run workflow로 즉시 백업을 하나 더 만들어 두세요. 화면의 "내보내기" CSV는 장소 목록만 담고 미션 기록은 없으므로 백업을 대신하지 못합니다.
-- 초기화: 대시보드의 Table Editor나 SQL Editor에서 `places` 표를 비우면 됩니다(`missions`는 함께 지워집니다).
+- 초기화: 대시보드의 Table Editor나 SQL Editor에서 `places` 표를 비우면 됩니다(`missions`는 함께 지워집니다). `delete from public.places;`로 지우면 행마다 `audit_log`에 DELETE 기록이 남고, `truncate public.places, public.missions;`는 기록을 남기지 않습니다. 화면에서 지운 장소는 `deleted_at`만 찍힌 채 남아 있으므로 완전히 없애려면 `delete from public.places where deleted_at is not null;`을 실행합니다. `audit_log`도 비우려면 `truncate public.audit_log;`.
 - 휴대폰 실기기에서 카카오맵 앱이 열리는지는 아직 확인하지 않았습니다.
 
 ### 모니터링(어디를 보면 되나)
