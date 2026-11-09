@@ -32,6 +32,42 @@ test('포인트 번호와 미션 번호가 붙은 미션명은 물결 뒤 숫자
   assert.deepEqual(missionNames('X_10 ~ _03'), ['X_10 ~ _03']);
 });
 
+test('붙은 표기는 잘라낸 뒷자리가 정확히 1일 때만 쓴다', () => {
+  // 뒷자리가 1이 아니면 거꾸로 된 범위라 미션 하나
+  assert.deepEqual(missionNames('Q1_A_10 ~ 9'), ['Q1_A_10 ~ 9']);
+  assert.deepEqual(missionNames('Q1_A_12 ~ 5'), ['Q1_A_12 ~ 5']);
+  assert.deepEqual(missionNames('Q1DGHGS0100 ~ 10'), ['Q1DGHGS0100 ~ 10']);
+  assert.deepEqual(missionNames('A100 ~ 99'), ['A100 ~ 99']);
+  // 뒷자리가 1이면 앞자리를 이름에 붙인다
+  assert.equal(missionNames('Q1DGHGS0101 ~ 10').length, 10);
+  assert.deepEqual(missionNames('Q1DGHGS0001 ~ 03'), ['Q1DGHGS0001', 'Q1DGHGS0002', 'Q1DGHGS0003']);
+});
+
+test('물결 뒤 글자는 물결 앞 이름의 끝부분이어야 범위다', () => {
+  assert.deepEqual(missionNames('Q1_A_TA_GH__01_01 ~ _02'), ['Q1_A_TA_GH__01_01', 'Q1_A_TA_GH__01_02']);
+  assert.equal(missionNames('Q1_B_BE_TB__03_01~Q1_B_BE_TB__03_10').length, 10);
+  assert.equal(missionNames('Q1_A_TA_GH__01_01 ~ GH__01_ 05').length, 5); // 앞뒤 공백은 무시
+  // 다른 포인트 이름이면 오타로 보고 미션 하나
+  assert.deepEqual(missionNames('Q1_A_TA_GH__01_01 ~ Q1_A_TA_GH__02_05'), ['Q1_A_TA_GH__01_01 ~ Q1_A_TA_GH__02_05']);
+  assert.deepEqual(missionNames('Q1_A_TA_GH__01_01 ~ X_05'), ['Q1_A_TA_GH__01_01 ~ X_05']);
+  // 붙은 표기에서는 포인트 번호까지 붙인 이름(Q1DGHGS01)과 비교한다
+  assert.equal(missionNames('Q1DGHGS0101 ~ Q1DGHGS0105').length, 5);
+  assert.deepEqual(missionNames('A0101 ~ A10'), ['A0101 ~ A10']);
+});
+
+test('물결 ∼(U+223C)과 전각 숫자도 읽고, 결과는 반각 숫자다', () => {
+  assert.deepEqual(missionNames('A1 ∼ 3'), ['A1', 'A2', 'A3']);
+  assert.deepEqual(missionNames('B０１~０３'), ['B01', 'B02', 'B03']);
+  assert.deepEqual(missionNames('Q1DGHGS０１０１ ～ １０'), missionNames('Q1DGHGS0101 ~ 10'));
+  assert.deepEqual(missionNames('전각１２３'), ['전각123']);
+});
+
+test('숫자 묶음이 15자리를 넘으면 범위로 보지 않는다', () => {
+  assert.deepEqual(missionNames('a123456789012345~123456789012346'), ['a123456789012345', 'a123456789012346']);
+  assert.deepEqual(missionNames('a1234567890123456~1234567890123457'), ['a1234567890123456~1234567890123457']);
+  assert.deepEqual(missionNames('a0000000000000001~3'), ['a0000000000000001~3']);
+});
+
 test('범위가 아니거나 이상한 범위는 미션 하나로 본다', () => {
   assert.deepEqual(missionNames(''), []);
   assert.deepEqual(missionNames('  '), []);
