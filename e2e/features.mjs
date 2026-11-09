@@ -34,7 +34,9 @@ await ev(`(() => {
   URL.createObjectURL = (blob) => { const url = orig(blob); window.__exports.push({ blob, url }); return url; };
   HTMLAnchorElement.prototype.click = function () { const e = window.__exports.at(-1); if (e && this.href === e.url) e.download = this.download; };
 })()`);
-await ev(`document.querySelector('#export-button').click()`);
+// csv.js에 미션 기록 내보내기(toMissionCsv, 계약 C11)가 있으면 [내보내기]가 메뉴를 띄운다 → [장소 내보내기]를 누른다.
+const clickExportPlaces = `document.querySelector('#export-button').click(); document.querySelector('#export-places')?.click();`;
+await ev(clickExportPlaces);
 await sleep(200);
 const exp = await ev(`(async () => {
   const e = window.__exports.at(-1);
@@ -59,7 +61,7 @@ const back = readPlaces(new TextEncoder().encode(exp.text));
 check('내보낸 CSV를 readPlaces로 다시 읽으면 3곳·메모 원래대로', back.places.length === 3 && back.places[0].memo === '=1+1' && back.places[1].memo === '줄\n바꿈, "따옴표"' && back.errors.length === 0, back.places.map((p) => p.memo));
 // 한국 시간 아침(UTC로는 전날)에 내보내면? — 관찰용(판정에는 넣지 않음)
 const kstMorning = await ev(`(() => { const RealDate = Date; const fixed = new RealDate('2026-11-07T08:00:00+09:00'); class D extends RealDate { constructor(...a) { super(...(a.length ? a : [fixed])); } static now() { return fixed.getTime(); } }
-  window.Date = D; document.querySelector('#export-button').click(); window.Date = RealDate; return window.__exports.at(-1).download; })()`);
+  window.Date = D; ${clickExportPlaces} window.Date = RealDate; return window.__exports.at(-1).download; })()`);
 console.log('관찰: 한국 시간 2026-11-07 08:00에 내보낸 파일명 =', kstMorning);
 
 // ══ 6. 미션 저장 ══

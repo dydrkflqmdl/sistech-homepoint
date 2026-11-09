@@ -64,8 +64,49 @@ export const PAGE_HELPERS = `(() => {
 // csv.js를 Node에서 불러온다(브라우저와 같은 파싱 결과를 기준값으로 쓰려고).
 export const csv = () => import(path.join(PROJECT, 'public/csv.js'));
 
+// 미션 기록 내보내기 머리글(계약 C11)
+export const MISSION_CSV_HEADER = '시기,시군,이름,미션명,완료,작업자,비행시간,배터리 번호,배터리 남은 용량,마지막 저장';
+
+// launch({ csvShim })로 브라우저가 받는 csv.js를 고친다(파일은 그대로).
+//   'contract': 시기(C10)·미션 기록 내보내기(C11)를 아직 모르는 csv.js에 그 모양을 덧붙인다. 이미 있으면 그대로 둔다.
+//               - readPlaces가 시기를 주지 않으면 '시기' 열을 읽어 장소마다 period를 넣는다(없으면 '').
+//               - toMissionCsv가 없으면 계약 머리글로 미션마다 한 줄씩 만든다(점검용 흉내, 화면 코드는 이걸 만들지 않는다).
+//   'legacy':   toMissionCsv를 감춘다(옛 csv.js에서 [내보내기]가 메뉴 없이 바로 장소를 내보내는지 보려고).
+const CSV_CONTRACT_SHIM = String.raw`
+// ── E2E(lib.mjs csvShim 'contract')가 덧붙인 부분 ──
+if (!/\bperiod\b/.test(readPlaces.toString())) {
+  const __readPlaces = readPlaces;
+  readPlaces = (buffer) => {
+    const out = __readPlaces(buffer);
+    const records = parseCsv(decodeCsv(buffer));
+    const head = records.find((r) => r.cells.some((c) => c.trim() === '시기'));
+    const col = head ? head.cells.findIndex((c) => c.trim() === '시기') : -1;
+    const byLine = new Map(records.map((r) => [r.line, r.cells]));
+    for (const p of out.places) p.period = col < 0 ? '' : String(byLine.get(p.line)?.[col] ?? '').trim();
+    return out;
+  };
+}
+`;
+const CSV_MISSION_SHIM = String.raw`
+export function toMissionCsv(places) {
+  const cell = (v) => { const s = String(v ?? ''); return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = [${JSON.stringify(MISSION_CSV_HEADER)}];
+  for (const p of places) for (const m of missionNames(p.mission)) {
+    const r = (p.missions ?? []).find((x) => x.mission === m) ?? {};
+    lines.push([p.period ?? '', p.district, p.name, m, r.done ? 'O' : '', r.worker, r.flightTime, r.batteryNo, r.batteryLeft, r.updatedAt ?? ''].map(cell).join(','));
+  }
+  return '\uFEFF' + lines.join('\r\n') + '\r\n';
+}
+`;
+export function shimCsvSource(src, mode) {
+  if (mode === 'legacy') return src.replace(/export\s+(function|const|let)\s+toMissionCsv\b/, '$1 __hiddenToMissionCsv');
+  let out = src + CSV_CONTRACT_SHIM;
+  if (!/export\s+(function|const|let)\s+toMissionCsv\b/.test(src)) out += CSV_MISSION_SHIM;
+  return out;
+}
+
 let portSeq = 9450 + Math.floor(Math.random() * 300);
-export async function launch(name, { confirm = true, fakeSupabase = true, fakeKakao = true, viewport = [390, 844, true] } = {}) {
+export async function launch(name, { confirm = true, fakeSupabase = true, fakeKakao = true, viewport = [390, 844, true], csvShim = null } = {}) {
   const port = portSeq++;
   const profile = path.join(E2E, 'profiles', `${name}-${Date.now()}`);
   const chrome = spawn(CHROME_BIN, [
@@ -148,6 +189,22 @@ export async function launch(name, { confirm = true, fakeSupabase = true, fakeKa
   await send('Runtime.addBinding', { name: '__e2eRpc' });
   await send('Network.enable');
   await send('Network.setBlockedURLs', { urls: BLOCKED });
+  if (csvShim) {
+    // 브라우저가 받는 csv.js만 가로채 고친다(위 shimCsvSource).
+    await send('Fetch.enable', { patterns: [{ urlPattern: '*/csv.js*', requestStage: 'Response' }] });
+    listeners.push(async (m) => {
+      if (m.method !== 'Fetch.requestPaused') return;
+      const { requestId } = m.params;
+      const { result } = await send('Fetch.getResponseBody', { requestId });
+      const src = result.base64Encoded ? Buffer.from(result.body, 'base64').toString('utf-8') : result.body;
+      await send('Fetch.fulfillRequest', {
+        requestId,
+        responseCode: 200,
+        responseHeaders: [{ name: 'Content-Type', value: 'text/javascript; charset=utf-8' }, { name: 'Cache-Control', value: 'no-store' }],
+        body: Buffer.from(shimCsvSource(src, csvShim), 'utf-8').toString('base64'),
+      });
+    });
+  }
   await send('Page.enable');
   if (fakeKakao) await send('Page.addScriptToEvaluateOnNewDocument', { source: fs.readFileSync(path.join(E2E, 'fake-kakao.js'), 'utf-8') });
   if (fakeSupabase) await send('Page.addScriptToEvaluateOnNewDocument', { source: fakeSupabaseSource() });

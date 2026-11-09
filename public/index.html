@@ -74,7 +74,9 @@
 
           <div class="filters">
             <input id="search" class="search" type="search" enterkeyhint="search" aria-label="장소 검색" placeholder="이름·주소·전화번호·메모 검색" autocomplete="off" />
-            <div id="color-filters" class="chips" role="group" aria-label="진행 상태로 거르기"></div>
+            <!-- 시기(Q1·Q2 …) 칩. 시기가 있는 장소가 하나라도 있을 때만 보인다(app.js renderPeriodFilters). -->
+          <div id="period-filters" class="chips period-chips" role="group" aria-label="시기로 거르기" hidden></div>
+          <div id="color-filters" class="chips" role="group" aria-label="진행 상태로 거르기"></div>
           </div>
 
           <p id="list-summary" class="summary"></p>
@@ -100,6 +102,9 @@ SW_01,태안,가람면 하늘리 인근,37.277767,126.717126</pre>
         </div>
       </main>
     </div>
+
+    <!-- [내보내기] 메뉴(장소 / 미션 기록). 머리글 높이를 바꾸지 않게 화면 위에 겹쳐 띄운다(app.js openExportMenu). -->
+    <div id="export-menu" class="menu" role="menu" aria-label="내보내기" hidden></div>
 
     <div class="drop-overlay" aria-hidden="true"><p>CSV 파일을 놓으면 가져옵니다</p></div>
     <!-- 알림 칸은 늘 두고 글자만 바꾼다(숨겼다 보이면 화면 읽기 프로그램이 첫 알림을 놓친다). 빈 칸은 투명하다. -->
