@@ -52,7 +52,7 @@ const colorInit = await evaluate(`(() => ({
 check('색상 선택 UI 없음', colorInit.swatches === 0, String(colorInit.swatches));
 check('처음엔 핀 전부 빨강(미진행)', colorInit.pinFills.length === 1 && colorInit.pinFills[0] === '#e5484d', JSON.stringify(colorInit.pinFills));
 check('필터 칩 라벨 전체/미진행', colorInit.chips.some((c) => /^전체/.test(c)) && colorInit.chips.some((c) => /^미진행/.test(c)) && !colorInit.chips.some((c) => /빨강|파랑/.test(c)), JSON.stringify(colorInit.chips));
-check('목록 주소에 시군 없음(소원면 …)', /^소원면 /.test(colorInit.addr ?? ''), JSON.stringify(colorInit.addr));
+check('목록 주소에 시군 없음(가람면 …)', /^가람면 /.test(colorInit.addr ?? ''), JSON.stringify(colorInit.addr));
 
 // 2. SW_01 선택 → 미션 0/34
 await evaluate(`__e2e.row('SW_01').click()`);

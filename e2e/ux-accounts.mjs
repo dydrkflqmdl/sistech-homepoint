@@ -14,7 +14,7 @@ const accounts = [
   { id: 'user-' + ADMIN, login_id: null, email: ADMIN, created_at: '2026-10-01T00:00:00Z', last_sign_in_at: null, is_admin: true },
   { id: 'user-son', login_id: '손두병', email: son, created_at: '2026-10-15T06:30:00Z', last_sign_in_at: null, is_admin: false },
 ];
-const places = [{ name: 'SW_01', district: '태안', address: '소원면', lat: 36.766667, lng: 126.149826, mission: '' }];
+const places = [{ name: 'SW_01', district: '태안', address: '가람면', lat: 37.277767, lng: 126.717126, mission: '' }];
 const type = (sel, value) => ev(`(() => { const el = document.querySelector(${JSON.stringify(sel)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 const message = () => ev(`(() => { const m = document.querySelector('#accounts-message'); return m && !m.hidden ? m.textContent : null; })()`);
 const fnCalls = () => ev(`__fake.fnCalls.map(c => c.body?.action)`);

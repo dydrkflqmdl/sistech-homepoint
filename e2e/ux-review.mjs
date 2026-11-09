@@ -11,8 +11,8 @@ const b = await launch('ux-review');
 const ev = b.ev;
 const ADMIN = 'admin@sistech.test';
 const places = [
-  { name: 'SW_01', district: '태안', address: '소원면', lat: 36.766667, lng: 126.149826, mission: 'M_01 ~ _02', memo: '옛 메모' },
-  { name: 'SW_02', district: '태안', address: '파도리', lat: 36.741223, lng: 126.144333, mission: '', memo: '' },
+  { name: 'SW_01', district: '태안', address: '가람면', lat: 37.277767, lng: 126.717126, mission: 'M_01 ~ _02', memo: '옛 메모' },
+  { name: 'SW_02', district: '태안', address: '바람리', lat: 37.167923, lng: 126.815733, mission: '', memo: '' },
 ];
 const memoCalls = () => ev(`__fake.calls.filter(c => c.name === 'update_memo').map(c => c.params)`);
 const dbMemo = (name) => ev(`__fake.store().find(p => p.name === ${JSON.stringify(name)}).memo`);

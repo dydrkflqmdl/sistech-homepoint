@@ -8,12 +8,12 @@ const b = await launch('ux-a11y');
 const ev = b.ev;
 const ADMIN = 'admin@sistech.test';
 const places = [
-  { name: 'SW_01', district: '태안', address: '소원면', lat: 36.766667, lng: 126.149826, mission: 'M_01 ~ _03', memo: '메모',
+  { name: 'SW_01', district: '태안', address: '가람면', lat: 37.277767, lng: 126.717126, mission: 'M_01 ~ _03', memo: '메모',
     missions: [
       { mission: 'M_01', done: true, worker: '홍', flightTime: '1분', batteryNo: '1', batteryLeft: '50', version: 1 },
       { mission: 'M_02', done: false, worker: '김', flightTime: '', batteryNo: '', batteryLeft: '', version: 1 },
     ] },
-  { name: 'SW_02', district: '태안', address: '파도리', lat: 36.741223, lng: 126.144333, mission: 'N_01',
+  { name: 'SW_02', district: '태안', address: '바람리', lat: 37.167923, lng: 126.815733, mission: 'N_01',
     missions: [{ mission: 'N_01', done: true, worker: '홍', flightTime: '1분', batteryNo: '1', batteryLeft: '50', version: 1 }] },
   { name: 'TB_01', district: '보은', address: '보은읍', lat: 36.49, lng: 127.73, mission: '' },
 ];

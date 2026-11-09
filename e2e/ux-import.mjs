@@ -14,7 +14,7 @@ const fx = (name, content) => {
   return p;
 };
 const places = [
-  { name: 'SW_01', district: '태안', address: '소원면', lat: 36.766667, lng: 126.149826, mission: 'Q1_A_TA_SW__01_01 ~ _34',
+  { name: 'SW_01', district: '태안', address: '가람면', lat: 37.277767, lng: 126.717126, mission: 'Q1_A_TA_SW__01_01 ~ _34',
     missions: [
       { mission: 'Q1_A_TA_SW__01_01', done: true, worker: '홍', flightTime: '1분', batteryNo: '1', batteryLeft: '50', version: 1 },
       { mission: 'Q1_A_TA_SW__01_02', done: false, worker: '김', flightTime: '', batteryNo: '', batteryLeft: '', version: 1 },
@@ -25,7 +25,7 @@ const places = [
 // FAR_01: 대한민국 밖 좌표 → 경고. NEW_01: 새 장소(확인할 것 없음).
 const REVIEW = fx('review.csv', [
   '이름,시군,주소,위도,경도,미션명',
-  'SW_01,태안,소원면,36.766667,126.149826,Q1_A_TA_SW__01_01 ~ _40',
+  'SW_01,태안,가람면,37.277767,126.717126,Q1_A_TA_SW__01_01 ~ _40',
   'TB_01,보은,보은읍,36.4901,127.73,',
   'FAR_01,해외,어딘가,10.5,100.5,',
   'NEW_01,서산,대산읍,36.9,126.4,',

@@ -13,7 +13,7 @@ const STAFF = 'staff@sistech.test';
 // 비밀번호 규칙 문구는 인증 담당의 login-id.js를 따른다(없던 판에서는 화면의 대체 문구와 같다).
 const PASSWORD_RULE = loginIdModule.PASSWORD_RULE ?? '비밀번호는 6자 이상 72자 이하여야 합니다.';
 const places = [
-  { name: 'SW_01', district: '태안', address: '소원면 송현리', lat: 36.766667, lng: 126.149826, mission: 'SW_01_01 ~ _03' },
+  { name: 'SW_01', district: '태안', address: '가람면 하늘리', lat: 37.277767, lng: 126.717126, mission: 'SW_01_01 ~ _03' },
   { name: 'BE_01', district: '보은', address: '보은읍 1리', lat: 36.49, lng: 127.73, mission: '' },
 ];
 const sonEmail = loginIdToEmail('손두병');

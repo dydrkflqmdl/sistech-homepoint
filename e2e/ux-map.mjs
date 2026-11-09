@@ -7,7 +7,7 @@ import { E2E, launch, prepare, reporter, sleep, URL_BASE } from './lib.mjs';
 const { check, finish } = reporter('ux-map');
 const FAKE_KAKAO = fs.readFileSync(path.join(E2E, 'fake-kakao.js'), 'utf-8');
 const places = [
-  { name: 'SW_01', district: '태안', address: '소원면', lat: 36.766667, lng: 126.149826, mission: 'M_01 ~ _02', memo: '' },
+  { name: 'SW_01', district: '태안', address: '가람면', lat: 37.277767, lng: 126.717126, mission: 'M_01 ~ _02', memo: '' },
   { name: 'TB_01', district: '보은', address: '보은읍', lat: 36.49, lng: 127.73, mission: '' },
 ];
 const mapText = `document.querySelector('#map').textContent`;

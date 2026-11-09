@@ -26,7 +26,7 @@ const HEADER_ONLY = fx('header-only.csv', '이름,위도,경도\n');
 const ROW_ERRORS = fx('row-errors.csv', '이름,위도,경도\nOK_1,36.1,127.1\n,36.2,127.2\nBAD_COORD,abc,127.3\nZERO,0,0\nOK_1,36.1,127.1\n');
 const NOT_CSV = fx('notes.pdf', '%PDF-1.4 fake');
 // 같은 장소(Q1 SW_01·SW_02) 다시: SW_01은 주소·미션명이 바뀌고, SW_02는 주소 칸이 비어 있다(addressGiven=false → 주소 유지)
-const UPDATE = fx('update.csv', '이름,시군,주소,위도,경도,미션명\nSW_01,태안,소원면 송현리 바뀜,36.766667,126.149826,Q1_A_TA_SW__01_01 ~ _40\nSW_02,태안,,36.741223,126.144333,\n');
+const UPDATE = fx('update.csv', '이름,시군,주소,위도,경도,미션명\nSW_01,태안,가람면 하늘리 바뀜,37.277767,126.717126,Q1_A_TA_SW__01_01 ~ _40\nSW_02,태안,,37.167923,126.815733,\n');
 
 const expectRows = (file) => readPlaces(fs.readFileSync(file)).places;
 const b = await launch('import');
@@ -98,11 +98,11 @@ check('import_places 인자 = readPlaces()(addressGiven false 포함)', JSON.str
 check('단일 결과: "저장 0개 · 중복 2개(그중 1개 갱신) · 오류 0개"', /저장 0개 · 중복 2개\(그중 1개 갱신\) · 오류 0개/.test(single), single);
 check('갱신 안내 + 미션명 바뀐 장소 1개 안내', /갱신: CSV의 주소·미션명이 달라 그 값만 바꾼 장소/.test(single) && /미션명이 바뀐 장소 1개/.test(single), single);
 const sw = await ev(`(() => { const ps = __fake.store(); return { sw01: ps.find(p => p.name === 'SW_01'), sw02: ps.find(p => p.name === 'SW_02') }; })()`);
-check('갱신: 주소·미션명만 바뀌고 메모·전화·미션 기록 보존', sw.sw01.address === '소원면 송현리 바뀜' && sw.sw01.mission === 'Q1_A_TA_SW__01_01 ~ _40' && sw.sw01.memo === '남길 메모' && sw.sw01.phone === '010' && sw.sw01.missions.length === 1, sw.sw01);
+check('갱신: 주소·미션명만 바뀌고 메모·전화·미션 기록 보존', sw.sw01.address === '가람면 하늘리 바뀜' && sw.sw01.mission === 'Q1_A_TA_SW__01_01 ~ _40' && sw.sw01.memo === '남길 메모' && sw.sw01.phone === '010' && sw.sw01.missions.length === 1, sw.sw01);
 check('주소 칸이 빈 행은 주소를 지우지 않음', sw.sw02.address === before && before !== '', { before, after: sw.sw02.address });
 await sleep(400);
 const shown = await ev(`(() => { const b = __e2e.row('SW_01'); return { addr: b.querySelector('.addr').textContent, badge: b.querySelector('.badge')?.textContent }; })()`);
-check('목록에 바뀐 주소·미션 수(1/40) 반영', shown.addr === '소원면 송현리 바뀜' && /미션 1\/40/.test(shown.badge ?? ''), shown);
+check('목록에 바뀐 주소·미션 수(1/40) 반영', shown.addr === '가람면 하늘리 바뀜' && /미션 1\/40/.test(shown.badge ?? ''), shown);
 await ev(`[...document.querySelectorAll('#import-panel .btn')].find(x => x.textContent === '닫기').click()`);
 
 // ── C. 빈 파일 하나 / 공백만 / 머리글만 / 행 오류 ──

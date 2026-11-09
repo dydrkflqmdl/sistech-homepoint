@@ -8,9 +8,9 @@ const b = await launch('features');
 const ev = b.ev;
 const REQUIRED = '완료로 저장하려면 이름, 비행시간, 사용한 배터리 번호, 마지막 배터리 남은 용량을 모두 적어야 합니다.';
 const places = [
-  { name: 'SW_01', district: '태안', address: '소원면 송현리', phone: '010-1', lat: 36.766667, lng: 126.149826, mission: 'M_01 ~ _03', memo: '=1+1',
+  { name: 'SW_01', district: '태안', address: '가람면 하늘리', phone: '010-1', lat: 37.277767, lng: 126.717126, mission: 'M_01 ~ _03', memo: '=1+1',
     missions: [{ mission: 'M_01', done: true, worker: '홍', flightTime: '1분', batteryNo: '1', batteryLeft: '50', version: 1 }] },
-  { name: 'SW_02', district: '태안', address: '소원면 파도리', lat: 36.741223, lng: 126.144333, mission: 'N_01 ~ _02', memo: '줄\n바꿈, "따옴표"' },
+  { name: 'SW_02', district: '태안', address: '가람면 바람리', lat: 37.167923, lng: 126.815733, mission: 'N_01 ~ _02', memo: '줄\n바꿈, "따옴표"' },
   { name: 'TB_01', district: '보은', address: '보은읍', lat: 36.49, lng: 127.73, mission: '' },
 ];
 const toastText = () => ev(`document.querySelector('#toast').hidden ? null : document.querySelector('#toast').textContent`);
@@ -48,8 +48,8 @@ check('내보내기 Blob 형식 text/csv;charset=utf-8', exp.type === 'text/csv;
 check('BOM은 맨 앞에 1번만(EF BB BF)', JSON.stringify(exp.head) === '[239,187,191]' && exp.boms === 1, { head: exp.head, boms: exp.boms });
 check('머리글 "이름,시군,주소,전화번호,위도,경도,상태,완료/전체,메모,미션명"', lines[0] === '이름,시군,주소,전화번호,위도,경도,상태,완료/전체,메모,미션명', lines[0]);
 check('파일명 places-YYYY-MM-DD.csv(오늘)', /^places-\d{4}-\d{2}-\d{2}\.csv$/.test(exp.download) && exp.download === `places-${today(new Date())}.csv`, exp.download);
-check('행: 진행 상태·완료/전체·수식 방어(\'=1+1)', lines[1] === "SW_01,태안,소원면 송현리,010-1,36.766667,126.149826,진행 중,1/3,'=1+1,M_01 ~ _03", lines[1]);
-check('행: 줄바꿈·따옴표 메모는 따옴표로 감쌈', lines[2] === 'SW_02,태안,소원면 파도리,,36.741223,126.144333,미진행,0/2,"줄\n바꿈, ""따옴표""",N_01 ~ _02', JSON.stringify(lines[2]));
+check('행: 진행 상태·완료/전체·수식 방어(\'=1+1)', lines[1] === "SW_01,태안,가람면 하늘리,010-1,37.277767,126.717126,진행 중,1/3,'=1+1,M_01 ~ _03", lines[1]);
+check('행: 줄바꿈·따옴표 메모는 따옴표로 감쌈', lines[2] === 'SW_02,태안,가람면 바람리,,37.167923,126.815733,미진행,0/2,"줄\n바꿈, ""따옴표""",N_01 ~ _02', JSON.stringify(lines[2]));
 check('행: 미션 없는 장소는 완료/전체 빈 칸', lines[3] === 'TB_01,보은,보은읍,,36.49,127.73,미진행,,,', lines[3]);
 check('CRLF로 끝나고 행 수 = 장소 + 1', lines.length === 5 && lines[4] === '', lines.length);
 check('임시 링크는 바로 제거', exp.anchors === 0, exp.anchors);
