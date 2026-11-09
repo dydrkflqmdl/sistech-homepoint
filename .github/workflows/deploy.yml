@@ -56,6 +56,10 @@ jobs:
           deno-version: 2.9.6
       - name: Edge Function 타입 검사
         run: deno check --no-lock supabase/functions/admin-users/index.ts
+      # 헤드리스 화면 검사는 한글 글꼴이 있어야 머리글 높이 같은 배치 검사가 맞는다.
+      - name: 한글 글꼴 설치(E2E용)
+        if: hashFiles('e2e/run-all.mjs') != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq fonts-noto-cjk > /dev/null
       # e2e/ 가 저장소에 들어온 뒤부터 실행된다. 가짜 supabase 를 주입하고 외부 주소를 막으므로 네트워크·Secrets 가 필요 없다.
       - name: 헤드리스 E2E
         if: hashFiles('e2e/run-all.mjs') != ''

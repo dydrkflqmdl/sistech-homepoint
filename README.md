@@ -79,21 +79,26 @@ public/                  GitHub Pages에 올라가는 화면 파일
   mission.js             미션명 풀이·진행도 계산
   palette.js             상태 색상표
   styles.css             스타일(휴대폰 → PC 순으로 반응형)
+  vendor/                자체 호스팅 supabase-js 번들(supabase-js.js, sha256) — npm run vendor로 생성, 커밋함
   config.js              빌드·실행 때 자동 생성(깃 제외)
 scripts/
   dev.mjs                로컬 개발 서버(config.js 생성 + public/ 서빙)
-  build.mjs              배포용 빌드(public/ → dist/, config.js 생성, 캐시 스탬프)
-  write-config.mjs       환경변수 → config.js 생성기
+  build.mjs              배포용 빌드(public/ → dist/, config.js 생성, 캐시 스탬프, version.json, 스탬프 누락 검사)
+  vendor.mjs             supabase-js를 esbuild로 묶어 public/vendor/에 넣고 sha256 기록(--check로 검증만)
+  write-config.mjs       환경변수 → config.js 생성기(anon 키가 아닌 키가 들어오면 중단)
   create-users.mjs       한글 아이디 계정 일괄 생성·관리자 지정(Supabase Admin API, 비상용)
   login-email.mjs        아이디 → 로그인 이메일 변환 출력
 supabase/
   config.toml            Supabase 프로젝트 설정(Edge Function 설정 포함)
   functions/admin-users/ 계정 관리 Edge Function(index.ts 진입점, handler.js 처리 로직)
-  migrations/            DB 구조 변경 이력(테이블, 권한, 함수, 관리자 지정)
-  tests/                 마이그레이션 검증(run.sh, tests.sql 등)
-test/                    자동 테스트(CSV 읽기, 미션명, 색상표, 빌드 스탬프, 아이디 변환, 계정 관리 함수)
+  migrations/            DB 구조 변경 이력(테이블, 권한, 함수, 관리자 지정, 보안 보강)
+  tests/                 마이그레이션 검증(run.sh, shim.sql, tests.sql, mission-cases.mjs, coord-cases.mjs)
+test/                    자동 테스트(CSV 읽기, 미션명, 좌표, 색상표, 빌드 스탬프, 아이디 변환, 계정 관리 함수, config 생성)
+e2e/                     헤드리스 브라우저 E2E(run-all.mjs, 가짜 supabase·카카오, 시나리오, fixtures)
 samples/                 예시 CSV
-.github/workflows/       자동 배포 워크플로
+.github/workflows/       deploy.yml(자동 배포), weekly.yml(주간 휴면 방지·암호화 백업)
+.github/dependabot.yml   워크플로 액션 주간 갱신
+eslint.config.js         ESLint 최소 규칙(npm run lint)
 .env.example             로컬 설정 예시
 ```
 
