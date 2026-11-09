@@ -70,7 +70,7 @@ export const touchPlace = (id) => localTouch.set(id, ++localSeq);
 export const touchedSince = (since) => new Set([...localTouch].filter(([, seq]) => seq > since).map(([id]) => id));
 
 // 다른 기기에서 지워진 장소인지. DB 함수는 "장소를 찾을 수 없습니다." 예외를 던진다.
-export const isPlaceGone =(err) => /장소를 찾을 수 없습니다/.test(err.message);
+export const isPlaceGone = (err) => /장소를 찾을 수 없습니다/.test(err.message);
 
 // 저장 응답 등 화면이 직접 바꾼 장소를 넣는다(받기 결과는 commitPlaces로 넣는다).
 export function replacePlace(updated) {

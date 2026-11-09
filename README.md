@@ -83,7 +83,18 @@ main 브랜치에 푸시 ──▶ GitHub Actions ──▶ 테스트 → DB 마
 ```
 public/                  GitHub Pages에 올라가는 화면 파일
   index.html             화면 뼈대
-  app.js                 지도, 목록, 상세 정보, 로그인, 가져오기 화면
+  app.js                 화면 뼈대: 모듈 잇기, 다시 그리기, 처음 화면, 로그인·로그아웃 전환, 연결·새 버전 띠, 시작
+  dom.js                 DOM 도우미(h, $, fill, toast, refocus)
+  state.js               공유 상태(state·config), 장소 도우미, 아래 모듈이 위 함수를 부르는 hooks
+  session.js             로그인 상태(authEpoch·currentUser), 표시 아이디(C4), 로그인 화면 도우미
+  map-ui.js              카카오 지도: 불러오기·실패 안내, 핀 부분 갱신, 레이어 버튼, 지도 접기
+  list-ui.js             목록: 상태 칩, 시군 묶음, 목록 줄, 불러오기 줄, 검색
+  detail-ui.js           상세 카드, 장소 고르기·닫기·삭제, Esc
+  missions-ui.js         미션 기록 보기·입력 폼·저장·충돌 안내
+  memo-ui.js             메모 자동 저장·상태 줄·충돌(C1)
+  sync.js                목록 받기 줄, 실시간 부분 갱신(C2·C3)
+  accounts-ui.js         계정 관리 창(관리자)
+  import-ui.js           CSV 가져오기 창(확인 C7·결과·끌어다 놓기), 내보내기
   api.js                 Supabase 연결(로그인, RPC 호출, 실시간 구독, 계정 관리 함수 호출)
   login-id.js            한글 아이디 ↔ 로그인 이메일 변환
   csv.js                 CSV 읽기(인코딩 판별, 열 인식, 이름 규칙), 내보내기
