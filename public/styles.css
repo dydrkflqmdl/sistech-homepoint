@@ -581,6 +581,28 @@ p {
   font-size: 16px;
 }
 
+/* 이름 칸: 고칠 수 없다(읽기 전용, 회색 바탕). 늘 로그인한 아이디로 기록된다. */
+.mission-form .field.readonly input {
+  background: var(--bg);
+  color: var(--muted);
+  cursor: default;
+}
+
+.mission-form .field-hint {
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+/* 다른 사람이 저장한 기록을 고칠 때: 저장하면 이름이 내 아이디로 바뀐다는 안내 */
+.mission-form .field-note {
+  color: #9a5b13;
+  font-size: 12px;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
 /* 저장하려다 막힌 칸 */
 .mission-form .field input[aria-invalid='true'] {
   border-color: var(--danger);

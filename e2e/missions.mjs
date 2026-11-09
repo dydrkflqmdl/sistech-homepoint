@@ -1,7 +1,7 @@
 // 미션 진행 기능 E2E(옛 check-missions-v5.mjs 46건 이식). 데이터: 홈포인트_Q1.csv를 import_places 규칙으로 넣고 SW_02에 메모.
 // 서버 확인(fetch /api/places)은 가짜 DB(__fake.store())로, "다른 기기 저장"은 __fake.remoteChange로 바꿨다.
 // [화면 개선 반영] 접힌 시군의 줄은 DOM에 없으므로 __e2e.row()로 펼쳐 찾는다. 이름 칸은 로그인 아이디로 미리 채워진다(A-1).
-// 충돌은 알림 대신 폼 안 고정 안내로 보인다(B-5).
+// 충돌은 알림 대신 폼 안 고정 안내로 보인다(B-5). 이름(worker)은 고칠 수 없는 칸이라 늘 로그인 아이디로 저장된다.
 import { launch, prepare, q1Rows, sleep, URL_BASE } from './lib.mjs';
 const url = URL_BASE;
 const b = await launch('missions');
@@ -104,10 +104,13 @@ const blocked = await evaluate(`(() => ({ toast: document.querySelector('#toast'
   invalid: [...document.querySelectorAll('#detail .mission-editor input[aria-invalid="true"]')].map(i => i.name), stillEdit: !!document.querySelector('#detail .mission-editor form.mission-form'),
   worker: document.querySelector('#detail .mission-editor input[name="worker"]')?.value }))()`);
 // 이름 칸은 로그인 아이디(이 계정은 login_id가 없어 이메일)로 미리 채워져 있으므로 빈 칸은 나머지 셋이다.
-check('완료 체크 + 빈 칸이면 저장 차단(토스트·빨간 칸 3개·편집 유지, 이름은 로그인 아이디로 채워짐)', blocked.hidden === false && /모두 적어야/.test(blocked.toast ?? '') && blocked.invalid.join() === 'flightTime,batteryNo,batteryLeft' && blocked.worker === 'admin@sistech.test' && blocked.stillEdit, JSON.stringify(blocked));
+check('완료 체크 + 빈 칸이면 저장 차단(토스트·빨간 칸 3개·편집 유지, 이름은 로그인 아이디로 고정)', blocked.hidden === false && /모두 적어야/.test(blocked.toast ?? '') && blocked.invalid.join() === 'flightTime,batteryNo,batteryLeft' && blocked.worker === 'admin@sistech.test' && blocked.stillEdit, JSON.stringify(blocked));
 const blockedApi = await store();
 check('차단 시 서버에 기록 없음', (blockedApi.find((p) => p.name === 'SW_01')?.missions ?? []).length === 0);
+// 이름 칸은 읽기 전용: 값을 바꾸려 해도 로그인 아이디로 남는다.
 await setInput('/이름/', '홍길동'); await sleep(300);
+const workerLocked = await evaluate(`(() => { const i = document.querySelector('#detail .mission-editor input[name="worker"]'); return { readOnly: i.readOnly, value: i.value }; })()`);
+check('이름 칸은 읽기 전용이고 값을 넣어도 로그인 아이디 그대로', workerLocked.readOnly && workerLocked.value === 'admin@sistech.test', JSON.stringify(workerLocked));
 await setInput('/비행시간/', '12분 30초'); await sleep(300);
 await setInput('/배터리 번호/', '3'); await sleep(300);
 await setInput('/남은 용량/', '45%'); await sleep(300);
@@ -124,7 +127,7 @@ const api = await store();
 const sw01 = api.find((p) => p.name === 'SW_01');
 const rec = sw01?.missions?.find((m) => m.mission === 'Q1_A_TA_SW__01_01');
 check('API에 기록 저장(done/worker/flightTime/batteryNo/batteryLeft)',
-  !!rec && rec.done === true && rec.worker === '홍길동' && rec.flightTime === '12분 30초' && rec.batteryNo === '3' && rec.batteryLeft === '45',
+  !!rec && rec.done === true && rec.worker === 'admin@sistech.test' && rec.flightTime === '12분 30초' && rec.batteryNo === '3' && rec.batteryLeft === '45',
   JSON.stringify(rec));
 
 // 5. 완료 반영: 제목 1/34, 완료 미션 색상, 목록 배지 남은 33/34, 지도 말풍선 1/34
@@ -153,7 +156,7 @@ const colorAfter = await evaluate(`(() => {
 check('미션 1개 완료 → 목록·상세 점 주황(진행 중)', colorAfter.listDot === 'rgb(247, 107, 21)' && colorAfter.headDot === 'rgb(247, 107, 21)', JSON.stringify([colorAfter.listDot, colorAfter.headDot]));
 check('필터 칩에 진행 중 1', colorAfter.chips.some((c) => /^진행 중\s*1$/.test(c)), JSON.stringify(colorAfter.chips));
 check('저장 후 보기 모드 + 수정 버튼', after.view === true && after.editBtn === '수정', JSON.stringify([after.view, after.editBtn]));
-check('보기 모드 요약에 저장값 표시(용량은 45%로)', /홍길동/.test(after.summary) && /12분 30초/.test(after.summary) && /45%/.test(after.summary), after.summary);
+check('보기 모드 요약에 저장값 표시(이름은 로그인 아이디, 용량은 45%로)', /admin@sistech\.test/.test(after.summary) && /12분 30초/.test(after.summary) && /45%/.test(after.summary), after.summary);
 check('상세 제목 옆 배지 미션 1/34 ┃ 남은 미션 개수 33', /미션\s*1\s*\/\s*34/.test(after.headBadge ?? '') && /남은 미션 개수\s*33/.test(after.headBadge ?? ''), JSON.stringify(after.headBadge));
 check('남은 미션 개수 앞 구분선', after.sepBorder === '1px solid', JSON.stringify(after.sepBorder));
 check('지도 말풍선에 1/34', after.labels.some((t) => /1\s*\/\s*34/.test(t)), JSON.stringify(after.labels));
@@ -166,29 +169,29 @@ await sleep(300);
 const focusKept = await evaluate(`(async () => {
   const ta = document.querySelector('#detail .memo textarea');
   ta.focus(); ta.value = '메모수정'; ta.dispatchEvent(new Event('change', { bubbles: true }));
-  const worker = document.querySelector('#detail .mission-editor input[name="worker"]');
-  worker.focus(); worker.value = '입력중'; worker.dispatchEvent(new Event('input', { bubbles: true }));
+  const field = document.querySelector('#detail .mission-editor input[name="flightTime"]');
+  field.focus(); field.value = '입력중'; field.dispatchEvent(new Event('input', { bubbles: true }));
   await new Promise(r => setTimeout(r, 900));
-  const now = document.querySelector('#detail .mission-editor input[name="worker"]');
+  const now = document.querySelector('#detail .mission-editor input[name="flightTime"]');
   return { focused: document.activeElement === now, value: now?.value, h3: document.querySelector('#detail .missions h3')?.textContent,
            doneBtn: !!document.querySelector('#detail .mission-list .mission-item.done'), memo: document.querySelector('#detail .memo textarea')?.value };
 })()`);
 check('수정 모드에서 메모 저장 후 입력 중인 칸 초점·텍스트 유지', focusKept.focused === true && focusKept.value === '입력중', JSON.stringify(focusKept));
 check('메모 응답이 미션 완료 상태를 덮지 않음', /1\s*\/\s*34/.test(focusKept.h3 ?? '') && focusKept.doneBtn && focusKept.memo === '메모수정', JSON.stringify({ h3: focusKept.h3, done: focusKept.doneBtn }));
-// 취소 → 보기 모드로 돌아가고 저장값(홍길동) 유지
+// 취소 → 보기 모드로 돌아가고 저장값(12분 30초) 유지
 await evaluate(`document.querySelector('#detail .mission-editor form.mission-form button.btn.cancel').click()`);
 await sleep(300);
 const cancelled = await evaluate(`(() => ({ view: !!document.querySelector('#detail .mission-editor .mission-view'), summary: [...document.querySelectorAll('#detail .mission-editor .mission-summary dd')].map(d => d.textContent.trim()).join(' | ') }))()`);
-check('취소하면 보기 모드로 돌아가고 저장값 유지', cancelled.view && /홍길동/.test(cancelled.summary) && !/입력중/.test(cancelled.summary), JSON.stringify(cancelled));
-// 다시 수정 → 이름 변경 → 저장(Enter 대신 버튼) → 서버 확인
+check('취소하면 보기 모드로 돌아가고 저장값 유지', cancelled.view && /12분 30초/.test(cancelled.summary) && !/입력중/.test(cancelled.summary), JSON.stringify(cancelled));
+// 다시 수정 → 비행시간 변경 → 저장(Enter 대신 버튼) → 서버 확인
 await evaluate(`document.querySelector('#detail .mission-editor .mission-view button.btn.edit').click()`);
 await sleep(300);
-await setInput('/이름/', '입력중');
+await setInput('/비행시간/', '입력중');
 await evaluate(`document.querySelector('#detail .mission-editor form.mission-form button.btn.primary[type=submit]').click()`);
 await sleep(900);
 const api2 = await store();
 const rec2 = api2.find((p) => p.name === 'SW_01')?.missions?.find((m) => m.mission === 'Q1_A_TA_SW__01_01');
-check('이어서 저장한 이름이 서버에 반영(완료는 유지)', rec2?.worker === '입력중' && rec2?.done === true, JSON.stringify(rec2));
+check('이어서 저장한 값이 서버에 반영(완료·이름은 유지)', rec2?.flightTime === '입력중' && rec2?.worker === 'admin@sistech.test' && rec2?.done === true, JSON.stringify(rec2));
 
 // 5c. 충돌 감지: 수정 모드로 연 뒤 다른 기기(API)가 먼저 저장 → 저장 시 409 안내, 다시 저장하면 성공
 await evaluate(`document.querySelector('#detail .mission-editor .mission-view button.btn.edit').click()`);

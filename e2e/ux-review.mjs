@@ -49,14 +49,14 @@ check('이어 써도 거짓 충돌 없이 "저장됨"(base는 원격 두 번째)
 // ── 3. 늦게 온 옛 받기 결과가 방금 저장한 미션 기록을 되돌리지 않음(그사이 다른 기기 변경도 놓치지 않음) ──
 await ev(`__fake.snapshotAtCall = ['get_places']; __fake.rpcDelay.get_places = 900;`);
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_01"]').click()`); await sleep(150);
-await fill('M_01', { worker: '내기록', flightTime: '5분' });
+await fill('M_01', { flightTime: '내기록' });
 const g0 = await ev(`__fake.calls.filter(c => c.name === 'get_places').length`);
 await ev(`__fake.remoteChange((db) => { db.missions.push({ id: db.nextMid++, placeId: 1, mission: 'M_02', done: true, worker: '다른기기', flightTime: '1', batteryNo: '1', batteryLeft: '1', version: 1, updatedAt: '' }); }, { table: 'missions' })`);
 await b.waitFor(`__fake.calls.filter(c => c.name === 'get_places').length > ${g0}`, 2000);
 await ev(`${form('M_01')}.querySelector('button[type=submit]').click()`);
 await b.waitFor(`!!document.querySelector('#detail .mission-view[data-mission="M_01"]')`, 2000);
 await sleep(1100); // 옛 결과(내 저장 전 스냅숏)가 도착한 뒤
-v = await ev(`({ view: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), worker: document.querySelector('#detail .mission-view[data-mission="M_01"] dd:nth-of-type(2)')?.textContent })`);
+v = await ev(`({ view: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), worker: document.querySelector('#detail .mission-view[data-mission="M_01"] dd:nth-of-type(3)')?.textContent })`);
 check('내 저장 전에 시작한 받기 결과가 늦게 와도 방금 저장한 기록(보기 화면·내기록)이 되돌아가지 않음', v.view && v.worker === '내기록', v);
 await b.waitFor(`document.querySelector('#detail .mission-item[data-mission="M_02"]')?.classList.contains('done')`, 4000);
 v = await ev(`({ m2: document.querySelector('#detail .mission-item[data-mission="M_02"]').classList.contains('done'), m1: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), gets: __fake.calls.filter(c => c.name === 'get_places').length - ${g0} })`);

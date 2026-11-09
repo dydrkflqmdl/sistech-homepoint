@@ -67,13 +67,14 @@ await prepare(b, { places });
 await selectPlace('SW_01'); await sleep(300);
 await openMission('M_02'); await sleep(200);
 check('새 미션은 바로 입력 화면', await ev(`!!document.querySelector('#detail .mission-form[data-mission="M_02"]')`));
+// 이름(worker)은 읽기 전용이라 늘 로그인 아이디(admin@sistech.test)로 보낸다.
 await fill({ worker: '김', flightTime: '10분', batteryNo: '2', batteryLeft: '045' });
 await submit();
 await waitIdle(); await sleep(150);
 let calls = await saveCalls();
 let v = await ev(`({ view: !!document.querySelector('#detail .mission-view[data-mission="M_02"]'), summary: [...document.querySelectorAll('#detail .mission-view dd')].map(d => d.textContent).join('|'), toast: document.querySelector('#toast').textContent, active: document.activeElement?.textContent })`);
-check('정상 저장 → save_mission 인자(5칸, base null, 045→45)', JSON.stringify(calls.at(-1)) === JSON.stringify({ p_place_id: 1, p_mission: 'M_02', p_fields: { done: false, worker: '김', flightTime: '10분', batteryNo: '2', batteryLeft: '45' }, p_base_version: null }), calls.at(-1));
-check('정상 저장 → 보기 모드·저장값·알림·[수정]에 초점', v.view && v.summary === '미완료|김|10분|2|45%' && v.toast === '미션 기록을 저장했습니다.' && v.active === '수정', v);
+check('정상 저장 → save_mission 인자(5칸, 이름은 로그인 아이디로 고정, base null, 045→45)', JSON.stringify(calls.at(-1)) === JSON.stringify({ p_place_id: 1, p_mission: 'M_02', p_fields: { done: false, worker: 'admin@sistech.test', flightTime: '10분', batteryNo: '2', batteryLeft: '45' }, p_base_version: null }), calls.at(-1));
+check('정상 저장 → 보기 모드·저장값·알림·[수정]에 초점', v.view && v.summary === '미완료|admin@sistech.test|10분|2|45%' && v.toast === '미션 기록을 저장했습니다.' && v.active === '수정', v);
 check('DB 기록 version 1', (await record('SW_01', 'M_02'))?.version === 1);
 await ev(`document.querySelector('#detail .mission-view[data-mission="M_02"] .btn.edit').click()`); await sleep(100);
 await fill({ done: true });
@@ -84,21 +85,21 @@ check('완료 저장 → 목록 배지 2/3·완료 표시', await ev(`/미션 2\
 
 // 충돌: conflictNext(최신 기록)
 await ev(`document.querySelector('#detail .mission-view[data-mission="M_02"] .btn.edit').click()`); await sleep(100);
-await fill({ worker: '내 값' });
+await fill({ flightTime: '내 값' });
 await ev(`__fake.conflictNext({ done: false, worker: '다른사람', flightTime: '5분', batteryNo: '9', batteryLeft: '10', version: 7, updatedAt: '' })`);
 await clearToast();
 await submit(); await waitIdle(); await sleep(150);
 v = await ev(`({ conflict: document.querySelector('#detail .mission-conflict-latest')?.textContent, message: document.querySelector('#detail .mission-conflict-message')?.textContent, role: document.querySelector('#detail .mission-conflict')?.getAttribute('role'),
-  form: !!document.querySelector('#detail .mission-form[data-mission="M_02"]'), worker: document.querySelector('#detail .mission-form input[name=worker]')?.value, done: document.querySelector('#detail .mission-form input[name=done]')?.checked, toast: document.querySelector('#toast').textContent })`);
+  form: !!document.querySelector('#detail .mission-form[data-mission="M_02"]'), flight: document.querySelector('#detail .mission-form input[name=flightTime]')?.value, done: document.querySelector('#detail .mission-form input[name=done]')?.checked, toast: document.querySelector('#toast').textContent })`);
 check('충돌 → 폼 안 고정 안내에 최신값 "미완료 · 다른사람 · 5분 · 9 · 10%"', v.conflict === '최신 저장값: 미완료 · 다른사람 · 5분 · 9 · 10%', v);
-check('충돌 → 입력 화면 유지·적던 값 보존·폼 안 안내(role=alert, 알림 칸은 쓰지 않음)', v.form && v.worker === '내 값' && v.done === true && v.message === '다른 기기에서 먼저 저장된 기록이 있습니다. 내가 적은 값은 그대로 두었습니다.' && v.role === 'alert' && !/다른 기기/.test(v.toast), v);
+check('충돌 → 입력 화면 유지·적던 값 보존·폼 안 안내(role=alert, 알림 칸은 쓰지 않음)', v.form && v.flight === '내 값' && v.done === true && v.message === '다른 기기에서 먼저 저장된 기록이 있습니다. 내가 적은 값은 그대로 두었습니다.' && v.role === 'alert' && !/다른 기기/.test(v.toast), v);
 check('충돌 → 목록 진행도는 최신 기록 기준(완료 풀림 → 1/3)', await ev(`/미션 1\\/3/.test(document.querySelector('#detail .detail-head .badge').textContent)`));
 await submit(); await waitIdle(); await sleep(150);
 calls = await saveCalls();
 check('충돌 뒤 다시 저장 → base 7로 보내 성공(version 8), 안내 사라짐', calls.at(-1).p_base_version === 7 && (await record('SW_01', 'M_02'))?.version === 8 && (await ev(`!document.querySelector('#detail .mission-conflict') && !!document.querySelector('#detail .mission-view[data-mission="M_02"]')`)), calls.at(-1));
 // 기록 없는 미션의 충돌(record null)
 await openMission('M_03'); await sleep(100);
-await fill({ worker: '새' });
+// 아무 칸도 적지 않은 새 미션(이름은 로그인 아이디로 늘 채워져 있다)을 저장해 충돌을 만든다.
 await ev(`__fake.conflictNext(null)`);
 await submit(); await waitIdle(); await sleep(150);
 check('기록 없는 미션 충돌 → "최신 저장값: 없음"', (await ev(`document.querySelector('#detail .mission-conflict-latest')?.textContent`)) === '최신 저장값: 없음');
@@ -145,15 +146,15 @@ await prepare(b, { places });
 await ev(`__fake.echo = false`);
 await selectPlace('SW_01'); await sleep(300);
 await openMission('M_02'); await sleep(200);
-await fill({ worker: '초안작성중' });
-await ev(`(() => { const i = document.querySelector('#detail .mission-form input[name=worker]'); i.focus(); i.setSelectionRange(2, 2); })()`);
+await fill({ flightTime: '초안작성중' });
+await ev(`(() => { const i = document.querySelector('#detail .mission-form input[name=flightTime]'); i.focus(); i.setSelectionRange(2, 2); })()`);
 let n0 = await listCalls();
 let g0 = (await getCalls()).length;
 await ev(`__fake.remoteChange((db) => { db.places.find(p => p.name === 'SW_02').memo = '원격메모'; })`);
 await sleep(150);
 const early = (await getCalls()).length + (await listCalls());
 await sleep(450);
-v = await ev(`(() => { const i = document.querySelector('#detail .mission-form input[name=worker]');
+v = await ev(`(() => { const i = document.querySelector('#detail .mission-form input[name=flightTime]');
   const sw02 = [...document.querySelectorAll('#place-list button[data-id]')].find(b => b.querySelector('.name').firstChild.textContent.trim() === 'SW_02');
   return { value: i?.value, focused: document.activeElement === i, caret: i?.selectionStart, memoOn: sw02?.querySelector('.memo-icon').classList.contains('on'), title: sw02?.querySelector('.memo-icon').title }; })()`);
 check('원격 변경 → 300ms 동안은 다시 받지 않음(150ms 시점)', early === n0 + g0, { n0, g0, early });
@@ -170,11 +171,11 @@ check('연달아 온 알림 5번 → 모아서 한 번만, 그 장소(TB_01)만 
 await clearToast();
 await ev(`__fake.remoteChange((db) => { db.missions.push({ id: db.nextMid++, placeId: 1, mission: 'M_02', done: false, worker: '원격', flightTime: '3분', batteryNo: '7', batteryLeft: '30', version: 1, updatedAt: '' }); }, { table: 'missions' })`);
 await sleep(600);
-v = await ev(`({ value: document.querySelector('#detail .mission-form input[name=worker]')?.value, conflict: document.querySelector('#detail .mission-conflict')?.textContent ?? null, toast: document.querySelector('#toast').hidden ? null : document.querySelector('#toast').textContent })`);
+v = await ev(`({ value: document.querySelector('#detail .mission-form input[name=flightTime]')?.value, conflict: document.querySelector('#detail .mission-conflict')?.textContent ?? null, toast: document.querySelector('#toast').hidden ? null : document.querySelector('#toast').textContent })`);
 check('같은 미션 기록이 원격으로 바뀌어도 적던 초안은 덮이지 않음', v.value === '초안작성중', v);
 console.log('관찰: 같은 미션 원격 변경 직후 즉시 안내 =', JSON.stringify({ conflict: v.conflict, toast: v.toast }));
 await submit(); await waitIdle(); await sleep(150);
-v = await ev(`({ conflict: document.querySelector('#detail .mission-conflict-latest')?.textContent ?? null, message: document.querySelector('#detail .mission-conflict-message')?.textContent ?? null, value: document.querySelector('#detail .mission-form input[name=worker]')?.value })`);
+v = await ev(`({ conflict: document.querySelector('#detail .mission-conflict-latest')?.textContent ?? null, message: document.querySelector('#detail .mission-conflict-message')?.textContent ?? null, value: document.querySelector('#detail .mission-form input[name=flightTime]')?.value })`);
 check('그 상태로 저장 → 폼 안 충돌 안내(최신값 "원격")·초안 유지', v.conflict === '최신 저장값: 미완료 · 원격 · 3분 · 7 · 30%' && /다른 기기에서 먼저 저장된 기록/.test(v.message ?? '') && v.value === '초안작성중', v);
 // 미션명이 바뀌어 고른 미션이 사라짐 → 입력 칸 닫힘
 await ev(`__fake.remoteChange((db) => { db.places.find(p => p.id === 1).mission = 'Z_01'; })`);
@@ -214,7 +215,7 @@ await ev(`[...document.querySelectorAll('#import-panel .btn')].find(x => x.textC
 await prepare(b, { places });
 await selectPlace('SW_02'); await sleep(300);
 await openMission('N_01'); await sleep(200);
-await fill({ worker: '만료전' });
+await fill({ flightTime: '만료전' });
 await ev(`__fake.failNext({ status: 401, code: 'PGRST301', message: 'JWT expired' })`);
 await submit();
 await b.waitFor(`!document.querySelector('#login').hidden`, 3000);
