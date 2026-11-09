@@ -1,12 +1,19 @@
-import { PALETTE, colorLabel, progressColor } from './palette.js';
+import { PALETTE, colorLabel, paletteEntry, progressColor } from './palette.js';
 import { kakaoMapViewUrl, openKakaoMapRoute } from './kakao.js';
 import { missionNames, missionProgress } from './mission.js';
-import { CsvFormatError, readPlaces, toCsv } from './csv.js';
-import { LOGIN_ID_RULE, emailToLoginId, loginIdToEmail, normalizeLoginId } from './login-id.js';
+// csv.js·login-id.js는 다른 담당이 함수를 더해 가는 파일이라 이름공간으로 가져온다.
+// 아직 없는 이름(nearDuplicates·isValidPassword 등)을 이름으로 가져오면 모듈 전체가 안 열리므로, 쓸 때 있는지 보고 쓴다.
+import * as csv from './csv.js';
+import * as loginId from './login-id.js';
 import * as api from './api.js';
 
 const state = {
   places: [],
+  // 장소 목록을 받는 중(로그인 직후·[다시 시도])인지, 못 받았을 때의 안내, 한 번이라도 받았는지.
+  // "아직 저장한 장소가 없습니다"(#empty)는 받은 뒤 0곳일 때만 보여 준다.
+  loading: false,
+  loadError: null,
+  loaded: false,
   selectedId: null,
   // 상세 정보에서 펼쳐 둔 미션 이름. 다른 장소를 고르면 닫는다.
   selectedMission: null,
@@ -24,6 +31,9 @@ const state = {
   // 가져오는 중인 파일 번호(1부터). 단추에 "가져오는 중… (2/5)"로 보여 준다.
   importProgress: 0,
   importing: false,
+  // 가져오기 전에 확인받을 내용(경고·근접 중복·미션명 변경). 있으면 [계속]/[취소] 화면을 보여 준다.
+  // { parsed: [{ file, parsed } | { file, error }], warnings, near, changes }
+  importReview: null,
   // 목록에서 사람이 펼쳐 둔 시군. 기준은 "모두 접힘"이라 새로고침·상태 분류·처음 화면에서는 전부 접힌다(저장하지 않는다).
   openGroups: new Set(),
   // 저절로 펼쳐진 묶음(고른 장소·검색)을 사람이 접은 것. 검색어·거르기·선택이 바뀌면 잊는다.
@@ -37,9 +47,9 @@ const config = api.readConfig();
 let authEpoch = 0;
 let currentUser = null; // { id, email, name, admin } — name은 머리글에 보여 줄 아이디, admin은 계정 관리 버튼을 보일지
 let unsubscribeChanges = null;
-let mapStarted = false;
 let loggingOut = false;
 const signedIn = () => currentUser !== null;
+const findPlace = (id) => state.places.find((p) => p.id === id);
 
 // 그룹을 모두 접는다. 상태 분류를 바꾸거나 처음 화면으로 갈 때 쓴다.
 function collapseAllGroups() {
@@ -70,13 +80,17 @@ function h(tag, props = {}, ...children) {
 // el의 자식을 통째로 바꾼다. h()와 같은 규칙으로 거짓 값을 버린다.
 const fill = (el, ...children) => el.replaceChildren(...compact(children));
 
+// 알림 칸(#toast, aria-live)은 늘 DOM에 두고 글자만 바꾼다. 숨겼다 보였다 하면 화면 읽기 프로그램이 첫 알림을 놓친다.
+// 시간이 지나면 글자를 비우고, 빈 칸은 CSS가 투명하게 둔다.
 let toastTimer;
 function toast(message) {
   const el = $('#toast');
-  el.textContent = message;
   el.hidden = false;
+  el.textContent = message;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (el.hidden = true), 3500);
+  toastTimer = setTimeout(() => {
+    el.textContent = '';
+  }, 3500);
 }
 
 // ── 지도 (카카오맵) ─────────────────────────────────────
@@ -98,25 +112,72 @@ function showMapMessage(...lines) {
   fill($('#map'), h('div', { class: 'map-message', role: 'status' }, lines.map((t) => h('p', {}, t))));
 }
 
+// 지도 상태: 'idle'(아직 안 함) → 'loading' → 'ready' | 'failed'(다시 시도 가능) | 'nokey'(설정 문제라 다시 해도 같음).
+let mapState = 'idle';
+const MAP_FAILED_MESSAGE = '지도를 불러오지 못했습니다. 인터넷이 약하면 목록과 길찾기는 그대로 쓸 수 있습니다.';
+
+// 작업자에게는 쉬운 안내와 [지도 다시 불러오기]만 보여 준다. 등록 도메인 같은 관리자용 설명은 콘솔에만 남긴다.
+function showMapFailure() {
+  fill(
+    $('#map'),
+    h(
+      'div',
+      { class: 'map-message', role: 'status' },
+      h('p', {}, MAP_FAILED_MESSAGE),
+      h('button', { type: 'button', class: 'btn', id: 'map-retry', onclick: () => startMap() }, '지도 다시 불러오기'),
+    ),
+  );
+}
+
 const KAKAO_SDK_TIMEOUT_MS = 15000;
 // SDK 주소(sdk.js)는 키가 틀려도 정상으로 내려오는 경우가 있어, 지도 모듈(kakao.maps.load)이 끝내 안 오면 실패로 본다.
+// 다시 부르면 앞서 넣은 <script>를 지우고 새로 받는다(앞 시도에서 늦게라도 받아졌으면 그것을 쓴다).
 function loadKakaoSdk(key) {
   return new Promise((resolve, reject) => {
-    const ready = () => window.kakao.maps.load(() => resolve(window.kakao.maps));
-    const timer = setTimeout(() => reject(new Error('timeout')), KAKAO_SDK_TIMEOUT_MS);
-    const done = (fn) => (...a) => {
+    const timer = setTimeout(() => fail(new Error('timeout')), KAKAO_SDK_TIMEOUT_MS);
+    function ok(maps) {
       clearTimeout(timer);
-      fn(...a);
+      resolve(maps);
+    }
+    function fail(err) {
+      clearTimeout(timer);
+      reject(err);
+    }
+    const ready = () => {
+      try {
+        window.kakao.maps.load(() => ok(window.kakao.maps));
+      } catch (err) {
+        fail(err);
+      }
     };
-    resolve = done(resolve);
-    reject = done(reject);
     // 자동 점검은 가짜 SDK를 먼저 심어 두므로, 이미 있으면 진짜를 불러오지 않는다.
-    if (window.kakao?.maps) return ready();
+    if (window.kakao?.maps) {
+      ready();
+      return;
+    }
+    document.getElementById('kakao-sdk')?.remove();
     const script = document.createElement('script');
+    script.id = 'kakao-sdk';
     script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${encodeURIComponent(key)}&autoload=false&libraries=services`;
-    script.onload = () => (window.kakao?.maps ? ready() : reject(new Error('no kakao.maps')));
-    script.onerror = () => reject(new Error('load error'));
+    script.onload = () => (window.kakao?.maps ? ready() : fail(new Error('no kakao.maps')));
+    script.onerror = () => fail(new Error('load error'));
     document.head.append(script);
+  });
+}
+
+// 지도를 (다시) 불러온다. 실패하면 [지도 다시 불러오기]를 보여 주고, 인터넷이 돌아오면(online) 저절로 다시 해 본다.
+function startMap() {
+  if (mapState === 'loading' || mapState === 'ready' || mapState === 'nokey') return;
+  mapState = 'loading';
+  showMapMessage('지도를 불러오는 중…');
+  initMap().catch((err) => {
+    mapState = 'failed';
+    kmap = null;
+    console.warn(
+      `[홈포인트] 카카오맵을 불러오지 못했습니다. developers.kakao.com에서 이 주소(${location.origin})가 Web 플랫폼에 등록되어 있고 "카카오맵" 사용 설정이 켜져 있는지 확인해 주세요.`,
+      err,
+    );
+    showMapFailure();
   });
 }
 
@@ -201,29 +262,22 @@ function mapControls() {
 const MEMO_LABEL_MAX_LEVEL = 6;
 const syncMemoLabels = () => kmap && $('#map').classList.toggle('hide-memo', kmap.getLevel() > MEMO_LABEL_MAX_LEVEL);
 
+// 키가 틀렸거나, 이 주소가 앱에 등록되지 않았거나, 인터넷이 끊기면 loadKakaoSdk가 던진다(startMap이 받아 안내한다).
 async function initMap() {
   // 키는 config.js(window.APP_CONFIG.kakaoJsKey)에 들어 있다. 카카오 콘솔에 등록한 도메인에서만 동작하는 공개 키다.
   const key = config.kakaoJsKey;
   if (!key) {
+    mapState = 'nokey';
     showMapMessage('카카오맵 키가 없습니다. config.js의 kakaoJsKey(.env의 KAKAO_JS_KEY 또는 배포 설정의 Secrets)를 확인해 주세요.');
     return;
   }
-  let maps;
-  try {
-    maps = await loadKakaoSdk(key);
-  } catch {
-    // 키가 틀렸거나, 이 주소가 앱에 등록되지 않았거나, 인터넷이 끊긴 경우다.
-    showMapMessage(
-      '카카오맵을 불러오지 못했습니다.',
-      `developers.kakao.com에서 이 주소(${location.origin})가 Web 플랫폼에 등록되어 있고 "카카오맵" 사용 설정이 켜져 있는지 확인해 주세요.`,
-    );
-    return;
-  }
+  const maps = await loadKakaoSdk(key);
   const el = $('#map');
   el.replaceChildren();
   kmap = new maps.Map(el, { center: new maps.LatLng(36.4, 127.9), level: 10 });
+  mapState = 'ready';
   // 화면 폭이 바뀌어 지도 칸 크기가 달라지면 카카오 지도에 알려 줘야 빈 곳 없이 다시 그린다.
-  new ResizeObserver(() => kmap.relayout()).observe(el);
+  new ResizeObserver(() => kmap?.relayout()).observe(el);
   maps.event.addListener(kmap, 'zoom_changed', syncMemoLabels);
   $('.map-area').append(mapControls());
 
@@ -253,19 +307,19 @@ function pinHtml(color, selected, memo, progress = '') {
       <circle cx="12" cy="11.6" r="4.2" fill="#fff"/></svg>${memoLabel}`;
 }
 
-// 핀 하나. 누르거나(클릭) 초점을 둔 채 Enter·Space를 누르면 그 장소를 고른다.
+// 핀 하나. 누르거나(클릭) 초점을 둔 채 Enter·Space를 누르면 그 장소를 고르고 상세 정보 제목으로 초점을 옮긴다.
 function createPin(p) {
-  const el = h('div', { class: 'pin', tabindex: '0', role: 'button' });
+  const el = h('div', { class: 'pin', tabindex: '0', role: 'button', 'data-id': p.id });
   // 지도 끌기·클릭이 핀 아래로 새지 않게 한다.
   for (const type of ['mousedown', 'touchstart', 'dblclick']) el.addEventListener(type, (e) => e.stopPropagation());
   el.addEventListener('click', (e) => {
     e.stopPropagation();
-    requestSelect(p.id);
+    if (requestSelect(p.id)) focusDetailTitle();
   });
   el.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
-    requestSelect(p.id, { pan: true });
+    if (requestSelect(p.id, { pan: true })) focusDetailTitle();
   });
   const overlay = new kakao.maps.CustomOverlay({
     position: new kakao.maps.LatLng(p.lat, p.lng),
@@ -287,6 +341,8 @@ function renderMarkers(visible) {
       markers.delete(id);
     }
   }
+  // 핀은 그대로 두고, 모양(색·선택·말풍선)·이름표·위치·쌓는 순서 중 바뀐 것만 고친다.
+  // 장소 하나를 고를 때 수백 개 핀을 모두 다시 그리지 않게 한다(바뀌는 핀은 앞서 고른 것과 새로 고른 것 둘뿐).
   for (const p of visible) {
     const selected = p.id === state.selectedId;
     let marker = markers.get(p.id);
@@ -294,17 +350,34 @@ function renderMarkers(visible) {
       marker = createPin(p);
       markers.set(p.id, marker);
     }
-    // 핀 요소는 그대로 두고 내용만 바꾼다. 그래야 키보드로 고른 뒤에도 초점이 핀에 남는다.
     const { el, overlay } = marker;
     const { total, done } = missionProgress(p.mission, p.missions);
-    el.className = selected ? 'pin selected' : 'pin';
-    el.dataset.id = p.id;
-    el.title = p.name;
-    el.setAttribute('aria-label', p.name);
-    el.innerHTML = pinHtml(placeColor(p), selected, p.memo.trim(), total > 0 ? `${done}/${total}` : '');
-    overlay.setPosition(new kakao.maps.LatLng(p.lat, p.lng));
+    const color = placeColor(p);
+    const progress = total > 0 ? `${done}/${total}` : '';
+    const memo = p.memo.trim();
+    const look = `${color}|${selected}|${progress}|${memo}`;
+    if (marker.look !== look) {
+      marker.look = look;
+      el.className = selected ? 'pin selected' : 'pin';
+      el.innerHTML = pinHtml(color, selected, memo, progress);
+    }
+    // 화면 읽기 프로그램에는 이름과 진행 상태를 함께 알려 준다("SW_01, 진행 중 1/34").
+    const label = `${p.name}, ${colorLabel(color)}${progress ? ` ${progress}` : ''}`;
+    if (marker.label !== label) {
+      marker.label = label;
+      el.title = p.name;
+      el.setAttribute('aria-label', label);
+    }
+    const position = `${p.lat},${p.lng}`;
+    if (marker.position !== position) {
+      marker.position = position;
+      overlay.setPosition(new kakao.maps.LatLng(p.lat, p.lng));
+    }
     // 고른 핀을 맨 위에.
-    overlay.setZIndex(selected ? 10 : 1);
+    if (marker.selected !== selected) {
+      marker.selected = selected;
+      overlay.setZIndex(selected ? 10 : 1);
+    }
   }
 }
 
@@ -368,7 +441,7 @@ function renderFilters() {
           refocus(color === null ? '#color-filters [data-all]' : `#color-filters [data-color="${CSS.escape(color)}"]`);
         },
       },
-      color && h('span', { class: 'dot', style: `--c:${color}` }),
+      color && stateDot(color, { 'aria-hidden': 'true' }),
       label,
       h('span', { class: 'count' }, String(count)),
     );
@@ -379,11 +452,16 @@ function renderFilters() {
   );
 }
 
-// 진행 상태 색 점. 미션이 없는 장소는 배지가 없어서 상태(미진행)를 화면 읽기 프로그램에도 알려 준다.
+// 진행 상태 점: 색에 기호(미진행 ○, 진행 중 ◐, 완료 ✓)를 함께 그린다(styles.css의 data-state). 색만으로 구별하지 않게 한다.
+const stateDot = (hex, props = {}, ...children) =>
+  h('span', { class: 'dot', 'data-state': paletteEntry(hex)?.key, style: `--c:${hex}`, ...props }, ...children);
+
+// 장소의 상태 점. 미션이 없는 장소는 배지가 없어서 상태(미진행)를 화면 읽기 프로그램에도 알려 준다.
 function placeDot(p) {
-  const label = colorLabel(placeColor(p));
+  const color = placeColor(p);
+  const label = colorLabel(color);
   const { total } = missionProgress(p.mission, p.missions);
-  return h('span', { class: 'dot', style: `--c:${placeColor(p)}`, title: label }, total === 0 && h('span', { class: 'sr-only' }, label));
+  return stateDot(color, { title: label }, total === 0 && h('span', { class: 'sr-only' }, label));
 }
 
 const listItemSelector = (id) => `#place-list button[data-id="${id}"]`;
@@ -405,9 +483,13 @@ const UNKNOWN_DISTRICT = '시군 없음';
 const districtOf = (p) => String(p.district ?? '').trim() || UNKNOWN_DISTRICT;
 const groupHeadSelector = (district) => `#place-list .group-head[data-district="${CSS.escape(district)}"]`;
 
-// 저절로 펼치는 규칙: 고른 장소가 든 시군, 그리고 검색 중에는 맞는 장소가 있는 모든 시군. 이 규칙은 저장하지 않는다.
+// 저절로 펼치는 규칙: 고른 장소가 든 시군, 그리고 검색 결과가 SEARCH_OPEN_MAX곳 이하이면 맞는 장소가 있는 모든 시군.
+// 결과가 많으면(예: 한 글자 검색) 수천 줄을 한꺼번에 그리지 않도록 접힌 채 둔다. 이 규칙은 저장하지 않는다.
 // 상태 분류(미진행·진행 중·완료)는 접힌 채로 걸러만 낸다. 머리글의 개수·점으로 결과를 볼 수 있고, 펼치는 건 사용자가 고른다.
-const autoOpen = (district, places) => state.query.trim() !== '' || places.some((p) => p.id === state.selectedId);
+const SEARCH_OPEN_MAX = 100;
+// 마지막으로 그린 목록이 검색 때문에 저절로 펼쳐졌는지. 머리를 눌러 접고 펼칠 때 같은 기준을 쓴다.
+let searchOpensGroups = false;
+const autoOpen = (district, places) => searchOpensGroups || places.some((p) => p.id === state.selectedId);
 const groupOpen = (district, places) =>
   (autoOpen(district, places) || state.openGroups.has(district)) && !state.closedGroups.has(district);
 
@@ -435,7 +517,7 @@ function placeRow(p) {
         'data-id': p.id,
         'aria-current': String(p.id === state.selectedId),
         onclick: () => {
-          if (requestSelect(p.id, { pan: true })) refocus(listItemSelector(p.id));
+          if (requestSelect(p.id, { pan: true })) focusDetailTitle();
         },
       },
       placeDot(p),
@@ -484,7 +566,7 @@ function groupHead(district, places, open, listId) {
         h(
           'span',
           { class: 'group-state', title: `${label} ${counts.get(hex)}미션` },
-          h('span', { class: 'dot', style: `--c:${hex}`, 'aria-hidden': 'true' }),
+          stateDot(hex, { 'aria-hidden': 'true' }),
           h('span', { class: 'sr-only' }, `${label} `),
           String(counts.get(hex)),
         ),
@@ -494,10 +576,34 @@ function groupHead(district, places, open, listId) {
   );
 }
 
+// 목록 위의 상태 줄: 받는 중이면 "불러오는 중…", 못 받았으면 고정 안내와 [다시 시도]. 받은 뒤에는 숨긴다.
+function renderListStatus() {
+  const box = $('#list-status');
+  if (state.loadError) {
+    box.hidden = false;
+    box.className = 'list-status card failed';
+    fill(
+      box,
+      h('p', { class: 'list-status-text', role: 'alert' }, '장소 목록을 불러오지 못했습니다. ', state.loadError),
+      h('button', { type: 'button', class: 'btn', id: 'list-retry', onclick: () => loadPlaces({ fit: true }) }, '다시 시도'),
+    );
+  } else if (state.loading && state.places.length === 0) {
+    box.hidden = false;
+    box.className = 'list-status';
+    fill(box, h('p', { class: 'list-status-text', role: 'status' }, '불러오는 중…'));
+  } else {
+    box.hidden = true;
+    box.className = 'list-status';
+    box.replaceChildren();
+  }
+}
+
 let lastListKey = null;
 function renderList(visible) {
   const total = state.places.length;
-  $('#empty').hidden = total > 0;
+  renderListStatus();
+  // "아직 저장한 장소가 없습니다"는 목록을 받은 뒤 0곳일 때만. 받는 중·실패 중에 보이면 데이터가 지워진 것처럼 보인다.
+  $('#empty').hidden = !(state.loaded && !state.loading && !state.loadError && total === 0);
   $('#list-summary').textContent =
     total === 0 ? ''
     : visible.length === total ? `장소 ${total}개`
@@ -515,7 +621,9 @@ function renderList(visible) {
   );
   const groups = new Map(order.map((d) => [d, []]));
   for (const p of visible) groups.get(districtOf(p))?.push(p);
+  searchOpensGroups = state.query.trim() !== '' && visible.length <= SEARCH_OPEN_MAX;
 
+  // 접힌 시군은 줄(DOM)을 만들지 않는다. 장소가 수천 곳이어도 펼친 시군만 그린다.
   fill(
     $('#place-list'),
     [...groups]
@@ -527,7 +635,7 @@ function renderList(visible) {
           'li',
           { class: 'group' },
           groupHead(district, places, open, listId),
-          h('ul', { class: 'group-items', id: listId, hidden: !open }, places.map(placeRow)),
+          h('ul', { class: 'group-items', id: listId, hidden: !open }, open && places.map(placeRow)),
         );
       }),
   );
@@ -539,10 +647,26 @@ function renderDetail() {
   box.hidden = !p;
   if (!p) {
     box.replaceChildren();
+    delete box.dataset.placeId;
     return;
   }
+  box.dataset.placeId = p.id;
 
-  const memo = h('textarea', { rows: 2, placeholder: '메모를 남겨 두세요', onchange: (e) => saveMemo(p.id, e.target.value) }, p.memo);
+  // 저장하지 않은(또는 저장 중인) 메모가 있으면 서버 값 대신 그것을 보여 준다. 실시간으로 다시 그려도 적던 글이 덮이지 않는다.
+  const memo = h(
+    'textarea',
+    {
+      id: 'memo-input',
+      rows: 2,
+      maxlength: 2000,
+      placeholder: '메모를 남겨 두세요',
+      'aria-describedby': 'memo-status',
+      oninput: (e) => onMemoInput(p.id, e.target.value),
+      // 칸을 떠나면(change) 1초를 기다리지 않고 바로 저장한다.
+      onchange: (e) => flushMemo(p.id, e.target.value),
+    },
+    memoText(p),
+  );
   const missions = missionNames(p.mission);
   const progress = missionProgress(p.mission, p.missions);
 
@@ -552,7 +676,8 @@ function renderDetail() {
       'div',
       { class: 'detail-head' },
       placeDot(p),
-      h('h2', {}, p.name, missionBadge(p)),
+      // 장소를 고르면 초점이 여기로 온다(tabindex=-1: 탭 순서에는 넣지 않고 초점만 받을 수 있게).
+      h('h2', { id: 'detail-title', tabindex: '-1' }, p.name, missionBadge(p)),
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': '닫기', onclick: closeDetail }, '×'),
     ),
     // 주소에는 시군이 들어 있지 않다(목록은 시군별로 묶여 보이므로). 상세 카드만 시군을 작은 표시로 앞에 붙인다.
@@ -570,7 +695,14 @@ function renderDetail() {
       h('button', { type: 'button', class: 'btn primary', onclick: () => openKakaoMapRoute(p) }, '카카오맵 길찾기'),
       h('a', { class: 'btn', href: kakaoMapViewUrl(p), target: '_blank', rel: 'noopener' }, '카카오맵에서 보기'),
     ),
-    h('label', { class: 'memo' }, '메모', memo),
+    h(
+      'div',
+      { class: 'memo' },
+      h('label', { for: 'memo-input' }, '메모'),
+      memo,
+      // 저장 상태는 메모 아래에 고정해 보여 준다(알림처럼 사라지지 않는다).
+      h('div', { id: 'memo-status', class: 'memo-status', role: 'status' }, memoStatusView(p.id)),
+    ),
     missions.length > 0 &&
       h(
         'section',
@@ -608,7 +740,8 @@ function renderDetail() {
           }),
         ),
       ),
-    h('button', { type: 'button', class: 'link danger', onclick: () => removePlace(p) }, '이 장소 삭제'),
+    // 실수로 누르지 않게 다른 버튼과 떨어뜨려 맨 아래에 둔다(styles.css .delete-place).
+    h('div', { class: 'delete-place' }, h('button', { type: 'button', class: 'link danger', onclick: () => removePlace(p) }, '이 장소 삭제')),
   );
 }
 
@@ -636,13 +769,21 @@ const draftMatches = (p, name) => state.missionDraft?.placeId === p.id && state.
 // 아직 저장한 적 없는 미션은 바로 입력 화면, 저장한 미션은 [수정]을 누르기 전까지 보기 화면이다.
 const missionEditing = (p, name) => draftMatches(p, name) || !isMissionSaved(p, name);
 
+// 미션 기록의 '이름' 칸에 저절로 넣을 값: 지금 로그인한 사람의 표시 아이디(머리글과 같은 값).
+const currentWorkerName = () => String(currentUser?.name ?? '').trim();
+
 function newMissionDraft(p, name) {
   const r = missionRecord(p, name);
+  const worker = String(r.worker ?? '');
+  // 이름이 비어 있으면 로그인한 사람 아이디를 미리 넣는다(고칠 수 있다). 저장된 이름은 건드리지 않는다.
+  const autoWorker = worker.trim() ? '' : currentWorkerName();
   return {
     placeId: p.id,
     mission: name,
     done: Boolean(r.done),
-    worker: r.worker ?? '',
+    worker: autoWorker || worker,
+    // 저절로 넣은 이름. 이 값 그대로면 사람이 고친 것으로 보지 않는다(버릴지 묻지 않는다). 넣지 않았으면 ''.
+    autoWorker,
     flightTime: r.flightTime ?? '',
     batteryNo: r.batteryNo ?? '',
     batteryLeft: r.batteryLeft ?? '',
@@ -652,22 +793,46 @@ function newMissionDraft(p, name) {
     baseVersion: r.version ?? null,
     // conflict를 받았을 때 서버의 최신 기록(없으면 null). undefined면 충돌 없음.
     conflict: undefined,
+    // 저장이 끝나지 못했을 때(시간 초과·연결 실패·취소) 폼 안에 남기는 안내 { message, retry }. 없으면 null.
+    error: null,
   };
 }
 
 // 입력 화면에 보일 값. 고치는 중인 값이 없으면 저장된 기록으로 만든다(아직 state에 넣지는 않는다).
 const missionDraftFor = (p, name) => (draftMatches(p, name) ? state.missionDraft : newMissionDraft(p, name));
 
-// 초안이 저장된 기록(새 미션이면 빈 기록)과 다르면 true. 버리기 전에 물어볼지 정한다.
-function draftDirty() {
+// 미션 초안이 저장된 기록(새 미션이면 빈 기록)과 다르면 true. 저절로 넣은 이름만 있는 초안은 고친 것으로 보지 않는다.
+function missionDraftDirty() {
   const d = state.missionDraft;
-  const p = d && state.places.find((x) => x.id === d.placeId);
+  const p = d && findPlace(d.placeId);
   if (!p) return false;
   const r = missionRecord(p, d.mission);
-  return Boolean(d.done) !== Boolean(r.done) || MISSION_FIELDS.some(({ key }) => String(d[key] ?? '').trim() !== String(r[key] ?? '').trim());
+  const same = (key) => {
+    const mine = String(d[key] ?? '').trim();
+    const saved = String(r[key] ?? '').trim();
+    if (mine === saved) return true;
+    return key === 'worker' && !saved && Boolean(d.autoWorker) && mine === d.autoWorker.trim();
+  };
+  return Boolean(d.done) !== Boolean(r.done) || MISSION_FIELDS.some(({ key }) => !same(key));
 }
 
-const confirmDiscardDraft = () => !draftDirty() || confirm('저장하지 않은 미션 기록이 있습니다. 버릴까요?');
+// 저장하지 않은 것이 있으면 true: 미션 초안, 또는 고른 장소의 메모(저장 실패·충돌). 버리기 전에 물어볼지 정한다.
+// 입력만 하고 1초가 안 지난 메모는 묻지 않고 바로 저장을 시작한다(confirmDiscardDraft).
+const draftDirty = () => missionDraftDirty() || memoUnsaved(state.selectedId);
+
+const confirmDiscardMissionDraft = () => !missionDraftDirty() || confirm('저장하지 않은 미션 기록이 있습니다. 버릴까요?');
+
+// 장소를 떠나기(닫기·다른 장소·처음 화면·로그아웃 등) 전에 부른다. 그만두면 false.
+function confirmDiscardDraft() {
+  flushMemo(state.selectedId);
+  const mission = missionDraftDirty();
+  const memo = memoUnsaved(state.selectedId);
+  if (!mission && !memo) return true;
+  const what = mission && memo ? '미션 기록과 메모가' : mission ? '미션 기록이' : '메모가';
+  if (!confirm(`저장하지 않은 ${what} 있습니다. 버릴까요?`)) return false;
+  if (memo) discardMemo(state.selectedId);
+  return true;
+}
 
 // 기록을 한 줄로: "완료 · 홍길동 · 12분 · 3 · 45%". 빈 칸은 —.
 function missionSummaryLine(r) {
@@ -752,6 +917,7 @@ function missionForm(p, draft) {
         disabled: saving,
         onchange: (e) => {
           updateMissionDraft(p, name, 'done', e.target.checked);
+          if (e.target.checked) fillWorkerIfEmpty(name);
           // 완료를 풀면 "모두 적어야 함" 표시는 더 이상 맞지 않으므로 지운다(숫자 범위 표시는 남긴다).
           if (!e.target.checked) {
             const invalid = state.missionDraft.invalid;
@@ -782,16 +948,66 @@ function missionForm(p, draft) {
         unit && h('span', { class: 'unit-label', 'aria-hidden': 'true' }, unit),
       ),
     ),
-    // 다른 기기가 먼저 저장해 막혔을 때, 다시 저장하기 전에 견줘 볼 수 있게 서버의 최신 값을 보여 준다.
+    // 다른 기기가 먼저 저장해 막혔을 때: 알림 대신 폼 안에 고정 안내를 두고, 서버의 최신 값과 두 가지 길을 보여 준다.
+    // [저장]을 다시 눌러도 [내 값으로 덮어쓰기]와 같다(초안의 기록 판을 최신으로 맞춰 두었다).
     draft.conflict !== undefined &&
-      h('p', { class: 'mission-conflict' }, `최신 저장값: ${draft.conflict ? missionSummaryLine(draft.conflict) : '없음'}`),
+      h(
+        'div',
+        { class: 'mission-conflict', role: 'alert' },
+        h('p', { class: 'mission-conflict-message' }, MISSION_CONFLICT_MESSAGE),
+        h('p', { class: 'mission-conflict-latest' }, `최신 저장값: ${draft.conflict ? missionSummaryLine(draft.conflict) : '없음'}`),
+        h(
+          'div',
+          { class: 'button-row' },
+          h('button', { type: 'button', class: 'btn conflict-latest', disabled: saving, onclick: () => loadLatestMission(p.id, name) }, '최신값 불러오기'),
+          h('button', { type: 'button', class: 'btn conflict-overwrite', disabled: saving, onclick: () => saveMissionDraft(p.id, name) }, '내 값으로 덮어쓰기'),
+        ),
+      ),
+    // 시간 초과·연결 실패·[취소]로 저장이 끝나지 못했을 때. 적던 값은 그대로 있고 [다시 시도]로 다시 보낸다.
+    draft.error &&
+      h(
+        'div',
+        { class: 'mission-error' },
+        h('p', {}, draft.error.message),
+        draft.error.retry &&
+          h('button', { type: 'button', class: 'btn small mission-retry', disabled: saving, onclick: () => saveMissionDraft(p.id, name) }, '다시 시도'),
+      ),
     h(
       'div',
       { class: 'button-row' },
       h('button', { type: 'submit', class: 'btn primary', disabled: saving }, saving ? '저장 중…' : '저장'),
-      h('button', { type: 'button', class: 'btn cancel', disabled: saving, onclick: () => cancelMissionDraft(p, name) }, '취소'),
+      // 저장 중에도 누를 수 있다: 기다리기를 그만두고 입력 화면으로 돌아온다(적던 값은 그대로).
+      h(
+        'button',
+        { type: 'button', class: 'btn cancel', onclick: () => (missionSaving.has(missionKey(p.id, name)) ? stopMissionSave(p.id, name) : cancelMissionDraft(p, name)) },
+        '취소',
+      ),
     ),
   );
+}
+
+const MISSION_CONFLICT_MESSAGE = '다른 기기에서 먼저 저장된 기록이 있습니다. 내가 적은 값은 그대로 두었습니다.';
+
+// 완료에 체크했는데 이름이 비어 있으면 로그인한 사람 아이디를 넣는다(화면의 칸도 함께).
+function fillWorkerIfEmpty(name) {
+  const d = state.missionDraft;
+  const auto = currentWorkerName();
+  if (!d || d.mission !== name || !auto || String(d.worker ?? '').trim()) return;
+  d.worker = auto;
+  d.autoWorker = auto;
+  delete d.invalid.worker;
+  const input = $(`${missionFormSelector(name)} input[name="worker"]`);
+  if (input) input.value = auto;
+  syncMissionInvalid(name);
+}
+
+// 충돌 안내의 [최신값 불러오기]: 서버의 최신 기록으로 초안을 다시 만든다(이름이 비어 있으면 내 아이디를 다시 넣는다).
+function loadLatestMission(placeId, name) {
+  const p = findPlace(placeId);
+  if (!p || !draftMatches(p, name) || missionSaving.has(missionKey(placeId, name))) return;
+  state.missionDraft = newMissionDraft(p, name);
+  renderKeepingInput();
+  refocus(`${missionFormSelector(name)} input[name="done"]`);
 }
 
 function missionView(p, record) {
@@ -903,6 +1119,58 @@ const skippedFiles = (skipped) =>
     ),
   );
 
+// 근접 중복 거리: 1km 미만은 m, 넘으면 km(소수 한 자리).
+const formatDistance = (m) => (m >= 1000 ? `${(m / 1000).toFixed(1)}km` : `${m}m`);
+
+// 가져오기 전 확인 화면(계약 C7): 미션명이 바뀌는 기존 장소(기록 수), 이름·시군이 같은데 위치가 다른 장소(거리), 행 경고.
+// [계속]을 눌러야 보낸다. 미션명 변경이 있으면 기본 초점은 [취소](runImport가 옮긴다).
+function importReviewView(review) {
+  const MAX = 30;
+  const list = (items, line) =>
+    h(
+      'ul',
+      { class: 'review-list' },
+      items.slice(0, MAX).map((x) => h('li', {}, line(x))),
+      items.length > MAX && h('li', { class: 'review-more' }, `외 ${items.length - MAX}건`),
+    );
+  const where = (x) => `${x.file ? `${x.file} ` : ''}${x.line}행`;
+  const placeName = (x) => `${x.name}${x.district ? `(${x.district})` : ''}`;
+  return h(
+    'section',
+    { class: 'import-review', 'aria-labelledby': 'import-review-title' },
+    h('h3', { id: 'import-review-title' }, '가져오기 전에 확인해 주세요'),
+    review.changes.length > 0 &&
+      h(
+        'div',
+        { class: 'review-group review-changes' },
+        h('h4', {}, `미션명이 바뀌는 기존 장소 ${review.changes.length}곳`),
+        h('p', { class: 'hint' }, '바뀐 미션명에 없는 미션의 기록은 지워지지 않지만 화면 진행도에서 빠집니다.'),
+        list(review.changes, (c) => [h('b', {}, placeName(c)), ` ${where(c)} · ${c.from || '(없음)'} → ${c.to} · 기록 ${c.recordCount}건`]),
+      ),
+    review.near.length > 0 &&
+      h(
+        'div',
+        { class: 'review-group review-near' },
+        h('h4', {}, `이름·시군이 같은데 위치가 다른 기존 장소 ${review.near.length}건`),
+        h('p', { class: 'hint' }, '가져오면 같은 이름의 장소가 하나 더 생깁니다.'),
+        list(review.near, (n) => [h('b', {}, placeName(n)), ` ${where(n)} · 기존 장소와 ${formatDistance(n.distanceM)} 떨어짐`]),
+      ),
+    review.warnings.length > 0 &&
+      h(
+        'div',
+        { class: 'review-group review-warnings' },
+        h('h4', {}, `확인할 점 ${review.warnings.length}건`),
+        list(review.warnings, (w) => `${where(w)}: ${w.reason}`),
+      ),
+    h(
+      'div',
+      { class: 'button-row' },
+      h('button', { type: 'button', class: 'btn primary', id: 'import-review-continue', onclick: continueImport }, '계속'),
+      h('button', { type: 'button', class: 'btn', id: 'import-review-cancel', onclick: cancelImportReview }, '취소'),
+    ),
+  );
+}
+
 function renderImport() {
   const box = $('#import-panel');
   const files = state.importFiles;
@@ -916,13 +1184,15 @@ function renderImport() {
     state.importFiles = null;
     state.importSkipped = [];
     state.importResults = null;
+    state.importReview = null;
     renderImport();
   };
   const results = state.importResults;
   const skipped = state.importSkipped;
   // 파일 하나(건너뛴 파일도 없음)는 예전 모습 그대로 둔다.
   const single = files.length === 1 && skipped.length === 0;
-  const busyLabel = single ? '가져오는 중…' : `가져오는 중… (${state.importProgress}/${files.length})`;
+  // 파일을 읽는 동안(진행 0)은 번호 없이, 보내는 동안은 "(2/5)"처럼 보여 준다.
+  const busyLabel = single || state.importProgress === 0 ? '가져오는 중…' : `가져오는 중… (${state.importProgress}/${files.length})`;
 
   fill(
     box,
@@ -948,6 +1218,8 @@ function renderImport() {
           single ? singleImportResult(results[0].result) : multiImportResult(results, skipped),
           h('div', { class: 'button-row' }, h('button', { type: 'button', class: 'btn', onclick: close }, '닫기')),
         ]
+      : state.importReview
+      ? [importReviewView(state.importReview)]
       : [
           h(
             'div',
@@ -961,9 +1233,17 @@ function renderImport() {
 
 // ── 계정 관리(관리자만) ─────────────────────────────────
 
-const PASSWORD_MIN = 6;
-const PASSWORD_RULE = `비밀번호는 ${PASSWORD_MIN}자 이상이어야 합니다.`;
+// 비밀번호 규칙은 login-id.js(인증 담당)를 따른다. 아직 그 값이 없는 판에서도 열리도록 같은 규칙(길이만)으로 대신한다.
+// 화면 검사는 미리 막는 용도이고, 최종 판정과 문구는 서버(Edge Function) 응답을 그대로 보여 준다.
+const PASSWORD_MIN = loginId.PASSWORD_MIN ?? 6;
+const PASSWORD_MAX_BYTES = loginId.PASSWORD_MAX ?? 72;
+const PASSWORD_RULE = loginId.PASSWORD_RULE ?? '비밀번호는 6자 이상 72자 이하여야 합니다.';
+const passwordOk = (pw) =>
+  loginId.isValidPassword?.(pw) ??
+  (typeof pw === 'string' && pw.length >= PASSWORD_MIN && new TextEncoder().encode(pw).length <= PASSWORD_MAX_BYTES);
 const SELF_RESET_NOTICE = '본인 비밀번호를 바꾸면 모든 기기에서 로그아웃됩니다.';
+// 본인 비밀번호를 바꾼 뒤 로그인 화면에 띄우는 안내(만료 안내와 다른 칸·다른 모양).
+const PASSWORD_CHANGED_NOTICE = '비밀번호를 바꿨습니다. 새 비밀번호로 다시 로그인해 주세요.';
 
 // 계정 관리 창의 상태. 장소 목록(state)과는 별개라 로그아웃하면 통째로 비운다.
 const accounts = {
@@ -976,8 +1256,9 @@ const accounts = {
   resetId: null, // 비밀번호를 바꾸는 중인 계정 id
   resetPassword: '',
   resetInvalid: false,
+  resetShown: false, // 재설정 비밀번호 칸 [보기]
   // 새 계정 폼. 다시 그려도 적던 글자가 남게 여기에 둔다.
-  create: { loginId: '', password: '', invalid: null },
+  create: { loginId: '', password: '', invalid: null, shown: false },
 };
 
 const accountsReset = () =>
@@ -991,11 +1272,12 @@ const accountsReset = () =>
     resetId: null,
     resetPassword: '',
     resetInvalid: false,
-    create: { loginId: '', password: '', invalid: null },
+    resetShown: false,
+    create: { loginId: '', password: '', invalid: null, shown: false },
   });
 
 // 계정 목록에 보여 줄 아이디. 서버가 login_id를 못 주면(대시보드에서 만든 계정 등) 이메일에서 되살린다.
-const accountName = (u) => String(u.login_id ?? '').trim() || emailToLoginId(u.email ?? '');
+const accountName = (u) => String(u.login_id ?? '').trim() || loginId.emailToLoginId(u.email ?? '');
 
 // ISO 시각 → 한국 표기. 없거나 읽을 수 없으면 "-". withTime이면 시:분까지.
 function formatWhen(iso, { withTime = false } = {}) {
@@ -1010,6 +1292,45 @@ function formatWhen(iso, { withTime = false } = {}) {
 function setAccountsMessage({ error = null, notice = null } = {}) {
   accounts.error = error;
   accounts.notice = notice;
+}
+
+// 비밀번호 칸 + [보기] 단추. 누르면 글자가 보이고(aria-pressed="true") 다시 누르면 가린다.
+// 다시 그려도 상태가 남도록 보이는지 여부는 호출하는 쪽 상태(shown)에 둔다.
+function passwordField({ id, name, autocomplete, value, placeholder, shown, disabled, invalid, oninput, onToggle }) {
+  return h(
+    'span',
+    { class: 'pw-field' },
+    h('input', {
+      id,
+      type: shown ? 'text' : 'password',
+      name,
+      autocomplete,
+      autocapitalize: 'off',
+      autocorrect: 'off',
+      spellcheck: 'false',
+      placeholder,
+      value,
+      disabled,
+      'aria-invalid': invalid ? 'true' : null,
+      oninput,
+    }),
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'pw-toggle',
+        'aria-controls': id,
+        'aria-pressed': String(Boolean(shown)),
+        'aria-label': '비밀번호 보기',
+        disabled,
+        onclick: () => {
+          onToggle();
+          refocus(`#${id} + .pw-toggle`);
+        },
+      },
+      '보기',
+    ),
+  );
 }
 
 // 창을 열고 목록을 받는다. 이미 열려 있으면 목록만 새로 받는다.
@@ -1047,15 +1368,15 @@ async function loadAccounts() {
 }
 
 // 새 계정 폼의 입력을 검사한다. 어긋난 칸 이름('loginId' | 'password')과 문구를 돌려주고, 괜찮으면 null.
-function createFormProblem(loginId, password) {
-  if (normalizeLoginId(loginId) === null) return { field: 'loginId', message: LOGIN_ID_RULE };
-  if (password.length < PASSWORD_MIN) return { field: 'password', message: PASSWORD_RULE };
+function createFormProblem(id, password) {
+  if (loginId.normalizeLoginId(id) === null) return { field: 'loginId', message: loginId.LOGIN_ID_RULE };
+  if (!passwordOk(password)) return { field: 'password', message: PASSWORD_RULE };
   return null;
 }
 
 async function submitCreate() {
   if (accounts.busy || accounts.loading) return;
-  const loginId = normalizeLoginId(accounts.create.loginId);
+  const id = loginId.normalizeLoginId(accounts.create.loginId);
   const problem = createFormProblem(accounts.create.loginId, accounts.create.password);
   if (problem) {
     accounts.create.invalid = problem.field;
@@ -1070,11 +1391,11 @@ async function submitCreate() {
   setAccountsMessage();
   renderAccounts();
   try {
-    await api.createAccount(loginId, accounts.create.password);
+    await api.createAccount(id, accounts.create.password);
     if (epoch !== authEpoch || !accounts.open) return;
-    accounts.create = { loginId: '', password: '', invalid: null };
+    accounts.create = { loginId: '', password: '', invalid: null, shown: false };
     accounts.busy = false;
-    setAccountsMessage({ notice: `${loginId} 계정을 만들었습니다.` });
+    setAccountsMessage({ notice: `${id} 계정을 만들었습니다.` });
     await loadAccounts();
     if (epoch === authEpoch && accounts.open) refocus('#accounts-new-id');
   } catch (err) {
@@ -1091,6 +1412,7 @@ function startReset(userId) {
   accounts.resetId = userId;
   accounts.resetPassword = '';
   accounts.resetInvalid = false;
+  accounts.resetShown = false;
   setAccountsMessage();
   renderAccounts();
   refocus('#accounts-reset-password');
@@ -1102,18 +1424,39 @@ function cancelReset() {
   accounts.resetId = null;
   accounts.resetPassword = '';
   accounts.resetInvalid = false;
+  accounts.resetShown = false;
   renderAccounts();
   refocus(`#accounts-panel button[data-reset="${CSS.escape(String(id))}"]`);
+}
+
+// 본인 비밀번호를 바꿨으면 이 기기에서도 로그아웃하고, 로그인 화면에 "새 비밀번호로 다시 로그인" 안내를 띄운다.
+async function signOutAfterOwnPasswordChange() {
+  loggingOut = true;
+  try {
+    await api.signOut();
+  } catch (err) {
+    // 서버가 이미 모든 세션을 끊었으면 실패할 수 있다. 이 기기의 화면은 어차피 로그인으로 돌린다.
+    api.logCause('본인 비밀번호 변경 뒤 로그아웃 실패(무시)', err);
+  } finally {
+    loggingOut = false;
+  }
+  leaveApp(null, { notice: PASSWORD_CHANGED_NOTICE });
 }
 
 async function submitReset() {
   if (accounts.busy || accounts.resetId === null) return;
   const user = accounts.users?.find((u) => u.id === accounts.resetId);
   if (!user) return;
-  if (accounts.resetPassword.length < PASSWORD_MIN) {
+  if (!passwordOk(accounts.resetPassword)) {
     accounts.resetInvalid = true;
     setAccountsMessage({ error: PASSWORD_RULE });
     renderAccounts();
+    refocus('#accounts-reset-password');
+    return;
+  }
+  const self = user.id === currentUser?.id;
+  // 다른 사람 계정은 한 번 더 확인한다(그 사람이 모든 기기에서 로그아웃된다). 본인은 단추 이름이 [바꾸고 로그아웃]이라 묻지 않는다.
+  if (!self && !confirm(`${accountName(user)} 계정의 비밀번호를 바꿀까요? 그 계정은 모든 기기에서 로그아웃됩니다.`)) {
     refocus('#accounts-reset-password');
     return;
   }
@@ -1125,9 +1468,14 @@ async function submitReset() {
   try {
     await api.resetAccountPassword(user.id, accounts.resetPassword);
     if (epoch !== authEpoch || !accounts.open) return;
+    if (self) {
+      await signOutAfterOwnPasswordChange();
+      return;
+    }
     accounts.busy = false;
     accounts.resetId = null;
     accounts.resetPassword = '';
+    accounts.resetShown = false;
     setAccountsMessage({ notice: `${accountName(user)} 계정의 비밀번호를 바꿨습니다.` });
     renderAccounts();
     refocus(`#accounts-panel button[data-reset="${CSS.escape(String(user.id))}"]`);
@@ -1140,38 +1488,42 @@ async function submitReset() {
   }
 }
 
-// 비밀번호를 바꾸는 중인 계정의 행: 아이디 + 새 비밀번호 입력 + 확인·취소.
+// 표를 display: block으로 쌓아 보이면 화면 읽기 프로그램이 표 구조를 잃는다. role을 직접 달아 표로 읽히게 한다.
+const cell = (props, ...children) => h('td', { role: 'cell', ...props }, ...children);
+
+// 비밀번호를 바꾸는 중인 계정의 행: 아이디 + (본인이면 경고) + 새 비밀번호 입력 + 확인·취소.
 function accountResetRow(u, self) {
   const disabled = accounts.busy;
   return h(
     'tr',
-    { class: 'accounts-row resetting', 'data-user-id': u.id },
-    h(
-      'td',
+    { class: 'accounts-row resetting', 'data-user-id': u.id, role: 'row' },
+    cell(
       { colspan: 4 },
       h(
         'form',
         {
-          class: 'accounts-reset',
+          class: self ? 'accounts-reset self' : 'accounts-reset',
           onsubmit: (e) => {
             e.preventDefault();
             submitReset();
           },
         },
         h('p', { class: 'accounts-reset-title' }, h('b', {}, accountName(u)), ' 비밀번호 재설정'),
-        self && h('p', { class: 'hint accounts-self-notice' }, SELF_RESET_NOTICE),
+        self && h('p', { class: 'accounts-self-notice', role: 'note' }, SELF_RESET_NOTICE),
+        // [보기] 단추가 label 안에 들어가지 않게 칸 이름(label)과 입력 묶음을 나란히 둔다.
         h(
-          'label',
+          'div',
           { class: 'field' },
-          h('span', {}, '새 비밀번호'),
-          h('input', {
+          h('label', { for: 'accounts-reset-password' }, '새 비밀번호'),
+          passwordField({
             id: 'accounts-reset-password',
-            type: 'password',
             name: 'new-password',
             autocomplete: 'new-password',
             value: accounts.resetPassword,
+            placeholder: `${PASSWORD_MIN}자 이상`,
+            shown: accounts.resetShown,
             disabled,
-            'aria-invalid': accounts.resetInvalid ? 'true' : null,
+            invalid: accounts.resetInvalid,
             oninput: (e) => {
               accounts.resetPassword = e.target.value;
               if (accounts.resetInvalid) {
@@ -1179,12 +1531,16 @@ function accountResetRow(u, self) {
                 e.target.removeAttribute('aria-invalid');
               }
             },
+            onToggle: () => {
+              accounts.resetShown = !accounts.resetShown;
+              renderAccounts();
+            },
           }),
         ),
         h(
           'div',
           { class: 'button-row' },
-          h('button', { type: 'submit', class: 'btn primary', disabled }, disabled ? '바꾸는 중…' : '확인'),
+          h('button', { type: 'submit', class: self ? 'btn primary danger' : 'btn primary', disabled }, disabled ? '바꾸는 중…' : self ? '바꾸고 로그아웃' : '확인'),
           h('button', { type: 'button', class: 'btn', disabled, onclick: cancelReset }, '취소'),
         ),
       ),
@@ -1197,18 +1553,16 @@ function accountRow(u) {
   if (accounts.resetId === u.id) return accountResetRow(u, self);
   return h(
     'tr',
-    { class: 'accounts-row', 'data-user-id': u.id },
-    h(
-      'td',
+    { class: 'accounts-row', 'data-user-id': u.id, role: 'row' },
+    cell(
       { class: 'accounts-id', 'data-label': '아이디' },
       h('span', { class: 'accounts-name' }, accountName(u)),
       u.is_admin && h('span', { class: 'badge accounts-admin' }, '관리자'),
       self && h('span', { class: 'accounts-self' }, '(본인)'),
     ),
-    h('td', { class: 'accounts-when', 'data-label': '만든 날' }, formatWhen(u.created_at)),
-    h('td', { class: 'accounts-when', 'data-label': '마지막 로그인' }, formatWhen(u.last_sign_in_at, { withTime: true })),
-    h(
-      'td',
+    cell({ class: 'accounts-when', 'data-label': '만든 날' }, formatWhen(u.created_at)),
+    cell({ class: 'accounts-when', 'data-label': '마지막 로그인' }, formatWhen(u.last_sign_in_at, { withTime: true })),
+    cell(
       { class: 'accounts-actions' },
       h('button', { type: 'button', class: 'btn small', 'data-reset': u.id, disabled: accounts.busy || accounts.loading, onclick: () => startReset(u.id) }, '비밀번호 재설정'),
     ),
@@ -1219,15 +1573,16 @@ function accountsTable() {
   const users = accounts.users;
   if (!users) return accounts.loading ? h('p', { class: 'hint accounts-status' }, '계정 목록을 불러오는 중…') : null;
   if (users.length === 0) return h('p', { class: 'hint accounts-status' }, '계정이 없습니다.');
+  const head = (text) => h('th', { scope: 'col', role: 'columnheader' }, text);
   return h(
     'table',
-    { class: 'accounts-table' },
+    { class: 'accounts-table', role: 'table', 'aria-label': '계정 목록' },
     h(
       'thead',
-      {},
-      h('tr', {}, h('th', { scope: 'col' }, '아이디'), h('th', { scope: 'col' }, '만든 날'), h('th', { scope: 'col' }, '마지막 로그인'), h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, '동작'))),
+      { role: 'rowgroup' },
+      h('tr', { role: 'row' }, head('아이디'), head('만든 날'), head('마지막 로그인'), head(h('span', { class: 'sr-only' }, '동작'))),
     ),
-    h('tbody', {}, users.map(accountRow)),
+    h('tbody', { role: 'rowgroup' }, users.map(accountRow)),
   );
 }
 
@@ -1274,24 +1629,28 @@ function accountsCreateForm() {
         }),
       ),
       h(
-        'label',
+        'div',
         { class: 'field' },
-        h('span', {}, '비밀번호'),
-        h('input', {
+        h('label', { for: 'accounts-new-password' }, '비밀번호'),
+        passwordField({
           id: 'accounts-new-password',
-          type: 'password',
           name: 'new-password',
           autocomplete: 'new-password',
-          placeholder: `${PASSWORD_MIN}자 이상`,
           value: create.password,
+          placeholder: `${PASSWORD_MIN}자 이상`,
+          shown: create.shown,
           disabled,
-          'aria-invalid': create.invalid === 'password' ? 'true' : null,
+          invalid: create.invalid === 'password',
           oninput: (e) => {
             create.password = e.target.value;
             if (create.invalid === 'password') {
               create.invalid = null;
               e.target.removeAttribute('aria-invalid');
             }
+          },
+          onToggle: () => {
+            create.shown = !create.shown;
+            renderAccounts();
           },
         }),
       ),
@@ -1337,6 +1696,32 @@ $('#accounts-panel').addEventListener('keydown', (e) => {
   else closeAccounts();
 });
 
+// 상세 정보 안에서 한글을 조합하는 중이면(IME) 상세 정보는 다시 그리지 않고 미뤄 둔다.
+// 조합 중에 입력 칸을 새로 만들면 휴대폰 키보드에서 글자가 겹치거나 사라진다. 조합이 끝나면 그때 그린다.
+let detailComposing = false;
+let detailRenderPending = false;
+$('#detail').addEventListener('compositionstart', () => {
+  detailComposing = true;
+});
+$('#detail').addEventListener('compositionend', () => {
+  detailComposing = false;
+  if (!detailRenderPending) return;
+  detailRenderPending = false;
+  // compositionend 바로 뒤에 오는 input을 먼저 받게 한 박자 늦춘다.
+  setTimeout(renderKeepingInput, 0);
+});
+
+function renderDetailUnlessComposing() {
+  // 고른 장소가 바뀌었거나 상세 정보가 닫히는 경우는 미루지 않는다.
+  const shown = Number($('#detail').dataset.placeId);
+  if (detailComposing && shown === state.selectedId) {
+    detailRenderPending = true;
+    return;
+  }
+  detailRenderPending = false;
+  renderDetail();
+}
+
 function render() {
   // 미션 저장으로 그 상태의 장소가 하나도 안 남으면 칩도 사라지므로, 아무 칩도 눌리지 않은 채 걸러지지 않게 전체로 되돌린다.
   if (state.filterColor && !state.places.some((p) => placeColor(p) === state.filterColor)) state.filterColor = null;
@@ -1344,7 +1729,7 @@ function render() {
   renderFilters();
   renderList(visible);
   renderMarkers(visible);
-  renderDetail();
+  renderDetailUnlessComposing();
 }
 
 // ── 동작 ────────────────────────────────────────────────
@@ -1362,12 +1747,15 @@ function select(id, { pan = false } = {}) {
   $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// 사람이 다른 장소를 고를 때 쓴다. 저장 안 한 미션 기록이 버려지면 먼저 묻고, 그만두면 false.
+// 사람이 다른 장소를 고를 때 쓴다. 저장 안 한 미션 기록·메모가 버려지면 먼저 묻고, 그만두면 false.
 function requestSelect(id, opts) {
   if (id !== state.selectedId && !confirmDiscardDraft()) return false;
   select(id, opts);
   return true;
 }
+
+// 장소를 고른 뒤 상세 정보 제목으로 초점을 옮긴다. 키보드·화면 읽기 프로그램 사용자가 바로 이어서 읽을 수 있다.
+const focusDetailTitle = () => refocus('#detail-title');
 
 // 상세 정보를 닫고(×·Esc) 그 장소의 목록 항목으로, 목록에 없으면 검색 칸으로 초점을 옮긴다.
 function closeDetail() {
@@ -1386,6 +1774,7 @@ function closeDetail() {
 const isPlaceGone = (err) => /장소를 찾을 수 없습니다/.test(err.message);
 function dropGonePlace(id) {
   state.places = state.places.filter((p) => p.id !== id);
+  discardMemo(id);
   if (state.selectedId === id) select(null);
   else render();
   toast('이 장소는 다른 기기에서 삭제되었습니다.');
@@ -1422,7 +1811,8 @@ function renderKeepingInput() {
   render();
   if (!selector) return;
   const next = $(selector);
-  if (!next) return;
+  // 같은 칸이 그대로 있으면(한글 조합 중이라 다시 그리지 않음 등) 손대지 않는다.
+  if (!next || next === el) return;
   // 체크 상자는 상태에 이미 반영돼 있으므로 값을 덮어쓰지 않는다.
   if (saved) {
     next.value = saved.value;
@@ -1468,6 +1858,14 @@ function setMissionRecord(id, record) {
   replacePlace({ ...place, missions: [...others, record] });
 }
 
+// 저장 중인 미션의 끊개. 저장 중 [취소]를 누르면 기다리기를 그만둔다.
+const missionAborts = new Map();
+
+// 저장 중 [취소]: 응답을 더 기다리지 않고 입력 화면으로 돌아온다(적던 값은 그대로, [다시 시도]로 다시 보낼 수 있다).
+function stopMissionSave(id, name) {
+  missionAborts.get(missionKey(id, name))?.abort();
+}
+
 // 고치던 다섯 칸을 한 번에 저장한다. 성공하면 보기 화면으로, 실패하면 적던 값을 그대로 둔 채 입력 화면에 남는다.
 async function saveMissionDraft(id, name) {
   const place = state.places.find((p) => p.id === id);
@@ -1495,45 +1893,57 @@ async function saveMissionDraft(id, name) {
   };
   // 저장 중에는 입력 칸이 잠기므로, 실패하면 초점을 돌려놓을 칸을 기억해 둔다.
   const focusedField = $(missionFormSelector(name))?.contains(document.activeElement) ? document.activeElement.name : null;
+  const refocusForm = () => refocus(`${missionFormSelector(name)} ${focusedField ? `input[name="${focusedField}"]` : '.btn.primary'}`);
+  // 앞서 남은 실패 안내는 다시 보낼 때 지운다.
+  state.missionDraft = { ...draft, error: null };
 
+  const abort = new AbortController();
+  missionAborts.set(key, abort);
   missionSaving.add(key);
   renderKeepingInput();
   const epoch = authEpoch;
   let result;
   try {
-    result = await api.saveMission(id, name, fields, draft.baseVersion ?? null);
+    result = await api.saveMission(id, name, fields, draft.baseVersion ?? null, { signal: abort.signal });
   } catch (err) {
     missionSaving.delete(key);
+    missionAborts.delete(key);
     // 세션이 끝났으면 로그인 화면으로 이미 넘어갔다.
     if (authFailed(err) || epoch !== authEpoch) return;
     if (isPlaceGone(err)) {
       dropGonePlace(id);
       return;
     }
+    // 시간 초과·연결 실패·[취소]는 폼 안에 남겨 두고 [다시 시도]를 붙인다. 다른 오류(검증 등)는 알림만.
+    const retry = Boolean(err.timeout || err.aborted || !err.status);
+    if (retry && draftMatches(place, name)) state.missionDraft = { ...state.missionDraft, error: { message: err.message, retry: true } };
     renderKeepingInput();
-    refocus(`${missionFormSelector(name)} ${focusedField ? `input[name="${focusedField}"]` : '.btn.primary'}`);
-    toast(err.message);
+    if (err.aborted) refocus(`${missionFormSelector(name)} .btn.primary`);
+    else refocusForm();
+    if (!err.aborted) toast(err.message);
     return;
   }
   missionSaving.delete(key);
+  missionAborts.delete(key);
   if (epoch !== authEpoch) return;
 
   if (result?.status === 'conflict') {
     // 다른 기기가 먼저 저장했다. 적던 값은 그대로 두고, 최신 기록을 바탕으로 다시 저장할 수 있게 판을 맞춘다.
+    // 알림 대신 폼 안의 고정 안내([최신값 불러오기]/[내 값으로 덮어쓰기])로 알린다.
     const latest = result.record ?? null;
     const p = state.places.find((x) => x.id === id);
     if (latest) setMissionRecord(id, latest);
     else if (p) replacePlace({ ...p, missions: (p.missions ?? []).filter((m) => m.mission !== name) });
     if (state.missionDraft?.placeId === id && state.missionDraft.mission === name) {
-      state.missionDraft = { ...state.missionDraft, baseVersion: latest?.version ?? null, conflict: latest };
+      state.missionDraft = { ...state.missionDraft, baseVersion: latest?.version ?? null, conflict: latest, error: null };
     }
     renderKeepingInput();
-    refocus(`${missionFormSelector(name)} ${focusedField ? `input[name="${focusedField}"]` : '.btn.primary'}`);
-    toast('다른 기기에서 먼저 바뀐 기록입니다. 아래 값은 최신 내용으로 바뀌었으니 확인 후 다시 저장하세요.');
+    refocusForm();
     return;
   }
 
   setMissionRecord(id, result.record);
+  rememberOwnWrite({ placeId: id, mission: name, version: result.record?.version });
   // 저장하는 사이 다른 미션으로 옮겨 갔으면 그쪽에서 쓰는 값은 건드리지 않는다.
   if (state.missionDraft?.placeId === id && state.missionDraft.mission === name) state.missionDraft = null;
   const hadFocus = $(missionFormSelector(name))?.contains(document.activeElement);
@@ -1542,28 +1952,236 @@ async function saveMissionDraft(id, name) {
   toast('미션 기록을 저장했습니다.');
 }
 
-async function saveMemo(id, memo) {
+// ── 메모: 입력 후 1초 뒤 저절로 저장 ─────────────────────────
+// 장소마다 초안을 둔다: { text(적은 글), base(고치기 시작할 때 서버 메모), status, error, latest, timer, promise, again }
+// status: 'dirty'(1초 기다리는 중) | 'saving' | 'saved' | 'error'(저장 안 됨) | 'conflict'(다른 기기에서 바뀜)
+// 저장이 끝난(saved) 초안도 상태 표시("저장됨")를 위해 남겨 두고, 장소를 떠나면 지운다.
+const MEMO_SAVE_DELAY_MS = 1000;
+const memoDrafts = new Map();
+
+// 화면에 보여 줄 메모: 아직 서버에 안 들어간 글이 있으면 그것, 아니면 서버 값.
+function memoText(p) {
+  const d = memoDrafts.get(p.id);
+  return d && d.status !== 'saved' ? d.text : p.memo;
+}
+
+// 이 장소에 버리면 사라질 메모가 있는지(저장 실패·충돌). 입력 직후(dirty)·저장 중은 곧 저장되므로 묻지 않는다.
+const memoUnsaved = (id) => ['error', 'conflict'].includes(memoDrafts.get(id)?.status);
+
+function memoDraftFor(id) {
+  let d = memoDrafts.get(id);
+  if (!d) {
+    const p = findPlace(id);
+    d = { text: p?.memo ?? '', base: p?.memo ?? '', status: 'saved', error: null, latest: null, timer: null, promise: null, again: false };
+    memoDrafts.set(id, d);
+  }
+  return d;
+}
+
+function discardMemo(id) {
+  const d = memoDrafts.get(id);
+  if (!d) return;
+  clearTimeout(d.timer);
+  memoDrafts.delete(id);
+}
+
+// 메모 아래 상태 줄: "입력 중…" / "저장 중…" / "저장됨" / "저장 안 됨 [다시 저장]" / 충돌 안내.
+function memoStatusView(id) {
+  const d = memoDrafts.get(id);
+  if (!d) return null;
+  if (d.status === 'dirty') return h('span', { class: 'memo-state' }, '입력 중…');
+  if (d.status === 'saving') return h('span', { class: 'memo-state' }, '저장 중…');
+  if (d.status === 'saved') return h('span', { class: 'memo-state saved' }, '저장됨');
+  if (d.status === 'error') {
+    return [
+      h('span', { class: 'memo-state error' }, '저장 안 됨'),
+      d.error && h('span', { class: 'memo-reason' }, d.error),
+      h('button', { type: 'button', class: 'btn small memo-retry', onclick: () => saveMemoNow(id) }, '다시 저장'),
+    ];
+  }
+  return h(
+    'div',
+    { class: 'memo-conflict', role: 'alert' },
+    h('p', { class: 'memo-conflict-message' }, '다른 기기에서 메모가 바뀌었습니다.'),
+    h('p', { class: 'memo-latest' }, `최신 메모: ${d.latest?.trim() ? d.latest : '(비어 있음)'}`),
+    h(
+      'div',
+      { class: 'button-row' },
+      h('button', { type: 'button', class: 'btn small memo-take-latest', onclick: () => takeLatestMemo(id) }, '최신 메모 보기'),
+      h('button', { type: 'button', class: 'btn small memo-keep-mine', onclick: () => keepMyMemo(id) }, '내 메모로 저장'),
+    ),
+  );
+}
+
+// 상태 줄만 바꾼다(입력 칸은 그대로 두어 한글 조합·커서가 끊기지 않게). 같은 상태면 건드리지 않는다.
+function syncMemoStatus(id) {
+  if (state.selectedId !== id) return;
+  const box = $('#memo-status');
+  const d = memoDrafts.get(id);
+  const key = d ? `${d.status}|${d.error ?? ''}|${d.latest ?? ''}` : '';
+  if (!box || box.dataset.key === key) return;
+  box.dataset.key = key;
+  fill(box, memoStatusView(id));
+}
+
+// 글자를 칠 때마다: 초안에 적고 1초 뒤 저장을 예약한다.
+function onMemoInput(id, text) {
+  const d = memoDraftFor(id);
+  d.text = text;
+  // 충돌 중에는 사람이 고르기 전까지 저절로 저장하지 않는다(적던 글은 계속 고칠 수 있다).
+  if (d.status === 'conflict') return;
+  clearTimeout(d.timer);
+  if (d.status === 'saving') {
+    d.again = true;
+    return;
+  }
+  d.status = 'dirty';
+  d.timer = setTimeout(() => saveMemoNow(id), MEMO_SAVE_DELAY_MS);
+  syncMemoStatus(id);
+}
+
+// 기다리던 메모를 지금 바로 저장한다(칸을 떠날 때·화면을 벗어날 때·장소를 떠날 때). text를 주면 그 글로 맞춘다.
+// 저장에 실패했거나(error) 충돌 중(conflict)인 메모는 여기서 다시 보내지 않는다. 떠나기 전에 버릴지 묻고([다시 저장]은 사람이 누른다).
+function flushMemo(id, text) {
+  if (id == null) return;
+  if (text !== undefined) memoDraftFor(id).text = text;
+  const d = memoDrafts.get(id);
+  if (!d) return;
+  if (d.status === 'saving') {
+    if (text !== undefined && text !== d.base) d.again = true;
+    return;
+  }
+  if (d.status === 'dirty' || (d.status === 'saved' && d.text !== d.base)) saveMemoNow(id);
+}
+
+const flushAllMemos = () => {
+  for (const [id, d] of memoDrafts) if (d.status === 'dirty') saveMemoNow(id);
+};
+
+// 저장 중인 메모가 모두 끝나기를 기다린다(로그아웃 전에 쓴다).
+const settleMemos = () => Promise.allSettled([...memoDrafts.values()].map((d) => d.promise).filter(Boolean));
+
+function saveMemoNow(id) {
+  const d = memoDrafts.get(id);
+  if (!d) return Promise.resolve();
+  clearTimeout(d.timer);
+  d.timer = null;
+  if (d.status === 'saving') {
+    d.again = true;
+    return d.promise;
+  }
+  d.promise = saveMemoDraft(id, d).finally(() => {
+    d.promise = null;
+  });
+  return d.promise;
+}
+
+async function saveMemoDraft(id, d) {
+  const p = findPlace(id);
+  if (!p) {
+    discardMemo(id);
+    return;
+  }
+  // 다른 기기가 바꾼 것을 이미 받아 두었으면(실시간) 보내기 전에 충돌로 알린다. 서버도 base로 한 번 더 확인한다(C1).
+  if (p.memo !== d.base && p.memo !== d.text) {
+    d.status = 'conflict';
+    d.latest = p.memo;
+    syncMemoStatus(id);
+    return;
+  }
+  if (p.memo === d.text) {
+    d.base = p.memo;
+    d.status = 'saved';
+    d.error = null;
+    syncMemoStatus(id);
+    return;
+  }
+  const text = d.text;
+  d.status = 'saving';
+  d.error = null;
+  d.again = false;
+  syncMemoStatus(id);
   const epoch = authEpoch;
+  let res;
   try {
-    const updated = await api.updateMemo(id, memo);
-    if (epoch !== authEpoch) return;
-    if (!updated) {
+    res = await api.updateMemo(id, text, d.base);
+  } catch (err) {
+    if (authFailed(err) || epoch !== authEpoch) return;
+    if (isPlaceGone(err)) {
       dropGonePlace(id);
       return;
     }
-    mergePlace(updated);
-    renderKeepingInput();
-    toast('메모를 저장했습니다.');
-  } catch (err) {
-    if (authFailed(err) || epoch !== authEpoch) return;
-    if (isPlaceGone(err)) dropGonePlace(id);
-    else toast(err.message);
+    d.status = 'error';
+    d.error = err.message;
+    syncMemoStatus(id);
+    // 고른 장소가 아니면 상태 줄이 안 보이므로 알림으로 알린다(돌아가면 적던 글과 [다시 저장]이 남아 있다).
+    if (state.selectedId !== id) toast(`메모를 저장하지 못했습니다: ${err.message}`);
+    return;
   }
+  if (epoch !== authEpoch || memoDrafts.get(id) !== d) return;
+  if (!res.place) {
+    dropGonePlace(id);
+    return;
+  }
+  mergePlace(res.place);
+  if (res.status === 'conflict') {
+    d.status = 'conflict';
+    d.latest = res.place.memo;
+  } else {
+    rememberOwnWrite({ placeId: id, place: res.place });
+    d.base = res.place.memo;
+    // 저장하는 사이 더 적었으면 이어서 저장한다.
+    if (d.again || d.text !== text) {
+      d.status = 'dirty';
+      d.timer = setTimeout(() => saveMemoNow(id), MEMO_SAVE_DELAY_MS);
+    } else {
+      d.status = 'saved';
+    }
+  }
+  d.again = false;
+  // 목록의 메모 표시·지도 말풍선을 고친다. 메모 칸은 다시 만들지 않는다(쓰는 중일 수 있다).
+  renderListAndMap();
+  syncMemoStatus(id);
+}
+
+// 충돌 안내의 [최신 메모 보기]: 내 글을 버리고 서버의 최신 메모를 칸에 넣는다.
+function takeLatestMemo(id) {
+  const d = memoDrafts.get(id);
+  const p = findPlace(id);
+  if (!d || !p) return;
+  d.text = p.memo;
+  d.base = p.memo;
+  d.status = 'saved';
+  d.latest = null;
+  const ta = $('#memo-input');
+  if (ta && state.selectedId === id) ta.value = p.memo;
+  syncMemoStatus(id);
+  refocus('#memo-input');
+}
+
+// 충돌 안내의 [내 메모로 저장]: 최신 메모를 알고 덮어쓴다.
+function keepMyMemo(id) {
+  const d = memoDrafts.get(id);
+  const p = findPlace(id);
+  if (!d || !p) return;
+  d.base = p.memo;
+  d.latest = null;
+  d.status = 'dirty';
+  saveMemoNow(id);
+  refocus('#memo-input');
+}
+
+// 실패한 메모를 다시 보낸다(인터넷이 돌아왔을 때).
+function retryFailedMemos() {
+  for (const [id, d] of memoDrafts) if (d.status === 'error') saveMemoNow(id);
 }
 
 async function removePlace(place) {
   if (!confirmDiscardDraft()) return;
-  if (!confirm(`"${place.name}"을(를) 삭제할까요?`)) return;
+  // 미션 기록도 함께 지워지므로 몇 건인지 같이 알린다.
+  const records = place.missions?.length ?? 0;
+  const question = `"${place.name}"을(를) 삭제할까요?${records > 0 ? `\n미션 기록 ${records}건도 함께 삭제됩니다.` : ''}`;
+  if (!confirm(question)) return;
   const epoch = authEpoch;
   try {
     const removed = await api.deletePlace(place.id);
@@ -1573,6 +2191,7 @@ async function removePlace(place) {
       return;
     }
     state.places = state.places.filter((p) => p.id !== place.id);
+    discardMemo(place.id);
     state.selectedId = null;
     state.selectedMission = null;
     state.missionDraft = null;
@@ -1610,6 +2229,7 @@ function startImport(fileList) {
   state.importFiles = files;
   state.importSkipped = all.filter((f) => !isCsvFile(f)).map((f) => ({ name: f.name, reason: 'CSV 파일이 아닙니다' }));
   state.importResults = null;
+  state.importReview = null;
   renderImport();
   $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -1618,24 +2238,29 @@ function startImport(fileList) {
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 const EMPTY_COUNTS = { imported: 0, duplicates: 0, updated: 0, missionChanged: 0 };
 
-// 파일 하나를 브라우저에서 읽어(readPlaces) 장소만 import_places로 보낸다. 결과는 예전 서버 응답과 같은 모양이다.
+// 파일 하나를 브라우저에서 읽는다(readPlaces → { columns, total, places, errors, warnings? }).
 // 실패하면 화면에 그대로 보여 줄 한국어 문구를 담은 Error를 던진다.
-async function importFile(file) {
+async function readImportFile(file) {
   if (file.size === 0) throw new Error('CSV 파일 내용이 없습니다.');
   if (file.size > MAX_IMPORT_BYTES) throw new Error('CSV 파일이 너무 큽니다. (최대 10MB)');
   let bytes;
   try {
     bytes = await file.arrayBuffer();
-  } catch {
-    // 고른 뒤 파일이 지워지거나 바뀐 경우
-    throw new Error('파일을 읽지 못했습니다. 다시 골라 주세요.');
-  }
-  let parsed;
-  try {
-    parsed = readPlaces(bytes);
   } catch (err) {
-    throw err instanceof CsvFormatError ? err : new Error('CSV 파일을 읽지 못했습니다.');
+    // 고른 뒤 파일이 지워지거나 바뀐 경우
+    throw new Error('파일을 읽지 못했습니다. 다시 골라 주세요.', { cause: err });
   }
+  try {
+    return csv.readPlaces(bytes);
+  } catch (err) {
+    if (err instanceof csv.CsvFormatError) throw err;
+    api.logCause('CSV 읽기 실패', err);
+    throw new Error('CSV 파일을 읽지 못했습니다.', { cause: err });
+  }
+}
+
+// 읽은 장소만 import_places로 보낸다. 결과는 예전 서버 응답과 같은 모양이다.
+async function sendImportFile(parsed) {
   // 저장할 행이 하나도 없으면(모두 오류) 보낼 것이 없다.
   const counts = parsed.places.length > 0 ? { ...EMPTY_COUNTS, ...(await api.importPlaces(parsed.places)) } : EMPTY_COUNTS;
   return {
@@ -1649,24 +2274,109 @@ async function importFile(file) {
   };
 }
 
-// 파일을 하나씩 차례로 가져온다. 한 파일이 실패해도 나머지는 계속하고, 끝나면 장소를 한 번만 새로 받는다.
+// 가져오기 전에 확인받을 것(계약 C7): 행 경고, 같은 이름·시군인데 좌표가 다른 기존 장소(근접 중복), 미션명이 바뀌는 기존 장소.
+// csv.js에 탐지 함수가 아직 없으면 그 항목은 건너뛴다. 확인할 것이 없으면 null.
+function importReview(parsedFiles) {
+  const multi = parsedFiles.length > 1;
+  const existing = state.places;
+  const warnings = [];
+  const near = [];
+  const changes = [];
+  for (const { file, parsed } of parsedFiles) {
+    if (!parsed) continue;
+    const tag = (item) => ({ ...item, file: multi ? file.name : null });
+    for (const w of parsed.warnings ?? []) warnings.push(tag(w));
+    try {
+      if (typeof csv.nearDuplicates === 'function') for (const n of csv.nearDuplicates(parsed.places, existing)) near.push(tag(n));
+      if (typeof csv.missionChanges === 'function') for (const c of csv.missionChanges(parsed.places, existing)) changes.push(tag(c));
+    } catch (err) {
+      api.logCause('가져오기 전 확인(근접 중복·미션명 변경) 실패 — 확인 없이 진행', err);
+    }
+  }
+  return warnings.length || near.length || changes.length ? { warnings, near, changes } : null;
+}
+
+// 파일을 하나씩 읽고, 확인할 것이 있으면 멈춰 묻고, 없으면 바로 보낸다.
 async function runImport() {
   const files = state.importFiles;
   if (!files?.length || state.importing) return;
+  const epoch = authEpoch;
+  state.importing = true;
+  state.importProgress = 0;
+  state.importReview = null;
+  renderImport();
+  const parsedFiles = [];
+  for (const file of files) {
+    try {
+      parsedFiles.push({ file, parsed: await readImportFile(file) });
+    } catch (err) {
+      parsedFiles.push({ file, error: err.message });
+    }
+    if (epoch !== authEpoch) return;
+  }
+  // 그사이 창을 닫았으면(처음 화면으로 등) 그만둔다.
+  if (state.importFiles !== files) {
+    state.importing = false;
+    renderImport();
+    return;
+  }
+  const single = files.length === 1 && state.importSkipped.length === 0;
+  // 파일 하나가 읽히지 않으면 예전처럼 알림만 띄우고 [가져오기] 화면에 남는다.
+  if (single && parsedFiles[0].error) {
+    state.importing = false;
+    renderImport();
+    toast(parsedFiles[0].error);
+    return;
+  }
+  const review = importReview(parsedFiles);
+  if (review) {
+    state.importing = false;
+    state.importReview = { parsed: parsedFiles, ...review };
+    renderImport();
+    // 기록이 화면에서 빠질 수 있는 미션명 변경이 있으면 [취소]에 먼저 초점을 둔다.
+    refocus(review.changes.length > 0 ? '#import-review-cancel' : '#import-review-continue');
+    return;
+  }
+  await sendImport(parsedFiles, epoch);
+}
+
+// 확인 화면의 [계속]
+function continueImport() {
+  const review = state.importReview;
+  if (!review || state.importing) return;
+  state.importReview = null;
+  sendImport(review.parsed, authEpoch);
+}
+
+// 확인 화면의 [취소]: 아무것도 보내지 않고 파일 목록 화면으로 돌아간다.
+function cancelImportReview() {
+  if (!state.importReview) return;
+  state.importReview = null;
+  renderImport();
+  refocus('#import-panel .btn.primary');
+}
+
+// 읽은 파일을 차례로 보낸다. 한 파일이 실패해도 나머지는 계속하고, 끝나면 장소를 한 번만 새로 받는다.
+async function sendImport(parsedFiles, epoch) {
+  const files = state.importFiles;
+  if (!files || epoch !== authEpoch) return;
   state.importing = true;
   remoteChangedWhileImporting = false;
-  const epoch = authEpoch;
   const wasEmpty = state.places.length === 0;
   const results = [];
-  for (const [i, file] of files.entries()) {
+  for (const [i, item] of parsedFiles.entries()) {
     state.importProgress = i + 1;
     renderImport();
+    if (item.error) {
+      results.push({ file: item.file, error: item.error });
+      continue;
+    }
     try {
-      results.push({ file, result: await importFile(file) });
+      results.push({ file: item.file, result: await sendImportFile(item.parsed) });
     } catch (err) {
       // 세션이 끝났으면 로그인 화면으로 넘어가며 가져오기 창도 닫힌다.
       if (authFailed(err) || epoch !== authEpoch) return;
-      results.push({ file, error: err.message });
+      results.push({ file: item.file, error: err.message });
     }
     if (epoch !== authEpoch) return;
   }
@@ -1686,14 +2396,18 @@ async function runImport() {
   state.importing = false;
   state.importProgress = 0;
   renderImport();
+  // 가져오는 동안 온 실시간 알림을 이제 처리한다(가져온 뒤 받은 목록과 같은 내용이면 다시 받지 않는다).
   if (remoteChangedWhileImporting) {
     remoteChangedWhileImporting = false;
-    refreshPlaces({ force: true });
+    flushRemote();
   }
 }
 
-// 새로 받은 장소로 바꾼다. 고른 장소·미션·적던 초안은 아직 유효하면 그대로 둔다.
-function applyPlaces(places) {
+// ── 목록 받기·실시간 반영 ────────────────────────────────
+
+// 받은 장소 목록을 넣고 뒷정리한다: 고른 장소·미션·적던 초안이 아직 유효한지 보고, 없어진 장소의 메모 초안은 버린다.
+// 전체 받기(applyPlaces)와 일부 받기(applyPartial)가 함께 쓴다.
+function commitPlaces(places) {
   const hadSelection = state.selectedId !== null;
   state.places = places;
   const p = places.find((x) => x.id === state.selectedId);
@@ -1708,53 +2422,237 @@ function applyPlaces(places) {
   }
   const d = state.missionDraft;
   if (d && (d.placeId !== state.selectedId || d.mission !== state.selectedMission)) state.missionDraft = null;
+  if (memoDrafts.size > 0) {
+    const ids = new Set(places.map((x) => x.id));
+    for (const id of [...memoDrafts.keys()]) if (!ids.has(id)) discardMemo(id);
+  }
   renderKeepingInput();
   if (hadSelection && state.selectedId === null) toast('이 장소는 다른 기기에서 삭제되었습니다.');
 }
 
-// 장소 전체를 다시 받아 반영한다. 그사이 로그아웃했거나 더 나중에 받기 시작한 요청이 있으면 이 결과는 버린다. 반영했으면 true.
-let reloadSeq = 0;
-let lastRefreshAt = 0;
-async function reloadPlaces() {
-  const epoch = authEpoch;
-  const seq = ++reloadSeq;
-  lastRefreshAt = Date.now();
-  const places = await api.listPlaces();
-  if (epoch !== authEpoch || seq !== reloadSeq) return false;
-  applyPlaces(places);
-  return true;
+// 전체 목록으로 바꾼다. 받았으니 "불러오는 중…"·실패 안내는 지운다.
+function applyPlaces(places) {
+  state.loaded = true;
+  state.loading = false;
+  state.loadError = null;
+  commitPlaces(places);
 }
 
-// 다른 기기에서 바꾼 내용을 보도록, 화면으로 돌아올 때 다시 받는다. 너무 자주 받지 않게 5초에 한 번까지만.
-// 실시간 알림(force)은 이 간격과 상관없이 받는다. 가져오는 중에는 끝날 때 한 번 받으므로 건너뛴다.
+// 몇 곳만 다시 받은 결과를 끼워 넣는다. ids 중 결과에 없는 장소는 지워진 것이다. 목록은 서버와 같은 id 순서를 지킨다.
+function applyPartial(ids, fetched) {
+  const byId = new Map(fetched.map((p) => [p.id, p]));
+  const known = new Set(state.places.map((p) => p.id));
+  const next = state.places.filter((p) => !ids.has(p.id) || byId.has(p.id)).map((p) => byId.get(p.id) ?? p);
+  for (const p of fetched) if (!known.has(p.id)) next.push(p);
+  next.sort((a, b) => a.id - b.id);
+  commitPlaces(next);
+}
+
+// 목록 받기(전체·일부)는 한 번에 하나씩 차례로 한다. 겹치면 늦게 끝난 오래된 결과가 새 결과를 덮을 수 있다.
+let fetchChain = Promise.resolve();
+function queueFetch(task) {
+  const run = fetchChain.then(task);
+  fetchChain = run.catch(() => {
+    // 실패는 부른 쪽이 run으로 받는다. 줄은 끊기지 않게 한다.
+  });
+  return run;
+}
+
+// 장소 전체를 다시 받아 반영한다. 그사이 로그아웃했으면 버린다. 반영했으면 true.
+// 아직 시작하지 않은 전체 받기가 줄에 있으면 그것을 같이 기다린다(같은 목록을 두 번 받지 않게).
+let lastRefreshAt = 0;
+let queuedReload = null;
+function reloadPlaces() {
+  if (queuedReload) return queuedReload;
+  const epoch = authEpoch;
+  const run = queueFetch(async () => {
+    queuedReload = null;
+    if (epoch !== authEpoch) return false;
+    lastRefreshAt = Date.now();
+    const places = await api.listPlaces();
+    if (epoch !== authEpoch) return false;
+    applyPlaces(places);
+    return true;
+  });
+  queuedReload = run;
+  return run;
+}
+
+// 로그인 직후·[다시 시도]: "불러오는 중…"을 보이며 전체를 받는다. 실패하면 목록 위에 고정 안내와 [다시 시도].
+async function loadPlaces({ fit = false } = {}) {
+  if (!signedIn()) return;
+  const epoch = authEpoch;
+  state.loading = true;
+  state.loadError = null;
+  render();
+  try {
+    if ((await reloadPlaces()) && fit && epoch === authEpoch) fitToPlaces(state.places);
+  } catch (err) {
+    if (authFailed(err) || epoch !== authEpoch) return;
+    api.logCause('장소 목록 받기 실패', err);
+    state.loading = false;
+    state.loadError = err.timeout ? '응답이 없습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.' : err.message;
+    render();
+  }
+}
+
+// 전체를 다시 받는다(실시간 재연결·일부 받기 실패·오래 자리를 비운 뒤). 너무 자주 받지 않게 force가 아니면 5초에 한 번까지만.
+// 가져오는 중에는 끝날 때 한 번 받으므로 건너뛴다.
 const REFRESH_INTERVAL_MS = 5000;
-// 가져오는 중에 온 실시간 알림. 다른 기기의 변경일 수도 있어서 가져오기가 끝나면 한 번 더 받는다.
+// 가져오는 중에 온 실시간 알림. 가져오기가 끝나면 모아 둔 알림을 처리한다.
 let remoteChangedWhileImporting = false;
 async function refreshPlaces({ force = false } = {}) {
   if (!signedIn()) return;
   if (state.importing) {
-    if (force) remoteChangedWhileImporting = true;
+    if (force) {
+      remote.full = true;
+      remoteChangedWhileImporting = true;
+    }
     return;
   }
   if (!force && Date.now() - lastRefreshAt < REFRESH_INTERVAL_MS) return;
   try {
     await reloadPlaces();
   } catch (err) {
-    // 잠깐 연결이 끊긴 경우 등은 조용히 넘기고 다음에 다시 받는다. 세션이 끝났으면 로그인 화면으로.
-    authFailed(err);
+    // 잠깐 연결이 끊긴 경우 등은 화면을 그대로 두고 다음 알림·재연결 때 다시 받는다. 세션이 끝났으면 로그인 화면으로.
+    if (!authFailed(err)) api.logCause('장소 목록 다시 받기 실패', err);
   }
 }
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') refreshPlaces();
-});
-window.addEventListener('focus', () => refreshPlaces());
 
-// 실시간 알림: places·missions가 바뀌면 300ms 동안 더 오는 알림을 모아 한 번만 다시 받는다(가져오기는 행마다 알림이 온다).
+// 다른 앱에 오래(1분 이상) 가 있다 돌아오면 실시간 연결이 끊겼을 수 있어 한 번 다시 받는다.
+// 잠깐 다녀온 것(길찾기 앱 확인 등)은 연결이 그대로라 다시 받지 않는다. 약한 인터넷에서 전체 목록을 자주 받지 않게 한다.
+const STALE_AFTER_HIDDEN_MS = 60000;
+let hiddenAt = null;
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now();
+    // 화면을 벗어나면(앱 전환·잠금) 기다리던 메모를 바로 저장한다.
+    flushAllMemos();
+    return;
+  }
+  if (hiddenAt !== null && Date.now() - hiddenAt >= STALE_AFTER_HIDDEN_MS) refreshPlaces();
+  hiddenAt = null;
+  checkVersion();
+});
+// 페이지를 떠날 때도(새로고침·탭 닫기) 기다리던 메모를 저장해 본다.
+window.addEventListener('pagehide', () => flushAllMemos());
+
+// 실시간 알림: 300ms 동안 오는 알림을 모아, 바뀐 장소만 get_places로 다시 받는다(계약 C2).
+// - places 알림은 그 장소 id, missions 알림은 place_id. 지운 장소(DELETE·deleted_at)는 받지 않고 바로 뺀다(계약 C3).
+// - 알림의 값이 화면에 있는 값과 같으면(내가 방금 저장한 변경 등) 건너뛴다.
+// - 어느 장소인지 모르는 알림·재연결·일부 받기 실패 때만 전체를 다시 받는다.
 const REALTIME_DEBOUNCE_MS = 300;
+// 한 번에 일부만 받을 장소 수. 이보다 많이 바뀌면(다른 기기의 대량 가져오기 등) 전체를 받는다.
+const PARTIAL_MAX = 200;
 let realtimeTimer = null;
-function onRemoteChange() {
+const remote = { changes: [], full: false };
+
+function onRemoteChange(change) {
+  if (!signedIn()) return;
+  if (!change || change.resync || change.placeId == null) remote.full = true;
+  else remote.changes.push(change);
   clearTimeout(realtimeTimer);
-  realtimeTimer = setTimeout(() => refreshPlaces({ force: true }), REALTIME_DEBOUNCE_MS);
+  realtimeTimer = setTimeout(flushRemote, REALTIME_DEBOUNCE_MS);
+}
+
+// 알림의 새 값이 화면에 있는 값과 같으면 true. 알림에 없는 칸이 있으면 모르는 것으로 보고 다시 받는다.
+const PLACE_COLUMNS = ['name', 'district', 'address', 'phone', 'memo', 'mission', 'lat', 'lng'];
+function placeRowMatches(row) {
+  const p = row && findPlace(row.id);
+  return Boolean(p) && PLACE_COLUMNS.every((k) => k in row && row[k] === p[k]);
+}
+const MISSION_COLUMNS = [
+  ['done', 'done'],
+  ['worker', 'worker'],
+  ['flight_time', 'flightTime'],
+  ['battery_no', 'batteryNo'],
+  ['battery_left', 'batteryLeft'],
+  ['version', 'version'],
+];
+function missionRowMatches({ placeId, row }) {
+  const r = row && findPlace(placeId)?.missions?.find((m) => m.mission === row.mission);
+  return Boolean(r) && MISSION_COLUMNS.every(([col, key]) => col in row && row[col] === r[key]);
+}
+
+// 내가 방금 저장한 변경의 모양(메모 저장 뒤의 장소, 미션 저장 뒤의 기록 판). 그 알림은 늦게 와도 건너뛴다.
+// 메모를 잇달아 저장하면 앞 저장의 알림이 올 때 화면 값은 이미 다음 값이라 "같은 값" 비교로는 못 거른다.
+const OWN_WRITE_TTL_MS = 30000;
+const ownWrites = [];
+function rememberOwnWrite(entry) {
+  const now = Date.now();
+  while (ownWrites.length > 0 && now - ownWrites[0].at > OWN_WRITE_TTL_MS) ownWrites.shift();
+  ownWrites.push({ ...entry, at: now });
+}
+function takeOwnWrite(c) {
+  const i = ownWrites.findIndex((w) =>
+    w.placeId === c.placeId && c.row &&
+    (c.table === 'places'
+      ? Boolean(w.place) && PLACE_COLUMNS.every((k) => k in c.row && c.row[k] === w.place[k])
+      : w.mission === c.row.mission && w.version === c.row.version),
+  );
+  if (i < 0) return false;
+  ownWrites.splice(i, 1);
+  return true;
+}
+
+async function flushRemote() {
+  clearTimeout(realtimeTimer);
+  realtimeTimer = null;
+  if (!signedIn()) return;
+  // 가져오는 중이면 끝날 때 처리한다(모아 둔 알림은 그대로 둔다).
+  if (state.importing) {
+    remoteChangedWhileImporting = true;
+    return;
+  }
+  const { full, changes } = remote;
+  remote.full = false;
+  remote.changes = [];
+  if (full) {
+    await refreshPlaces({ force: true });
+    return;
+  }
+  const fetchIds = new Set();
+  const removedIds = new Set();
+  for (const c of changes) {
+    if (c.table === 'places' && c.removed) {
+      removedIds.add(c.placeId);
+      fetchIds.delete(c.placeId);
+    } else if (takeOwnWrite(c) || (c.table === 'places' ? placeRowMatches(c.row) : missionRowMatches(c))) {
+      continue;
+    } else {
+      fetchIds.add(c.placeId);
+      removedIds.delete(c.placeId);
+    }
+  }
+  const gone = new Set([...removedIds].filter((id) => findPlace(id)));
+  if (gone.size > 0) commitPlaces(state.places.filter((p) => !gone.has(p.id)));
+  if (fetchIds.size === 0) return;
+  if (fetchIds.size > PARTIAL_MAX) {
+    await refreshPlaces({ force: true });
+    return;
+  }
+  const epoch = authEpoch;
+  try {
+    await queueFetch(async () => {
+      if (epoch !== authEpoch) return;
+      const { places, complete } = await api.getPlaces([...fetchIds]);
+      if (epoch !== authEpoch) return;
+      if (complete) applyPlaces(places);
+      else applyPartial(fetchIds, places);
+    });
+  } catch (err) {
+    if (authFailed(err) || epoch !== authEpoch) return;
+    api.logCause('바뀐 장소만 받지 못해 전체를 다시 받습니다.', err);
+    await refreshPlaces({ force: true });
+  }
+}
+
+// 목록·지도·칩만 다시 그린다(상세 정보의 입력 칸은 건드리지 않는다). 메모 저장 뒤 등에 쓴다.
+function renderListAndMap() {
+  const visible = visiblePlaces();
+  renderFilters();
+  renderList(visible);
+  renderMarkers(visible);
 }
 
 $('#import-button').addEventListener('click', () => $('#csv-input').click());
@@ -1768,7 +2666,7 @@ function localDateStamp(d = new Date()) {
 // 내보내기: 지금 목록을 CSV로 만들어 내려받게 한다. toCsv가 엑셀용 UTF-8 BOM을 앞에 붙여 준다.
 $('#export-button').addEventListener('click', () => {
   if (!signedIn()) return;
-  const blob = new Blob([toCsv(state.places)], { type: 'text/csv;charset=utf-8' });
+  const blob = new Blob([csv.toCsv(state.places)], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = h('a', { href: url, download: `places-${localDateStamp()}.csv`, hidden: true });
   document.body.append(link);
@@ -1783,9 +2681,41 @@ $('#csv-input').addEventListener('change', (e) => {
   e.target.value = '';
 });
 
-$('#search').addEventListener('input', (e) => {
-  state.query = e.target.value;
+// 검색: 150ms 동안 더 치지 않으면 걸러 그린다. 한글을 조합하는 중(IME)에는 기다렸다가 조합이 끝나면 그린다.
+// 글자마다 목록·지도를 다시 그리지 않게 한다. Enter(휴대폰 키보드의 [검색])는 기다리지 않고 바로 거른다.
+const SEARCH_DELAY_MS = 150;
+let searchTimer = null;
+let searchComposing = false;
+
+function applySearch(value) {
+  clearTimeout(searchTimer);
+  searchTimer = null;
+  if (state.query === value) return;
+  state.query = value;
   render();
+}
+
+function scheduleSearch(value) {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => applySearch(value), SEARCH_DELAY_MS);
+}
+
+const searchInput = $('#search');
+searchInput.addEventListener('compositionstart', () => {
+  searchComposing = true;
+});
+searchInput.addEventListener('compositionend', (e) => {
+  searchComposing = false;
+  scheduleSearch(e.target.value);
+});
+searchInput.addEventListener('input', (e) => {
+  if (searchComposing || e.isComposing) return;
+  scheduleSearch(e.target.value);
+});
+searchInput.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' || e.isComposing) return;
+  e.preventDefault();
+  applySearch(e.target.value);
 });
 
 // Esc: 미션 기록을 고치는 중이면 먼저 [취소], 그다음 Esc에 상세 정보를 닫는다.
@@ -1796,8 +2726,9 @@ document.addEventListener('keydown', (e) => {
   const p = state.places.find((x) => x.id === state.selectedId);
   const d = state.missionDraft;
   if (p && d && draftMatches(p, state.selectedMission)) {
-    if (inField && (!e.target.closest('.mission-form') || draftDirty())) return;
-    if (!confirmDiscardDraft()) return;
+    if (inField && (!e.target.closest('.mission-form') || missionDraftDirty())) return;
+    if (missionSaving.has(missionKey(p.id, d.mission))) return;
+    if (!confirmDiscardMissionDraft()) return;
     cancelMissionDraft(p, d.mission);
     return;
   }
@@ -1834,6 +2765,8 @@ window.addEventListener('drop', (e) => {
 // 새로고침과 달리 다시 받지 않으므로 바로 바뀐다.
 function goHome() {
   if (!confirmDiscardDraft()) return;
+  clearTimeout(searchTimer);
+  searchTimer = null;
   state.selectedId = null;
   state.selectedMission = null;
   state.missionDraft = null;
@@ -1842,6 +2775,7 @@ function goHome() {
   state.importFiles = null;
   state.importSkipped = [];
   state.importResults = null;
+  state.importReview = null;
   // 처음 화면은 시군을 모두 접은 상태다.
   collapseAllGroups();
   // 계정 관리 창도 닫는다(요청 중이면 끝날 때까지 둔다).
@@ -1888,6 +2822,22 @@ function setLoginError(message, invalidField = null) {
   }
 }
 
+// 오류가 아닌 안내(비밀번호를 바꿔 다시 로그인해 달라는 말 등). 오류 칸(빨강, role=alert)과 따로 둔다.
+function setLoginNotice(message) {
+  const el = $('#login-notice');
+  el.textContent = message ?? '';
+  el.hidden = !message;
+}
+
+// 로그인 비밀번호 칸의 [보기]. 로그인하거나 로그인 화면으로 돌아오면 다시 가린다.
+function setLoginPasswordShown(shown) {
+  $('#login-password').type = shown ? 'text' : 'password';
+  $('#login-password-toggle').setAttribute('aria-pressed', String(shown));
+}
+$('#login-password-toggle').addEventListener('click', () => {
+  setLoginPasswordShown($('#login-password-toggle').getAttribute('aria-pressed') !== 'true');
+});
+
 // RPC가 세션 만료·권한 없음으로 실패했으면 로그인 화면으로 보내고 true.
 function authFailed(err) {
   if (!err?.auth) return false;
@@ -1895,9 +2845,12 @@ function authFailed(err) {
   return true;
 }
 
-// 머리글에 보여 줄 아이디. 계정 생성 스크립트가 user_metadata.login_id에 넣어 둔 한글 아이디를 먼저 쓰고,
-// 없으면(대시보드에서 만든 계정 등) 이메일에서 되살린다.
-const displayName = (user) => String(user.user_metadata?.login_id ?? '').trim() || emailToLoginId(user.email ?? '');
+// 머리글·미션 기록 이름에 쓰는 아이디(계약 C4): app_metadata.login_id(서버가 정한 값) → user_metadata.login_id
+// → 이메일(xn--…@sistech.local)을 한글로 되살린 값. 계정 목록의 login_id도 서버가 같은 순서로 준다.
+const displayName = (user) =>
+  String(user.app_metadata?.login_id ?? '').trim() ||
+  String(user.user_metadata?.login_id ?? '').trim() ||
+  loginId.emailToLoginId(user.email ?? '');
 
 function showUserName() {
   const el = $('#user-name');
@@ -1929,39 +2882,48 @@ function enterApp(session) {
   // 로그인 폼에서 왔으면 초점이 숨는 칸에 남지 않게 제목으로 옮긴다(저장된 세션으로 바로 열 때는 건드리지 않는다).
   const fromLogin = $('#login').contains(document.activeElement);
   setLoginError(null);
+  setLoginNotice(null);
   $('#login-form').reset();
+  setLoginPasswordShown(false);
+  // 목록을 받기 전에 "불러오는 중…"으로 그려 두고 나서 앱을 보인다. 앞 사람 화면·"저장한 장소가 없습니다"가 잠깐 비치지 않게 한다.
+  state.loading = true;
+  state.loadError = null;
+  state.loaded = false;
+  render();
   showView('app');
   if (fromLogin) refocus('#home-link');
 
-  // 지도는 처음 로그인할 때 한 번만 만든다(칸이 보여야 크기를 제대로 잡는다). 그동안에도 목록은 먼저 그린다.
-  if (!mapStarted) {
-    mapStarted = true;
-    initMap().catch(() =>
-      showMapMessage(
-        '카카오맵을 불러오지 못했습니다.',
-        `developers.kakao.com에서 이 주소(${location.origin})가 Web 플랫폼에 등록되어 있고 "카카오맵" 사용 설정이 켜져 있는지 확인해 주세요.`,
-      ),
-    );
-  }
+  // 지도는 처음 로그인할 때 만든다(칸이 보여야 크기를 제대로 잡는다). 앞서 실패했으면 다시 해 본다. 그동안에도 목록은 먼저 그린다.
+  startMap();
   unsubscribeChanges = api.subscribeChanges(onRemoteChange);
-  reloadPlaces()
-    .then((applied) => applied && fitToPlaces(state.places))
-    .catch((err) => {
-      if (!authFailed(err)) toast(err.message);
-    });
+  loadPlaces({ fit: true });
 }
 
 // 로그인 화면으로 돌아간다. 다음 사람에게 앞 사람의 화면(목록·고르던 장소·적던 기록)이 남지 않게 모두 비운다.
-function leaveApp(notice) {
+// errorMessage는 빨간 오류 칸에, notice는 보통 안내 칸에 보인다.
+function leaveApp(errorMessage, { notice = null } = {}) {
   if (signedIn()) {
     authEpoch++;
     currentUser = null;
     unsubscribeChanges?.();
     unsubscribeChanges = null;
     clearTimeout(realtimeTimer);
+    realtimeTimer = null;
+    remote.changes = [];
+    remote.full = false;
+    remoteChangedWhileImporting = false;
+    ownWrites.length = 0;
+    clearTimeout(searchTimer);
+    searchTimer = null;
+    for (const ctrl of missionAborts.values()) ctrl.abort();
+    missionAborts.clear();
     missionSaving.clear();
+    for (const id of [...memoDrafts.keys()]) discardMemo(id);
     Object.assign(state, {
       places: [],
+      loading: false,
+      loadError: null,
+      loaded: false,
       selectedId: null,
       selectedMission: null,
       missionDraft: null,
@@ -1972,7 +2934,8 @@ function leaveApp(notice) {
       importResults: null,
       importProgress: 0,
       importing: false,
-        });
+      importReview: null,
+    });
     collapseAllGroups();
     accountsReset();
     $('#search').value = '';
@@ -1981,7 +2944,9 @@ function leaveApp(notice) {
     renderAccounts();
     render();
   }
-  if (notice) setLoginError(notice);
+  if (errorMessage) setLoginError(errorMessage);
+  if (notice) setLoginNotice(notice);
+  setLoginPasswordShown(false);
   showView('login');
   if (!$('#login').contains(document.activeElement)) $('#login-id').focus();
 }
@@ -1990,10 +2955,11 @@ let loginBusy = false;
 $('#login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   if (loginBusy) return;
-  const loginId = $('#login-id').value.trim();
+  const idText = $('#login-id').value.trim();
   const password = $('#login-password').value;
-  if (!loginId || !password) {
-    const field = loginId ? 'password' : 'id';
+  setLoginNotice(null);
+  if (!idText || !password) {
+    const field = idText ? 'password' : 'id';
     setLoginError('아이디와 비밀번호를 입력해 주세요.', field);
     $(`#login-${field}`).focus();
     return;
@@ -2001,9 +2967,9 @@ $('#login-form').addEventListener('submit', async (e) => {
   // 아이디를 Supabase 로그인용 이메일로 바꾼다('@'가 있으면 이메일 그대로). 규칙에 어긋나면 서버에 보내지 않는다.
   let email;
   try {
-    email = loginIdToEmail(loginId);
+    email = loginId.loginIdToEmail(idText);
   } catch {
-    setLoginError(LOGIN_ID_RULE, 'id');
+    setLoginError(loginId.LOGIN_ID_RULE, 'id');
     $('#login-id').select();
     $('#login-id').focus();
     return;
@@ -2040,20 +3006,88 @@ $('#logout-button').addEventListener('click', async () => {
   const button = $('#logout-button');
   button.disabled = true;
   button.textContent = '로그아웃 중…';
+  const restore = () => {
+    loggingOut = false;
+    button.disabled = false;
+    button.textContent = '로그아웃';
+  };
+  // 기다리던·저장 중인 메모가 끝나기를 기다린다. 끝내 저장하지 못한 메모가 있으면 버릴지 묻는다.
+  flushAllMemos();
+  await settleMemos();
+  if ([...memoDrafts.values()].some((d) => d.status === 'error' || d.status === 'conflict') && !confirm('저장하지 못한 메모가 있습니다. 버리고 로그아웃할까요?')) {
+    restore();
+    return;
+  }
   try {
     // 로그아웃 기록은 세션이 살아 있을 때 남겨야 하므로 signOut 전에 부른다. 실패하거나 2초가 넘으면 그냥 넘어간다.
     // (세션 만료·다른 창 로그아웃으로 내보낼 때는 이 버튼을 거치지 않으므로 기록하지 않는다.)
     await api.logLogout();
     await api.signOut();
-  } catch {
+  } catch (err) {
     // 이 기기의 세션만 지우는 것이라 실패해도 화면은 로그인으로 돌린다.
+    api.logCause('로그아웃 요청 실패(화면은 로그인으로 돌림)', err);
   } finally {
-    loggingOut = false;
-    button.disabled = false;
-    button.textContent = '로그아웃';
+    restore();
   }
   leaveApp(null);
 });
+
+// ── 연결 상태·새 버전·좁은 높이 ─────────────────────────────
+
+// 인터넷이 끊기면 화면 위에 띠를 보인다. 다시 붙으면 띠를 숨기고, 실패했던 지도·메모·목록을 다시 해 본다.
+function syncOnline() {
+  $('#offline-band').hidden = navigator.onLine !== false;
+}
+window.addEventListener('offline', syncOnline);
+window.addEventListener('online', () => {
+  syncOnline();
+  if (!signedIn()) return;
+  if (mapState === 'failed') startMap();
+  retryFailedMemos();
+  if (state.loadError) loadPlaces({ fit: !state.loaded });
+});
+syncOnline();
+
+// 새 배포 알림(계약 C8): 빌드가 config.js에 window.APP_BUILD를 넣어 둔 경우에만, 탭이 다시 보일 때와 10분마다
+// ./version.json을 받아 빌드가 다르면 "새 버전이 있습니다 [새로고침]" 띠를 보인다.
+const APP_BUILD = typeof window.APP_BUILD === 'string' && window.APP_BUILD.trim() ? window.APP_BUILD.trim() : null;
+const VERSION_CHECK_MS = 10 * 60 * 1000;
+let versionChecking = false;
+async function checkVersion() {
+  if (!APP_BUILD || versionChecking || !$('#update-banner').hidden) return;
+  versionChecking = true;
+  try {
+    const res = await fetch('./version.json', { cache: 'no-store' });
+    if (!res.ok) return;
+    const build = (await res.json())?.build;
+    if (typeof build === 'string' && build.trim() && build.trim() !== APP_BUILD) $('#update-banner').hidden = false;
+  } catch (err) {
+    api.logCause('새 버전 확인 실패', err);
+  } finally {
+    versionChecking = false;
+  }
+}
+if (APP_BUILD) setInterval(checkVersion, VERSION_CHECK_MS);
+$('#update-reload').addEventListener('click', () => {
+  if (confirmDiscardDraft()) location.reload();
+});
+
+// 높이가 낮은 화면(가로로 든 휴대폰, 500px 이하)에서는 지도를 접어 목록을 넓게 쓸 수 있다. 고른 값은 기억한다.
+const MAP_COLLAPSED_KEY = 'mapCollapsed';
+let mapCollapsed = readStorage(MAP_COLLAPSED_KEY) === '1';
+function syncMapToggle() {
+  $('.app').classList.toggle('map-collapsed', mapCollapsed);
+  const btn = $('#map-toggle');
+  btn.setAttribute('aria-expanded', String(!mapCollapsed));
+  btn.textContent = mapCollapsed ? '지도 펼치기' : '지도 접기';
+}
+$('#map-toggle').addEventListener('click', () => {
+  mapCollapsed = !mapCollapsed;
+  writeStorage(MAP_COLLAPSED_KEY, mapCollapsed ? '1' : '0');
+  syncMapToggle();
+  refocus('#map-toggle');
+});
+syncMapToggle();
 
 // ── 시작 ────────────────────────────────────────────────
 
@@ -2077,4 +3111,7 @@ async function boot() {
   });
 }
 
-boot().catch((err) => showBootMessage(err.message));
+boot().catch((err) => {
+  api.logCause('시작 실패', err);
+  showBootMessage(err.message);
+});
