@@ -190,7 +190,8 @@ calls = await fnCalls(b);
 const resets = await b.ev(`__fake.resetPasswords`);
 check('재설정 성공 → reset_password {user_id: user-son, password} 1회, "손두병 계정의 비밀번호를 바꿨습니다.", 행 원래대로, 로그아웃 없음',
   calls.length === 1 && calls[0].action === 'reset_password' && calls[0].user_id === 'user-son' && calls[0].password === 'newpass1' && resets.length === 1 && v.message === '손두병 계정의 비밀번호를 바꿨습니다.' && !v.messageError && v.rows.every((r) => !r.resetting) && v.app, { calls, v });
-const accountsSource = await b.ev(`fetch('./app.js').then(r => r.text()).then(t => t.slice(t.indexOf('계정 관리(관리자만)'), t.indexOf('function render()')))`);
+// 계정 관리 코드는 accounts-ui.js에 있다(app.js에서 떼어냄). 머리 주석부터 파일 끝까지 본다.
+const accountsSource = await b.ev(`fetch('./accounts-ui.js').then(r => r.text()).then(t => t.slice(t.indexOf('계정 관리(관리자만)')))`);
 // 다른 사람 계정의 비밀번호 재설정만 한 번 확인한다(B-9). 그 밖에는 창 안에서 처리하고 브라우저 대화 상자를 쓰지 않는다.
 check('계정 관리 코드에 prompt·alert 없음, confirm은 다른 계정 재설정 확인 한 곳뿐(앱 코드 정적 확인)',
   accountsSource.length > 1000 && !/\b(prompt|alert)\(/.test(accountsSource) && (accountsSource.match(/\bconfirm\(/g) ?? []).length === 1 && /!self && !confirm\(/.test(accountsSource), accountsSource.length);
