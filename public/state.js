@@ -99,6 +99,8 @@ export function rememberOwnWrite(entry) {
 export const hooks = {
   dropGonePlace: null,
   leaveApp: null,
+  render: null,
+  renderKeepingInput: null,
   renderListAndMap: null,
   requestSelect: null,
 };
