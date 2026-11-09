@@ -756,8 +756,9 @@ function renderDetail() {
 const missionRecord = (p, name) =>
   p.missions?.find((m) => m.mission === name) ?? { mission: name, done: false, worker: '', flightTime: '', batteryNo: '', batteryLeft: '' };
 
+// '이름'(worker)은 고칠 수 없다(readonly): 늘 지금 로그인한 사람의 표시 아이디로 기록한다.
 const MISSION_FIELDS = [
-  { key: 'worker', label: '이름', placeholder: '작업자', inputmode: 'text' },
+  { key: 'worker', label: '이름', placeholder: '작업자', inputmode: 'text', readonly: true },
   { key: 'flightTime', label: '비행시간', placeholder: '예: 12분 30초', inputmode: 'text' },
   { key: 'batteryNo', label: '사용한 배터리 번호', placeholder: '예: 3', inputmode: 'text' },
   // 숫자(0~100)만 받고 %는 칸 옆에 붙여 보여 준다. 값에는 %를 넣지 않는다.
@@ -776,21 +777,22 @@ const draftMatches = (p, name) => state.missionDraft?.placeId === p.id && state.
 // 아직 저장한 적 없는 미션은 바로 입력 화면, 저장한 미션은 [수정]을 누르기 전까지 보기 화면이다.
 const missionEditing = (p, name) => draftMatches(p, name) || !isMissionSaved(p, name);
 
-// 미션 기록의 '이름' 칸에 저절로 넣을 값: 지금 로그인한 사람의 표시 아이디(머리글과 같은 값).
+// 미션 기록의 '이름': 지금 로그인한 사람의 표시 아이디(C4 순서, 머리글과 같은 값). 사람이 고칠 수 없다.
 const currentWorkerName = () => String(currentUser?.name ?? '').trim();
+
+// 사람이 고칠 수 있는 칸(이름은 빠진다). 초안을 고쳤는지 볼 때 쓴다.
+const EDITABLE_MISSION_FIELDS = MISSION_FIELDS.filter((f) => !f.readonly);
 
 function newMissionDraft(p, name) {
   const r = missionRecord(p, name);
-  const worker = String(r.worker ?? '');
-  // 이름이 비어 있으면 로그인한 사람 아이디를 미리 넣는다(고칠 수 있다). 저장된 이름은 건드리지 않는다.
-  const autoWorker = worker.trim() ? '' : currentWorkerName();
   return {
     placeId: p.id,
     mission: name,
     done: Boolean(r.done),
-    worker: autoWorker || worker,
-    // 저절로 넣은 이름. 이 값 그대로면 사람이 고친 것으로 보지 않는다(버릴지 묻지 않는다). 넣지 않았으면 ''.
-    autoWorker,
+    // 이름은 늘 지금 로그인한 아이디다. 저장하면 저장한 사람의 아이디로 기록된다.
+    worker: currentWorkerName(),
+    // 저장된 기록의 이름(다른 사람일 수 있다). 폼에 "지금 기록의 이름은 …, 저장하면 내 아이디로 바뀝니다"를 보일 때 쓴다.
+    savedWorker: String(r.worker ?? '').trim(),
     flightTime: r.flightTime ?? '',
     batteryNo: r.batteryNo ?? '',
     batteryLeft: r.batteryLeft ?? '',
@@ -808,19 +810,17 @@ function newMissionDraft(p, name) {
 // 입력 화면에 보일 값. 고치는 중인 값이 없으면 저장된 기록으로 만든다(아직 state에 넣지는 않는다).
 const missionDraftFor = (p, name) => (draftMatches(p, name) ? state.missionDraft : newMissionDraft(p, name));
 
-// 미션 초안이 저장된 기록(새 미션이면 빈 기록)과 다르면 true. 저절로 넣은 이름만 있는 초안은 고친 것으로 보지 않는다.
+// 미션 초안이 저장된 기록(새 미션이면 빈 기록)과 다르면 true. 이름은 사람이 고칠 수 없는 칸이라 보지 않는다
+// (다른 사람이 저장한 기록을 열기만 해도 "저장하지 않은 기록"으로 묻지 않게).
 function missionDraftDirty() {
   const d = state.missionDraft;
   const p = d && findPlace(d.placeId);
   if (!p) return false;
   const r = missionRecord(p, d.mission);
-  const same = (key) => {
-    const mine = String(d[key] ?? '').trim();
-    const saved = String(r[key] ?? '').trim();
-    if (mine === saved) return true;
-    return key === 'worker' && !saved && Boolean(d.autoWorker) && mine === d.autoWorker.trim();
-  };
-  return Boolean(d.done) !== Boolean(r.done) || MISSION_FIELDS.some(({ key }) => !same(key));
+  return (
+    Boolean(d.done) !== Boolean(r.done) ||
+    EDITABLE_MISSION_FIELDS.some(({ key }) => String(d[key] ?? '').trim() !== String(r[key] ?? '').trim())
+  );
 }
 
 // 저장하지 않은 것이 있으면 true: 미션 초안, 또는 고른 장소의 메모(저장 실패·충돌). 버리기 전에 물어볼지 정한다.
@@ -865,9 +865,13 @@ function syncMissionInvalid(name) {
   }
 }
 
-// 고치기 시작한 칸은 바로 빨간 표시를 지운다.
+// 고치기 시작한 칸은 바로 빨간 표시를 지운다. 이름 칸은 읽기 전용이라 무엇이 와도 초안에 넣지 않는다.
 function onMissionFieldInput(p, name, key, e) {
   const input = e.target;
+  if (key === 'worker') {
+    input.value = currentWorkerName();
+    return;
+  }
   if (key === 'batteryLeft') {
     // 숫자만 남긴다("45%" → "45"). 지운 글자만큼 커서를 앞으로 당긴다.
     const caret = input.selectionStart ?? input.value.length;
@@ -924,7 +928,6 @@ function missionForm(p, draft) {
         disabled: saving,
         onchange: (e) => {
           updateMissionDraft(p, name, 'done', e.target.checked);
-          if (e.target.checked) fillWorkerIfEmpty(name);
           // 완료를 풀면 "모두 적어야 함" 표시는 더 이상 맞지 않으므로 지운다(숫자 범위 표시는 남긴다).
           if (!e.target.checked) {
             const invalid = state.missionDraft.invalid;
@@ -935,25 +938,27 @@ function missionForm(p, draft) {
       }),
       '완료',
     ),
-    MISSION_FIELDS.map(({ key, label, placeholder, inputmode, unit }) =>
-      h(
-        'label',
-        { class: unit ? 'field unit' : 'field' },
-        h('span', {}, label),
-        h('input', {
-          type: 'text',
-          name: key,
-          value: draft[key] ?? '',
-          placeholder,
-          inputmode,
-          pattern: inputmode === 'numeric' ? '[0-9]*' : null,
-          autocomplete: 'off',
-          disabled: saving,
-          'aria-invalid': draft.invalid?.[key] ? 'true' : null,
-          oninput: (e) => onMissionFieldInput(p, name, key, e),
-        }),
-        unit && h('span', { class: 'unit-label', 'aria-hidden': 'true' }, unit),
-      ),
+    MISSION_FIELDS.map(({ key, label, placeholder, inputmode, unit, readonly }) =>
+      readonly
+        ? workerField(draft)
+        : h(
+            'label',
+            { class: unit ? 'field unit' : 'field' },
+            h('span', {}, label),
+            h('input', {
+              type: 'text',
+              name: key,
+              value: draft[key] ?? '',
+              placeholder,
+              inputmode,
+              pattern: inputmode === 'numeric' ? '[0-9]*' : null,
+              autocomplete: 'off',
+              disabled: saving,
+              'aria-invalid': draft.invalid?.[key] ? 'true' : null,
+              oninput: (e) => onMissionFieldInput(p, name, key, e),
+            }),
+            unit && h('span', { class: 'unit-label', 'aria-hidden': 'true' }, unit),
+          ),
     ),
     // 다른 기기가 먼저 저장해 막혔을 때: 알림 대신 폼 안에 고정 안내를 두고, 서버의 최신 값과 두 가지 길을 보여 준다.
     // [저장]을 다시 눌러도 [내 값으로 덮어쓰기]와 같다(초안의 기록 판을 최신으로 맞춰 두었다).
@@ -995,17 +1000,29 @@ function missionForm(p, draft) {
 
 const MISSION_CONFLICT_MESSAGE = '다른 기기에서 먼저 저장된 기록이 있습니다. 내가 적은 값은 그대로 두었습니다.';
 
-// 완료에 체크했는데 이름이 비어 있으면 로그인한 사람 아이디를 넣는다(화면의 칸도 함께).
-function fillWorkerIfEmpty(name) {
-  const d = state.missionDraft;
-  const auto = currentWorkerName();
-  if (!d || d.mission !== name || !auto || String(d.worker ?? '').trim()) return;
-  d.worker = auto;
-  d.autoWorker = auto;
-  delete d.invalid.worker;
-  const input = $(`${missionFormSelector(name)} input[name="worker"]`);
-  if (input) input.value = auto;
-  syncMissionInvalid(name);
+// 이름 칸: 읽기 전용(회색). 늘 지금 로그인한 아이디를 보이고, 라벨 옆에 그렇게 기록된다고 알린다.
+// 저장된 기록의 이름이 다른 사람이면 그 이름과, 저장하면 내 아이디로 바뀐다는 것을 함께 알린다.
+function workerField(draft) {
+  const me = currentWorkerName();
+  const other = draft.savedWorker && draft.savedWorker !== me ? draft.savedWorker : '';
+  return h(
+    'label',
+    { class: 'field readonly' },
+    h('span', {}, '이름 ', h('small', { class: 'field-hint', id: 'worker-hint' }, '로그인한 아이디로 기록됩니다')),
+    h('input', {
+      type: 'text',
+      name: 'worker',
+      value: me,
+      readonly: true,
+      'aria-readonly': 'true',
+      'aria-describedby': other ? 'worker-hint worker-note' : 'worker-hint',
+      autocomplete: 'off',
+      oninput: (e) => {
+        e.target.value = me;
+      },
+    }),
+    other && h('small', { class: 'field-note', id: 'worker-note' }, `지금 기록의 이름은 ${other}입니다. 저장하면 로그인한 아이디(${me})로 바뀝니다.`),
+  );
 }
 
 // 충돌 안내의 [최신값 불러오기]: 서버의 최신 기록으로 초안을 다시 만든다(이름이 비어 있으면 내 아이디를 다시 넣는다).
@@ -1894,10 +1911,11 @@ function setMissionRecord(id, record) {
 // 저장 중인 미션의 끊개. 저장 중 [취소]를 누르면 기다리기를 그만둔다.
 const missionAborts = new Map();
 
-// 서버 기록이 보낸 다섯 칸과 같은지(남은 용량은 숫자로 맞춘 값끼리).
+// 서버 기록이 보낸 값과 같은지(남은 용량은 숫자로 맞춘 값끼리). 이름은 늘 저장한 사람이라 비교하지 않는다
+// (서버가 저장자 아이디로 정해 기록해도 같은 저장으로 본다).
 const sameMissionFields = (r, f) =>
   Boolean(r.done) === Boolean(f.done) &&
-  ['worker', 'flightTime', 'batteryNo', 'batteryLeft'].every((k) => String(r[k] ?? '').trim() === String(f[k] ?? '').trim());
+  ['flightTime', 'batteryNo', 'batteryLeft'].every((k) => String(r[k] ?? '').trim() === String(f[k] ?? '').trim());
 
 // 저장 중 [취소]: 응답을 더 기다리지 않고 입력 화면으로 돌아온다(적던 값은 그대로, [다시 시도]로 다시 보낼 수 있다).
 function stopMissionSave(id, name) {
@@ -1909,7 +1927,8 @@ async function saveMissionDraft(id, name) {
   const place = state.places.find((p) => p.id === id);
   const key = missionKey(id, name);
   if (!place || missionSaving.has(key)) return;
-  const draft = missionDraftFor(place, name);
+  // 이름은 늘 지금 로그인한 아이디로 보낸다(사람이 바꿀 길이 없다).
+  const draft = { ...missionDraftFor(place, name), worker: currentWorkerName() };
   const { invalid, message } = validateMissionDraft(draft);
   if (message) {
     // 막힌 칸 표시가 다시 그려도 남도록 초안을 state에 둔다.
@@ -1923,7 +1942,7 @@ async function saveMissionDraft(id, name) {
   const left = draft.batteryLeft.trim();
   const fields = {
     done: Boolean(draft.done),
-    worker: draft.worker.trim(),
+    worker: draft.worker,
     flightTime: draft.flightTime.trim(),
     batteryNo: draft.batteryNo.trim(),
     // "045"처럼 앞에 0을 붙여 적어도 45로 보낸다.

@@ -85,55 +85,55 @@ await ev(`__fake.rpcDelay.list_places = 20`);
 await prepare(b, { places });
 await ev(`__e2e.row('SW_01').click()`); await sleep(250);
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_01"]').click()`); await sleep(150);
-await fill('M_01', { worker: '김', flightTime: '10분', batteryNo: '2', batteryLeft: '40' });
+await fill('M_01', { flightTime: '10분', batteryNo: '2', batteryLeft: '40' });
 await setTimeoutMs(700);
 await ev(`__fake.rpcDelay.save_mission = 3000`);
 await submit('M_01'); await sleep(150);
-v = await ev(`({ saving: ${form('M_01')}.querySelector('button[type=submit]').textContent, submitDisabled: ${form('M_01')}.querySelector('button[type=submit]').disabled, cancelDisabled: ${form('M_01')}.querySelector('.btn.cancel').disabled, inputsDisabled: ${form('M_01')}.querySelector('input[name=worker]').disabled })`);
+v = await ev(`({ saving: ${form('M_01')}.querySelector('button[type=submit]').textContent, submitDisabled: ${form('M_01')}.querySelector('button[type=submit]').disabled, cancelDisabled: ${form('M_01')}.querySelector('.btn.cancel').disabled, inputsDisabled: ${form('M_01')}.querySelector('input[name=flightTime]').disabled })`);
 check('저장 중: [저장 중…]·입력 잠김, [취소]는 누를 수 있음', v.saving === '저장 중…' && v.submitDisabled && !v.cancelDisabled && v.inputsDisabled, v);
 await b.waitFor(`!!${form('M_01')}?.querySelector('.mission-error')`, 3000);
-v = await ev(`({ error: ${form('M_01')}.querySelector('.mission-error p')?.textContent, retry: !!${form('M_01')}.querySelector('.mission-retry'), worker: ${form('M_01')}.querySelector('input[name=worker]').value, disabled: ${form('M_01')}.querySelector('input[name=worker]').disabled, toast: document.querySelector('#toast').textContent })`);
+v = await ev(`({ error: ${form('M_01')}.querySelector('.mission-error p')?.textContent, retry: !!${form('M_01')}.querySelector('.mission-retry'), worker: ${form('M_01')}.querySelector('input[name=flightTime]').value, disabled: ${form('M_01')}.querySelector('input[name=worker]').disabled, toast: document.querySelector('#toast').textContent })`);
 check('시간 초과 → 폼 안에 "응답이 없습니다. 입력한 내용은 그대로 있습니다." + [다시 시도], 적던 값 그대로·다시 고칠 수 있음',
-  v.error === '응답이 없습니다. 입력한 내용은 그대로 있습니다.' && v.retry && v.worker === '김' && !v.disabled && v.toast === v.error, v);
+  v.error === '응답이 없습니다. 입력한 내용은 그대로 있습니다.' && v.retry && v.worker === '10분' && !v.disabled && v.toast === v.error, v);
 await ev(`__fake.rpcDelay.save_mission = 20`);
 await setTimeoutMs(20000);
 await ev(`${form('M_01')}.querySelector('.mission-retry').click()`);
 await b.waitFor(`!!document.querySelector('#detail .mission-view[data-mission="M_01"]')`, 3000);
-check('[다시 시도] → 저장되어 보기 화면', (await ev(`__fake.store().find(p => p.name === 'SW_01').missions.find(m => m.mission === 'M_01')?.worker`)) === '김');
+check('[다시 시도] → 저장되어 보기 화면(이름은 로그인 아이디)', (await ev(`(() => { const m = __fake.store().find(p => p.name === 'SW_01').missions.find(m => m.mission === 'M_01'); return m?.flightTime + '|' + m?.worker; })()`)) === '10분|admin@sistech.test');
 
 // 저장 중 [취소]: 기다리기를 그만두고 입력 화면으로(값 그대로)
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_02"]').click()`); await sleep(150);
-await fill('M_02', { worker: '이', flightTime: '3분' });
+await fill('M_02', { flightTime: '3분', batteryNo: '7' });
 await ev(`__fake.rpcDelay.save_mission = 4000`);
 await submit('M_02'); await sleep(200);
 await ev(`${form('M_02')}.querySelector('.btn.cancel').click()`); await sleep(150);
-v = await ev(`({ form: !!${form('M_02')}, error: ${form('M_02')}?.querySelector('.mission-error p')?.textContent, worker: ${form('M_02')}?.querySelector('input[name=worker]').value, disabled: ${form('M_02')}?.querySelector('input[name=worker]').disabled, submit: ${form('M_02')}?.querySelector('button[type=submit]').textContent, active: document.activeElement?.textContent })`);
-check('저장 중 [취소] → 바로 입력 화면으로(값 그대로, "저장을 멈췄습니다(이미 저장됐을 수도…)" + [다시 시도]), 저장 단추에 초점', v.form && v.error === '저장을 멈췄습니다(이미 저장됐을 수도 있습니다). 입력한 내용은 그대로 있습니다.' && v.worker === '이' && !v.disabled && v.submit === '저장' && v.active === '저장', v);
+v = await ev(`({ form: !!${form('M_02')}, error: ${form('M_02')}?.querySelector('.mission-error p')?.textContent, worker: ${form('M_02')}?.querySelector('input[name=batteryNo]').value, disabled: ${form('M_02')}?.querySelector('input[name=worker]').disabled, submit: ${form('M_02')}?.querySelector('button[type=submit]').textContent, active: document.activeElement?.textContent })`);
+check('저장 중 [취소] → 바로 입력 화면으로(값 그대로, "저장을 멈췄습니다(이미 저장됐을 수도…)" + [다시 시도]), 저장 단추에 초점', v.form && v.error === '저장을 멈췄습니다(이미 저장됐을 수도 있습니다). 입력한 내용은 그대로 있습니다.' && v.worker === '7' && !v.disabled && v.submit === '저장' && v.active === '저장', v);
 await ev(`__fake.rpcDelay.save_mission = 20`);
 await sleep(4200);
 await ev(`${form('M_02')}.querySelector('.btn.cancel').click()`); await sleep(150);
 
 // ── B-5: 충돌 두 갈래 ──
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_03"]').click()`); await sleep(150);
-await fill('M_03', { worker: '내값', flightTime: '9분' });
+await fill('M_03', { flightTime: '9분', batteryNo: '내값' });
 await ev(`document.querySelector('#toast').textContent = ''`);
 await ev(`__fake.conflictNext({ done: false, worker: '최신', flightTime: '1분', batteryNo: '5', batteryLeft: '50', version: 3, updatedAt: '' })`);
 await submit('M_03'); await sleep(300);
-v = await ev(`({ msg: ${form('M_03')}.querySelector('.mission-conflict-message')?.textContent, buttons: [...${form('M_03')}.querySelectorAll('.mission-conflict button')].map(x => x.textContent), toast: document.querySelector('#toast').textContent, worker: ${form('M_03')}.querySelector('input[name=worker]').value })`);
+v = await ev(`({ msg: ${form('M_03')}.querySelector('.mission-conflict-message')?.textContent, buttons: [...${form('M_03')}.querySelectorAll('.mission-conflict button')].map(x => x.textContent), toast: document.querySelector('#toast').textContent, worker: ${form('M_03')}.querySelector('input[name=batteryNo]').value })`);
 check('충돌 → 폼 안 고정 안내 문구 + [최신값 불러오기]·[내 값으로 덮어쓰기], 알림(토스트) 없음, 내 값 그대로',
   v.msg === '다른 기기에서 먼저 저장된 기록이 있습니다. 내가 적은 값은 그대로 두었습니다.' && v.buttons.join() === '최신값 불러오기,내 값으로 덮어쓰기' && v.toast === '' && v.worker === '내값', v);
 await sleep(3800);
 check('충돌 안내는 사라지지 않음(3.8초 뒤에도)', await ev(`!!${form('M_03')}.querySelector('.mission-conflict')`));
 await ev(`${form('M_03')}.querySelector('.conflict-latest').click()`); await sleep(150);
-v = await ev(`({ panel: !!${form('M_03')}.querySelector('.mission-conflict'), worker: ${form('M_03')}.querySelector('input[name=worker]').value, flight: ${form('M_03')}.querySelector('input[name=flightTime]').value })`);
-check('[최신값 불러오기] → 서버 최신 값으로 바꾸고 안내 닫음', !v.panel && v.worker === '최신' && v.flight === '1분', v);
+v = await ev(`({ panel: !!${form('M_03')}.querySelector('.mission-conflict'), worker: ${form('M_03')}.querySelector('input[name=worker]').value, battery: ${form('M_03')}.querySelector('input[name=batteryNo]').value, flight: ${form('M_03')}.querySelector('input[name=flightTime]').value })`);
+check('[최신값 불러오기] → 서버 최신 값으로 바꾸고 안내 닫음(이름 칸은 로그인 아이디 그대로)', !v.panel && v.worker === 'admin@sistech.test' && v.flight === '1분' && v.battery === '5', v);
 await fill('M_03', { flightTime: '2분' });
 await ev(`__fake.conflictNext({ done: false, worker: '또다른', flightTime: '4분', batteryNo: '5', batteryLeft: '50', version: 5, updatedAt: '' })`);
 await submit('M_03'); await sleep(300);
 await ev(`${form('M_03')}.querySelector('.conflict-overwrite').click()`);
 await b.waitFor(`!!document.querySelector('#detail .mission-view[data-mission="M_03"]')`, 3000);
 v = await ev(`__fake.store().find(p => p.name === 'SW_01').missions.find(m => m.mission === 'M_03')`);
-check('[내 값으로 덮어쓰기] → 최신 판(5)을 바탕으로 내 값 저장(version 6)', v.worker === '최신' && v.flightTime === '2분' && v.version === 6, v);
+check('[내 값으로 덮어쓰기] → 최신 판(5)을 바탕으로 내 값 저장(version 6, 이름은 로그인 아이디)', v.worker === 'admin@sistech.test' && v.flightTime === '2분' && v.version === 6, v);
 
 // ── B-7 실시간: 내가 방금 저장한 변경은 다시 받지 않음 ──
 await sleep(500);
