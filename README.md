@@ -473,7 +473,7 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 �
 
 ## 지도
 
-지도는 카카오맵 JavaScript SDK로 그립니다. 코드는 `public/kakao.js`와 `public/app.js`의 지도 영역에 있습니다.
+지도는 카카오맵 JavaScript SDK로 그립니다. 코드는 `public/kakao.js`(SDK 로드)와 `public/map-ui.js`(지도·핀·레이어)에 있습니다.
 
 - 키: 카카오 개발자 콘솔(developers.kakao.com › 플랫폼 키 › Web)의 JavaScript 키를 로컬은 `.env`의 `KAKAO_JS_KEY`, 배포는 GitHub Secret `KAKAO_JS_KEY`에 넣습니다. 빌드 때 `config.js`에 들어가 화면이 읽습니다. 키가 비어 있으면 지도 자리에 안내 문구가 뜹니다(목록·미션 기능은 그대로 동작).
 - 도메인 등록: 키는 콘솔의 Web 플랫폼 › 사이트 도메인에 등록한 주소에서만 동작합니다. 로컬 개발용 `http://localhost:4100`과 배포 주소(현재 `https://sistech.dpdns.org`)가 등록되어 있어야 합니다. 다른 주소(포트)로 열면 지도 자리에 "이 주소가 등록되어 있는지 확인" 안내가 뜹니다.
