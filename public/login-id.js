@@ -13,17 +13,17 @@ const ID_PATTERN = /^[가-힣A-Za-z][가-힣A-Za-z0-9_]*$/;
 // 변환된 이메일 앞부분이 가질 수 있는 모양(점·콜론 없는 한 덩어리). IP 주소 꼴이 섞여 들어오는 것을 한 번 더 막는다.
 const LOCAL_PATTERN = /^[a-z0-9_-]+$/;
 
-// 비밀번호 규칙. Edge Function(handler.js)과 Supabase Auth 설정(minimum_password_length = 10,
-// password_requirements = letters_digits)과 같은 값이어야 한다.
-export const PASSWORD_MIN = 10;
+// 비밀번호 규칙: 관리자가 정한 비밀번호를 그대로 쓰고 길이만 본다(문자 조건 없음).
+// 6은 Supabase Auth가 허용하는 최솟값(minimum_password_length = 6), 72는 bcrypt 한계.
+// Edge Function(handler.js)과 같은 값이어야 한다.
+export const PASSWORD_MIN = 6;
 export const PASSWORD_MAX = 72; // bcrypt 한계(UTF-8 바이트)
-export const PASSWORD_RULE = `비밀번호는 ${PASSWORD_MIN}자 이상 ${PASSWORD_MAX}자 이하이고 영문과 숫자를 모두 포함해야 합니다.`;
+export const PASSWORD_RULE = `비밀번호는 ${PASSWORD_MIN}자 이상 ${PASSWORD_MAX}자 이하여야 합니다.`;
 
-// 비밀번호가 규칙에 맞으면 true. 길이 하한은 글자 수, 상한은 UTF-8 바이트 수(bcrypt·Supabase 기준)로 센다.
+// 비밀번호 길이가 맞으면 true. 하한은 글자 수, 상한은 UTF-8 바이트 수(bcrypt·Supabase 기준)로 센다.
 export function isValidPassword(raw) {
   if (typeof raw !== 'string' || raw.length < PASSWORD_MIN) return false;
-  if (new TextEncoder().encode(raw).length > PASSWORD_MAX) return false;
-  return /[A-Za-z]/.test(raw) && /[0-9]/.test(raw);
+  return new TextEncoder().encode(raw).length <= PASSWORD_MAX;
 }
 
 // 앞뒤 공백을 떼고 한글 조합 형태를 통일한다. 규칙에 어긋나면 null.

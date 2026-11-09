@@ -150,12 +150,12 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수·관�
    | --- | --- | --- | --- |
    | Authentication → Sign In / Providers | Allow new users to sign up | 끔 | `[auth] enable_signup = false` |
    | Authentication → Sign In / Providers → Email | (이메일 가입 허용) | 끔 | `[auth.email] enable_signup = false` |
-   | Authentication → Sign In / Providers → Email | Minimum password length | `10` | `[auth] minimum_password_length = 10` |
-   | Authentication → Sign In / Providers → Email | Password Requirements | Letters and digits | `[auth] password_requirements = "letters_digits"` |
+   | Authentication → Sign In / Providers → Email | Minimum password length | `6`(Supabase 기본·최솟값) | `[auth] minimum_password_length = 6` |
+   | Authentication → Sign In / Providers → Email | Password Requirements | No required characters(문자 조건 없음) | `[auth] password_requirements = ""` |
    | Authentication → Sign In / Providers → Email | Secure password change | 켬 | `[auth.email] secure_password_change = true` |
 
    - 가입 화면이 없으니 외부 사람이 계정을 만들 수 없게 가입을 끕니다. 계정은 관리자가 "계정 관리"에서만 만듭니다.
-   - 비밀번호 규칙은 화면·함수(`public/login-id.js`, `admin-users/handler.js`의 `PASSWORD_MIN`·`PASSWORD_MAX`)와 같은 값이어야 합니다. 대시보드 값이 더 느슨해도 함수가 먼저 막지만, 대시보드에서 손으로 만드는 계정까지 막으려면 같은 값으로 맞춥니다.
+   - 비밀번호는 관리자가 정한 것을 그대로 씁니다. 대시보드 값은 화면·함수(`public/login-id.js`, `admin-users/handler.js`의 `PASSWORD_MIN = 6`)와 같아야 합니다. 대시보드에서 최소 길이를 올리거나 문자 조건을 켜면 관리자가 정한 비밀번호가 서버에서 거부될 수 있습니다.
    - Secure password change는 본인이 비밀번호를 바꿀 때 최근 로그인을 요구합니다. 화면에는 본인 비밀번호 변경 기능이 없고, 관리자 재설정(Admin API)에는 영향이 없습니다.
 3. 관리자 계정을 하나 만듭니다. 나머지 계정은 배포 뒤 관리자가 화면의 "계정 관리"에서 만들면 되므로 처음에는 하나면 됩니다.
    - 대시보드에서 손으로: `npm run login-email -- 김용문`으로 변환된 이메일 주소를 뽑아, Authentication → Users → "Add user"에 그 주소와 비밀번호를 입력합니다. 이메일 인증 없이 바로 쓰도록 Auto Confirm User를 체크하세요.
@@ -169,8 +169,7 @@ npm run test:sql  # Supabase 마이그레이션(테이블·권한·함수·관�
    - 비밀번호는 명령줄 인자로 받지 않습니다. 셸 기록(`~/.zsh_history` 등)과 프로세스 목록에 남기 때문입니다. 예전처럼 `--password <값>`을 주면 경고하고 아무것도 하지 않습니다. 이때 입력한 값은 노출됐다고 보고 다른 비밀번호를 쓰세요. 터미널이 없는 곳(자동화)에서는 환경변수 `USERS_PASSWORD`로 넘기고, 다 쓰면 지웁니다.
    - 스크립트도 아래 아이디·비밀번호 규칙으로 먼저 검사하고, 아이디를 `user_metadata.login_id`와 `app_metadata.login_id`에 함께 넣습니다(계정 목록의 아이디 표시 기준).
    - 아이디 규칙: **한글 또는 영문으로 시작**하는 한글·영문·숫자·밑줄 1~16자. 숫자나 밑줄로 시작할 수 없습니다. 숫자로 시작하는 아이디는 주소 변환 과정에서 IP 주소로 읽혀, `123`·`0x7b`·`0173`이 모두 `0.0.0.123@sistech.local` 한 계정이 되는 문제가 있었기 때문입니다. 지금 있는 계정(모두 한글 이름)은 주소가 바뀌지 않습니다. 같은 아이디는 언제나 같은 주소가 되므로 로그인 화면에 아이디만 적으면 됩니다. 영문 대소문자는 구분하지 않습니다(`Admin`과 `admin`은 같은 계정).
-   - 비밀번호 규칙: **10자 이상 72자 이하, 영문과 숫자를 각각 1자 이상**. 72는 bcrypt 한계라 바이트로 셉니다(한글은 1자에 3바이트). 어기면 "비밀번호는 10자 이상 72자 이하이고 영문과 숫자를 모두 포함해야 합니다."를 보여 줍니다.
-   - 이전 규칙(6자 이상)으로 만든 기존 계정: Supabase는 비밀번호 규칙을 비밀번호를 정하거나 바꿀 때만 검사하므로, 새 규칙을 적용한 뒤에도 **기존 비밀번호로 그대로 로그인됩니다**. 관리자가 비밀번호를 재설정하거나 새 계정을 만들 때부터 새 규칙이 적용됩니다. 6자 숫자 비밀번호는 쉽게 추측되므로, 정책을 바꾼 뒤 "계정 관리"에서 기존 계정 비밀번호를 새 규칙에 맞게 재설정하는 것을 권장합니다.
+   - 비밀번호 규칙: **6자 이상 72자 이하, 문자 조건 없음**(숫자만·영문만·한글도 됩니다). 관리자가 정한 비밀번호를 그대로 씁니다. 6은 Supabase가 허용하는 최솟값(기본값)이고, 72는 bcrypt 한계라 바이트로 셉니다(한글은 1자에 3바이트). 어기면 "비밀번호는 6자 이상 72자 이하여야 합니다."를 보여 줍니다. 기존 계정은 그대로 로그인됩니다.
    - 주소는 가짜(`@sistech.local`)라 메일이 가지 않습니다. 그래서 비밀번호 찾기 메일은 쓸 수 없고, 비밀번호를 잊으면 관리자가 화면의 "계정 관리"에서 재설정합니다. 관리자 본인이 잊었으면 대시보드 Users에서 바꾸거나 `npm run users -- --reset-password 김용문`을 씁니다.
 4. 관리자를 지정합니다. 관리자 표시는 Supabase 사용자 정보의 `app_metadata.role = "admin"`이며, 브라우저에서는 바꿀 수 없고 아래 방법으로만 넣습니다.
    - 자동: 마이그레이션 `20261106170000_admin_role.sql`이 배포 때 김용문(`xn--4k0bz9vb1i@sistech.local`)에 관리자 표시를 넣습니다. 그 계정이 아직 없거나 DB 권한이 모자라면 배포를 멈추지 않고 알림만 남기므로, 아래 방법 중 하나로 직접 넣습니다.
@@ -275,7 +274,7 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 | `create` | `login_id`(아이디 규칙), `password`(비밀번호 규칙) | `{ ok: true, user }` | 400 규칙 위반, 409 이미 있는 아이디 |
 | `reset_password` | `user_id`, `password`(비밀번호 규칙) | `{ ok: true }` | 400 규칙 위반, 404 없는 계정 |
 
-- 아이디 규칙: 한글 또는 영문으로 시작하는 한글·영문·숫자·밑줄 1~16자. 비밀번호 규칙: 10자 이상 72자 이하(상한은 바이트), 영문과 숫자를 각각 1자 이상. 어기면 400과 각각 "아이디는 한글 또는 영문으로 시작하는 한글·영문·숫자·밑줄 1~16자여야 합니다.", "비밀번호는 10자 이상 72자 이하이고 영문과 숫자를 모두 포함해야 합니다."입니다.
+- 아이디 규칙: 한글 또는 영문으로 시작하는 한글·영문·숫자·밑줄 1~16자. 비밀번호 규칙: 6자 이상 72자 이하(상한은 바이트), 문자 조건 없음. 관리자가 정한 비밀번호를 그대로 씁니다. 어기면 400과 각각 "아이디는 한글 또는 영문으로 시작하는 한글·영문·숫자·밑줄 1~16자여야 합니다.", "비밀번호는 6자 이상 72자 이하여야 합니다."입니다.
 - `create`는 아이디를 `user_metadata.login_id`와 `app_metadata.login_id`에 함께 저장합니다. `user_metadata`는 본인이 바꿀 수 있지만 `app_metadata`는 서버만 쓸 수 있습니다.
 - 응답의 `login_id`는 다음 순서로 정합니다. ① `app_metadata.login_id` ② `user_metadata.login_id`(그 아이디를 변환한 주소가 계정 이메일과 같을 때만. 본인이 남의 이름으로 바꿔도 목록에 그 이름이 나오지 않게 함) ③ `@sistech.local` 이메일을 아이디로 되살린 값(대시보드에서 만든 계정 등). 다른 도메인 이메일 계정은 `null`이고 화면은 이메일을 보여 줍니다.
 - 요청 제한

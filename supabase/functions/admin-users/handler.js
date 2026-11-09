@@ -12,9 +12,9 @@
 export const LOGIN_DOMAIN = 'sistech.local';
 export const LOGIN_ID_MAX = 16;
 export const LOGIN_ID_RULE = `아이디는 한글 또는 영문으로 시작하는 한글·영문·숫자·밑줄 1~${LOGIN_ID_MAX}자여야 합니다.`;
-export const PASSWORD_MIN = 10;
+export const PASSWORD_MIN = 6; // Supabase Auth 최솟값
 export const PASSWORD_MAX = 72; // bcrypt 한계(UTF-8 바이트)
-export const PASSWORD_RULE = `비밀번호는 ${PASSWORD_MIN}자 이상 ${PASSWORD_MAX}자 이하이고 영문과 숫자를 모두 포함해야 합니다.`;
+export const PASSWORD_RULE = `비밀번호는 ${PASSWORD_MIN}자 이상 ${PASSWORD_MAX}자 이하여야 합니다.`;
 
 // 첫 글자는 한글·영문만(숫자로 시작하면 '123'·'0x7b'·'0173'이 모두 IPv4 '0.0.0.123'이 된다. 계약 C5).
 const ID_PATTERN = /^[가-힣A-Za-z][가-힣A-Za-z0-9_]*$/;
@@ -58,11 +58,11 @@ export function loginIdToEmail(raw) {
   return email;
 }
 
+// 길이만 본다(문자 조건 없음, 관리자가 정한 비밀번호를 그대로 쓴다). 상한은 UTF-8 바이트.
 /** @param {unknown} raw @returns {boolean} */
 export function isValidPassword(raw) {
   if (typeof raw !== 'string' || raw.length < PASSWORD_MIN) return false;
-  if (new TextEncoder().encode(raw).length > PASSWORD_MAX) return false;
-  return /[A-Za-z]/.test(raw) && /[0-9]/.test(raw);
+  return new TextEncoder().encode(raw).length <= PASSWORD_MAX;
 }
 
 /** @param {unknown} raw @returns {string} */

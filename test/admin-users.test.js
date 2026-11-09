@@ -19,7 +19,7 @@ import { loginIdToEmail as browserLoginIdToEmail, normalizeLoginId as browserNor
 const ADMIN_TOKEN = 'token-admin';
 const ADMIN2_TOKEN = 'token-admin-2';
 const USER_TOKEN = 'token-user';
-const PW = 'Passw0rd12'; // 새 규칙(10자 이상, 영문+숫자)에 맞는 비밀번호
+const PW = 'Passw0rd12'; // 길이 규칙(6자 ~ 72바이트)에 맞는 비밀번호
 
 // 메모리 안의 가짜 Auth 서버. 호출 기록도 남긴다.
 function makeFakeDeps(seed = []) {
@@ -266,15 +266,14 @@ test('create: 아이디 규칙 위반은 400(숫자·밑줄로 시작하는 아�
   assert.equal(deps.users.length, 0);
 });
 
-test('create: 비밀번호 규칙(10~72자, 영문·숫자 포함) 위반은 400 + 같은 문구', async () => {
-  assert.equal(PASSWORD_RULE, '비밀번호는 10자 이상 72자 이하이고 영문과 숫자를 모두 포함해야 합니다.');
+test('create: 비밀번호 길이(6자 ~ 72바이트) 위반은 400 + 같은 문구', async () => {
+  assert.equal(PASSWORD_RULE, '비밀번호는 6자 이상 72자 이하여야 합니다.');
   const deps = makeFakeDeps();
   const bads = [
-    '', '123456', 'abc12', 'abcdefgh1', // 짧음(9자까지)
-    'abcdefghij', '1234567890', '비밀번호비밀번호비밀번호1', // 영문 또는 숫자 없음
-    'a1' + 'x'.repeat(71), // 73자: 상한 초과도 같은 문구
+    '', '1', '12345', 'abcde', // 짧음(5자까지)
+    'x'.repeat(73), // 73자: 상한 초과도 같은 문구
     'a1' + '가'.repeat(24), // 26자지만 74바이트(bcrypt 한계)
-    1234567890, null, undefined, ['Passw0rd12'],
+    123456, null, undefined, ['Passw0rd12'],
   ];
   for (const bad of bads) {
     const res = await call(deps, { action: 'create', login_id: '손두병', password: bad });
@@ -282,9 +281,19 @@ test('create: 비밀번호 규칙(10~72자, 영문·숫자 포함) 위반은 400
     assert.equal(res.body.error, PASSWORD_RULE, JSON.stringify(bad));
   }
   assert.equal(deps.users.length, 0);
-  // 경계: 10자, 72자는 통과
-  assert.equal((await call(deps, { action: 'create', login_id: 'a10', password: 'abcdefghi1' })).status, 200);
-  assert.equal((await call(deps, { action: 'create', login_id: 'a72', password: 'a1' + 'x'.repeat(70) })).status, 200);
+  // 경계: 6자, 72바이트는 통과
+  assert.equal((await call(deps, { action: 'create', login_id: 'a6', password: '123456' })).status, 200);
+  assert.equal((await call(deps, { action: 'create', login_id: 'a72', password: 'x'.repeat(72) })).status, 200);
+});
+
+test('create: 문자 조건 없음 — 관리자가 정한 비밀번호(숫자만·영문만·한글·기호)를 그대로 쓴다', async () => {
+  const deps = makeFakeDeps();
+  const passwords = ['112233', 'abcdef', '비밀번호여섯', '!@#$%^', 'Pass word 1'];
+  for (const [i, password] of passwords.entries()) {
+    const res = await call(deps, { action: 'create', login_id: `user${i}`, password });
+    assert.equal(res.status, 200, password);
+    assert.equal(deps.calls.at(-1)[1].password, password, '손대지 않고 그대로 넘긴다');
+  }
 });
 
 test('create: 이미 있는 아이디는 409', async () => {
@@ -301,7 +310,7 @@ test('create: 이미 있는 아이디는 409', async () => {
   assert.equal(res2.status, 409);
 });
 
-test('reset_password: 성공 / 없는 user_id 는 404 / user_id 누락은 400 / 새 규칙 위반은 400', async () => {
+test('reset_password: 성공 / 없는 user_id 는 404 / user_id 누락은 400 / 길이 위반은 400', async () => {
   const deps = makeFakeDeps(SEED);
   const ok = await call(deps, { action: 'reset_password', user_id: 'u-2', password: 'newpass123' });
   assert.equal(ok.status, 200);
@@ -313,7 +322,8 @@ test('reset_password: 성공 / 없는 user_id 는 404 / user_id 누락은 400 / 
   assert.equal(missing.status, 404);
   assert.equal(missing.body.ok, false);
 
-  for (const bad of ['12', '123456', 'newpassword', 'x1'.repeat(37)]) {
+  assert.equal((await call(deps, { action: 'reset_password', user_id: 'u-2', password: '112233' })).status, 200);
+  for (const bad of ['12', '12345', 'x1'.repeat(37)]) {
     const res = await call(deps, { action: 'reset_password', user_id: 'u-2', password: bad });
     assert.equal(res.status, 400, bad);
     assert.equal(res.body.error, PASSWORD_RULE);

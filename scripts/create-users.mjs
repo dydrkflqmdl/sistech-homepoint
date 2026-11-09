@@ -34,7 +34,7 @@ const HELP = `한글 아이디 계정을 Supabase에 만듭니다(비상용. 평
   npm run users -- 손두병 황병용 오성민
   npm run users -- --reset-password 손두병
   npm run users -- --admin 김용문
-  USERS_PASSWORD='새비밀번호123' npm run users -- --admin 김용문`;
+  USERS_PASSWORD='새비밀번호' npm run users -- --admin 김용문`;
 
 const PASSWORD_ARG_REFUSED = `--password 옵션은 더 이상 쓰지 않습니다. 비밀번호가 셸 기록과 프로세스 목록에 남기 때문입니다.
 방금 입력한 비밀번호는 노출됐다고 보고 다른 값을 쓰세요.
@@ -185,7 +185,7 @@ function explain(r) {
   if (r.status === 401 || r.status === 403 || /invalid api key|not_admin|jwt/i.test(msg)) {
     return 'service_role 키가 올바르지 않거나 권한이 없습니다.';
   }
-  if (r.data?.error_code === 'weak_password' || (/password/i.test(msg) && /short|least|weak|character|contain/i.test(msg))) {
+  if (r.data?.error_code === 'weak_password' || (/password/i.test(msg) && /short|least|weak|character|long/i.test(msg))) {
     return `${PASSWORD_RULE} (Supabase 설정과 맞지 않으면 README의 대시보드 설정 표를 확인하세요.)`;
   }
   return `서버 오류(${r.status})${msg ? `: ${msg}` : ''}`;
