@@ -1,9 +1,8 @@
 // 카카오 지도: SDK 불러오기·실패 안내·다시 불러오기, 핀(바뀐 것만 고침), 배경 지도·지적편집도 버튼, 영역 맞추기, 좁은 높이에서 지도 접기.
 import { $, fill, focusDetailTitle, h, refocus } from './dom.js';
-import { config, hooks, placeColor, state, visiblePlaces } from './state.js';
+import { config, hooks, placeColor, readStorage, state, visiblePlaces, writeStorage } from './state.js';
 import { colorLabel } from './palette.js';
 import { missionProgress } from './mission.js';
-import * as api from './api.js';
 
 // 장소 고르기는 위쪽 모듈(detail-ui.js 등)에 있어 hooks로 부른다.
 const requestSelect = (...args) => hooks.requestSelect(...args);
@@ -101,29 +100,6 @@ const BASE_LAYER_STORAGE_KEY = 'baseLayer';
 const CADASTRAL_STORAGE_KEY = 'cadastral';
 let baseLayerKey = 'map';
 let cadastralOn = false;
-
-// 저장이 막힌 브라우저(사생활 보호 모드 등)에서는 기본값으로 시작한다. 원인은 처음 한 번만 콘솔에 남긴다.
-let storageWarned = false;
-function storageFailed(err) {
-  if (storageWarned) return;
-  storageWarned = true;
-  api.logCause('브라우저 저장소(localStorage)를 쓸 수 없어 지도 설정을 기억하지 못합니다.', err);
-}
-const readStorage = (key) => {
-  try {
-    return localStorage.getItem(key);
-  } catch (err) {
-    storageFailed(err);
-    return null;
-  }
-};
-const writeStorage = (key, value) => {
-  try {
-    localStorage.setItem(key, value);
-  } catch (err) {
-    storageFailed(err);
-  }
-};
 
 function syncMapToggles() {
   for (const btn of document.querySelectorAll('.layer-toggle [data-layer]')) {

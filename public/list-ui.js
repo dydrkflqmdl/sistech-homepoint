@@ -1,7 +1,22 @@
-// 장소 목록: 상태 칩(거르기), 시군 묶음(펼치기·접기), 목록 줄·배지·메모 아이콘, 불러오는 중·실패 줄, 검색(디바운스·IME).
+// 장소 목록: 시기 칩·상태 칩(거르기), 시군 묶음(펼치기·접기), 목록 줄·배지·메모 아이콘, 불러오는 중·실패 줄, 검색(디바운스·IME).
 import { $, fill, focusDetailTitle, h, refocus } from './dom.js';
-import { collapseAllGroups, hooks, placeColor, state } from './state.js';
+import {
+  activePeriod,
+  collapseAllGroups,
+  findPlace,
+  hooks,
+  inPeriod,
+  periodOf,
+  periodPlaces,
+  periodsOf,
+  placeColor,
+  setPeriodChoice,
+  state,
+} from './state.js';
 import { loadPlaces } from './sync.js';
+import { fitToPlaces } from './map-ui.js';
+import { discardMemo, memoDrafts } from './memo-ui.js';
+import { confirmDiscardDraft } from './missions-ui.js';
 import { PALETTE, colorLabel, paletteEntry } from './palette.js';
 import { missionProgress } from './mission.js';
 
@@ -9,9 +24,72 @@ import { missionProgress } from './mission.js';
 const render = (...args) => hooks.render(...args);
 const requestSelect = (...args) => hooks.requestSelect(...args);
 
-export function renderFilters() {
+// 시기 칩 줄: [전체] [Q2] [Q1] … 시기가 하나도 없으면 줄 자체를 숨긴다.
+function renderPeriodFilters() {
+  const box = $('#period-filters');
+  const periods = periodsOf(state.places);
+  box.hidden = periods.length === 0;
+  if (periods.length === 0) {
+    box.replaceChildren();
+    return;
+  }
+  const active = activePeriod();
   const counts = new Map();
-  for (const p of state.places) {
+  for (const p of state.places) counts.set(periodOf(p), (counts.get(periodOf(p)) ?? 0) + 1);
+  const chip = (value, label, count) =>
+    h(
+      'button',
+      {
+        type: 'button',
+        class: 'chip period-chip',
+        'data-period': value,
+        'data-all': value === null ? 'true' : null,
+        'aria-pressed': String(active === value),
+        onclick: () => choosePeriod(value),
+      },
+      label,
+      h('span', { class: 'count' }, String(count)),
+    );
+  fill(
+    box,
+    h('span', { class: 'chips-label', 'aria-hidden': 'true' }, '시기'),
+    chip(null, '전체', state.places.length),
+    periods.map((v) => chip(v, v || '시기 없음', counts.get(v))),
+  );
+}
+
+const periodChipSelector = (value) => (value === null ? '#period-filters [data-all]' : `#period-filters [data-period="${CSS.escape(value)}"]`);
+
+// 고른 장소가 시기 밖이면 상세 정보를 닫는다(적던 미션 기록은 버린다. 메모는 따로 저장되고 있다).
+export function dropSelectionOutsidePeriod() {
+  const p = findPlace(state.selectedId);
+  if (!p || inPeriod(p, activePeriod())) return;
+  if (memoDrafts.get(p.id)?.status === 'saved') discardMemo(p.id);
+  state.selectedId = null;
+  state.selectedMission = null;
+  state.missionDraft = null;
+}
+
+// 시기 칩을 눌렀을 때. value가 null이면 전체.
+function choosePeriod(value) {
+  if (value === activePeriod()) return;
+  const selected = findPlace(state.selectedId);
+  // 열어 둔 장소가 새 시기에 없어 상세 정보가 닫히면, 저장하지 않은 미션 기록·메모가 있을 때 먼저 묻는다.
+  if (selected && !inPeriod(selected, value) && !confirmDiscardDraft()) return;
+  setPeriodChoice(value);
+  dropSelectionOutsidePeriod();
+  // 상태 칩을 바꿀 때처럼 시군 묶음은 모두 접는다.
+  collapseAllGroups();
+  render();
+  fitToPlaces(periodPlaces());
+  refocus(periodChipSelector(value));
+}
+
+export function renderFilters() {
+  renderPeriodFilters();
+  const scope = periodPlaces();
+  const counts = new Map();
+  for (const p of scope) {
     const color = placeColor(p);
     counts.set(color, (counts.get(color) ?? 0) + 1);
   }
@@ -42,7 +120,7 @@ export function renderFilters() {
 
   fill(
     $('#color-filters'),
-    state.places.length > 0 && [chip(null, '전체', state.places.length), ...colors.map((c) => chip(c, colorLabel(c), counts.get(c)))],
+    scope.length > 0 && [chip(null, '전체', scope.length), ...colors.map((c) => chip(c, colorLabel(c), counts.get(c)))],
   );
 }
 
@@ -100,6 +178,9 @@ function toggleGroup(district, places) {
   refocus(groupHeadSelector(district));
 }
 
+// 목록 줄에 시기 표시를 붙일지(renderList가 정한다): 시기가 있는 데이터를 [전체]로 볼 때만.
+let listShowsPeriod = false;
+
 function placeRow(p) {
   return h(
     'li',
@@ -115,7 +196,13 @@ function placeRow(p) {
         },
       },
       placeDot(p),
-      h('span', { class: 'text' }, h('span', { class: 'name' }, p.name, missionBadge(p)), h('span', { class: 'addr' }, p.address)),
+      h(
+        'span',
+        { class: 'text' },
+        // [전체] 시기를 볼 때만 이름 옆에 시기를 작게 붙인다(같은 이름이 두 시기에 있을 수 있다).
+        h('span', { class: 'name' }, p.name, listShowsPeriod && periodOf(p) && h('span', { class: 'period-tag' }, periodOf(p)), missionBadge(p)),
+        h('span', { class: 'addr' }, p.address),
+      ),
       memoIcon(p),
     ),
   );
@@ -194,10 +281,13 @@ function renderListStatus() {
 
 let lastListKey = null;
 export function renderList(visible) {
-  const total = state.places.length;
+  // 개수는 지금 시기의 장소 기준이다(시기가 없는 데이터면 전체와 같다).
+  const period = activePeriod();
+  const total = periodPlaces(period).length;
+  listShowsPeriod = period === null && periodsOf(state.places).length > 0;
   renderListStatus();
   // "아직 저장한 장소가 없습니다"는 목록을 받은 뒤 0곳일 때만. 받는 중·실패 중에 보이면 데이터가 지워진 것처럼 보인다.
-  $('#empty').hidden = !(state.loaded && !state.loading && !state.loadError && total === 0);
+  $('#empty').hidden = !(state.loaded && !state.loading && !state.loadError && state.places.length === 0);
   $('#list-summary').textContent =
     total === 0 ? ''
     : visible.length === total ? `장소 ${total}개`
@@ -205,7 +295,7 @@ export function renderList(visible) {
     : `${visible.length}개 / 전체 ${total}개`;
 
   // 검색어·거르기·선택이 바뀌면 "이번만 접어 둔" 묶음을 잊고 저절로 펼치는 규칙을 다시 따른다.
-  const listKey = `${state.query.trim()}|${state.filterColor}|${state.selectedId}`;
+  const listKey = `${state.query.trim()}|${state.filterColor}|${state.selectedId}|${period}`;
   if (listKey !== lastListKey) state.closedGroups.clear();
   lastListKey = listKey;
 

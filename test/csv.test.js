@@ -11,6 +11,7 @@ import {
   readPlaces,
   stripDistrict,
   toCsv,
+  toMissionCsv,
 } from '../public/csv.js';
 
 const bytes = (s) => new TextEncoder().encode(s);
@@ -63,7 +64,7 @@ test('홈포인트 코드는 맨 뒤 번호와 그 앞 영문만 이름으로 �
 test('홈포인트 CSV 형식을 읽는다 (괄호 붙은 주소 머리글, 모르는 열은 무시)', () => {
   const csv = [
     '\uFEFF이름,시군,읍면,작업자,위도,경도,주소(팜맵 필지 기준),소티,완료 소티,카카오맵 길안내',
-    'A_TA_GH_16,태안,근흥면,,36.68,126.13,태안 근흥면 신진도리 인근,1,0,"https://map.kakao.com/link/to/A_TA_GH_16,36.68,126.13"',
+    'A_TA_GH_16,태안,미르면,,36.68,126.13,태안 미르면 신진도리 인근,1,0,"https://map.kakao.com/link/to/A_TA_GH_16,36.68,126.13"',
     'C_SA_JE_17,신안,자은면,SH,34.90,126.06,신안 자은면 송산리 인근,28,0,"https://map.kakao.com/link/to/C_SA_JE_17,34.90,126.06"',
   ].join('\r\n');
   const { places, errors, columns } = readPlaces(bytes(csv));
@@ -72,7 +73,7 @@ test('홈포인트 CSV 형식을 읽는다 (괄호 붙은 주소 머리글, 모�
   assert.deepEqual(
     places.map(({ name, address, lat, lng }) => ({ name, address, lat, lng })),
     [
-      { name: 'GH_16', address: '근흥면 신진도리 인근', lat: 36.68, lng: 126.13 },
+      { name: 'GH_16', address: '미르면 신진도리 인근', lat: 36.68, lng: 126.13 },
       { name: 'JE_17', address: '자은면 송산리 인근', lat: 34.9, lng: 126.06 },
     ],
   );
@@ -88,17 +89,17 @@ test('머리글 괄호 안의 따옴표 없는 쉼표로 나뉜 칸을 다시 �
 test('홈포인트_Q1 형식(홈 이름(계획), 미션명, 따옴표 없는 쉼표 머리글)을 읽는다', () => {
   const csv = [
     '﻿홈 이름(계획),미션명,시기,시군,읍면,주소(팜맵 필지 기준, 인근),위도,경도,작업자,소티(완료/전체),카카오맵 길안내',
-    'Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 인근,36.766667,126.149826,,0/34,"https://map.kakao.com/link/to/Q1_A_TA_SW_01,36.766667,126.149826"',
-    'Q1_B_BE_TB_03,Q1_B_BE_TB__03_01 ~ _10,Q1,보은,탄부면,탄부면 상장리 인근,36.453159,127.782190,,0/10,"https://map.kakao.com/link/to/Q1_B_BE_TB_03,36.453159,127.782190"',
+    'Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 인근,36.516667,126.479826,,0/34,"https://map.kakao.com/link/to/Q1_A_TA_SW_01,36.516667,126.479826"',
+    'Q1_B_BE_TB_03,Q1_B_BE_TB__03_01 ~ _10,Q1,보은,누리면,누리면 별빛리 인근,36.753159,127.582190,,0/10,"https://map.kakao.com/link/to/Q1_B_BE_TB_03,36.753159,127.582190"',
   ].join('\r\n');
   const { places, errors, columns } = readPlaces(bytes(csv));
   assert.deepEqual(errors, []);
-  assert.deepEqual(columns, ['name', 'mission', 'district', 'address', 'lat', 'lng']);
+  assert.deepEqual(columns, ['name', 'mission', 'period', 'district', 'address', 'lat', 'lng']);
   assert.deepEqual(
-    places.map(({ name, mission, address, lat, lng }) => ({ name, mission, address, lat, lng })),
+    places.map(({ name, period, mission, address, lat, lng }) => ({ name, period, mission, address, lat, lng })),
     [
-      { name: 'SW_01', mission: 'Q1_A_TA_SW__01_01 ~ _34', address: '소원면 송현리 인근', lat: 36.766667, lng: 126.149826 },
-      { name: 'TB_03', mission: 'Q1_B_BE_TB__03_01 ~ _10', address: '탄부면 상장리 인근', lat: 36.453159, lng: 127.78219 },
+      { name: 'SW_01', period: 'Q1', mission: 'Q1_A_TA_SW__01_01 ~ _34', address: '가람면 하늘리 인근', lat: 36.516667, lng: 126.479826 },
+      { name: 'TB_03', period: 'Q1', mission: 'Q1_B_BE_TB__03_01 ~ _10', address: '누리면 별빛리 인근', lat: 36.753159, lng: 127.58219 },
     ],
   );
 });
@@ -136,25 +137,25 @@ test('필수 열이 없으면 무엇이 빠졌는지 알려 준다', () => {
 });
 
 test('시군은 따로 읽고, 주소 맨 앞에 같은 시군이 있으면 뗀다', () => {
-  assert.equal(stripDistrict('태안', '태안 소원면 송현리 인근'), '소원면 송현리 인근');
-  assert.equal(stripDistrict('태안', '소원면 송현리 인근'), '소원면 송현리 인근');
-  assert.equal(stripDistrict('태안', '태안읍 남문리'), '태안읍 남문리'); // 띄어쓰기 경계까지 같아야 뗀다
+  assert.equal(stripDistrict('태안', '태안 가람면 하늘리 인근'), '가람면 하늘리 인근');
+  assert.equal(stripDistrict('태안', '가람면 하늘리 인근'), '가람면 하늘리 인근');
+  assert.equal(stripDistrict('태안', '태안읍 한울리'), '태안읍 한울리'); // 띄어쓰기 경계까지 같아야 뗀다
   assert.equal(stripDistrict('태안', '태안'), '태안');
-  assert.equal(stripDistrict('태안', '소원면 태안 로터리'), '소원면 태안 로터리'); // 맨 앞만 본다
-  assert.equal(stripDistrict('', '태안 소원면'), '태안 소원면');
+  assert.equal(stripDistrict('태안', '가람면 태안 로터리'), '가람면 태안 로터리'); // 맨 앞만 본다
+  assert.equal(stripDistrict('', '태안 가람면'), '태안 가람면');
 
-  const csv = ['이름,시군,주소,위도,경도', 'A,태안,소원면 송현리 인근,36.7,126.1', 'B,태안,태안 근흥면,36.6,126.1', 'C,보은,,36.4,127.7', 'D,,서울,37.5,127.0'].join('\n');
+  const csv = ['이름,시군,주소,위도,경도', 'A,태안,가람면 하늘리 인근,36.7,126.1', 'B,태안,태안 미르면,36.6,126.1', 'C,보은,,36.4,127.7', 'D,,서울,37.5,127.0'].join('\n');
   assert.deepEqual(
     readPlaces(bytes(csv)).places.map((p) => [p.district, p.address, p.addressGiven]),
-    [['태안', '소원면 송현리 인근', true], ['태안', '근흥면', true], ['보은', '', false], ['', '서울', true]],
+    [['태안', '가람면 하늘리 인근', true], ['태안', '미르면', true], ['보은', '', false], ['', '서울', true]],
   );
 });
 
 test('내보내기에는 상태와 완료/전체가 들어가고, 다시 가져오면 상태는 무시·완료/전체는 소티로 확인만 하고 같은 값이 나온다', () => {
   const original = [
-    { name: '가게 "본점", 2층', district: '서울', address: '중구', phone: '02-123-4567', memo: '줄\n바꿈', mission: 'Q1_A_TA_SW__01_01 ~ _03', lat: 37.5, lng: 127.01 },
-    { name: '미션없음', district: '', address: '', phone: '', memo: '', mission: '', lat: 36.1, lng: 128.2 },
-    { name: 'SW_01', district: '태안', address: '소원면 송현리 인근', phone: '', memo: '', mission: '', lat: 36.766667, lng: 126.149826 },
+    { name: '가게 "본점", 2층', period: 'Q1', district: '서울', address: '중구', phone: '02-123-4567', memo: '줄\n바꿈', mission: 'Q1_A_TA_SW__01_01 ~ _03', lat: 37.5, lng: 127.01 },
+    { name: '미션없음', period: '', district: '', address: '', phone: '', memo: '', mission: '', lat: 36.1, lng: 128.2 },
+    { name: 'SW_01', period: '2026 상반기', district: '태안', address: '가람면 하늘리 인근', phone: '', memo: '', mission: '', lat: 36.516667, lng: 126.479826 },
   ];
   const missions = [
     { mission: 'Q1_A_TA_SW__01_01', done: true },
@@ -162,14 +163,14 @@ test('내보내기에는 상태와 완료/전체가 들어가고, 다시 가져�
   ];
   const text = toCsv([{ ...original[0], missions }, ...original.slice(1)]);
   const rows = parseCsv(text.replace(/^\uFEFF/, '')).map((r) => r.cells);
-  assert.deepEqual(rows[0], ['이름', '시군', '주소', '전화번호', '위도', '경도', '상태', '완료/전체', '메모', '미션명']);
-  assert.deepEqual(rows[1].slice(0, 3), ['가게 "본점", 2층', '서울', '중구']);
-  assert.deepEqual(rows[1].slice(6, 8), ['진행 중', '1/3']);
-  assert.deepEqual(rows[2].slice(6, 8), ['미진행', '']);
+  assert.deepEqual(rows[0], ['이름', '시기', '시군', '주소', '전화번호', '위도', '경도', '상태', '완료/전체', '메모', '미션명']);
+  assert.deepEqual(rows[1].slice(0, 4), ['가게 "본점", 2층', 'Q1', '서울', '중구']);
+  assert.deepEqual(rows[1].slice(7, 9), ['진행 중', '1/3']);
+  assert.deepEqual(rows[2].slice(7, 9), ['미진행', '']);
 
   const { places, errors, columns } = readPlaces(bytes(text));
   assert.deepEqual(errors, []);
-  assert.deepEqual(columns, ['name', 'district', 'address', 'phone', 'lat', 'lng', 'memo', 'mission']);
+  assert.deepEqual(columns, ['name', 'period', 'district', 'address', 'phone', 'lat', 'lng', 'memo', 'mission']);
   assert.deepEqual(places.map(({ line, addressGiven, ...rest }) => rest), original);
   assert.deepEqual(places.map((p) => p.addressGiven), [true, false, true]);
   // 완료/전체(1/3)는 미션명(3개)과 맞으므로 개수 경고는 없고, 완료가 있어서 "완료 기록은 가져오지 않습니다"만 한 번 나온다.
@@ -178,10 +179,10 @@ test('내보내기에는 상태와 완료/전체가 들어가고, 다시 가져�
 
 test('인코딩: 깨진 바이트가 조금 섞인 UTF-8은 UTF-8로, BOM이 있으면 그대로 읽고, 알 수 없으면 거절한다', () => {
   // 영문 머리글 + 한글 내용 사이에 잘못된 바이트 하나
-  const utf8 = bytes('name,lat,lng,memo\n소원면 송현리,36.7,126.1,주차 가능\n');
+  const utf8 = bytes('name,lat,lng,memo\n가람면 하늘리,36.7,126.1,주차 가능\n');
   const broken = new Uint8Array([...utf8.subarray(0, 18), 0xff, ...utf8.subarray(18)]); // 머리글 줄 바로 뒤
   const text = decodeCsv(broken);
-  assert.ok(text.includes('소원면 송현리'));
+  assert.ok(text.includes('가람면 하늘리'));
   assert.ok(text.includes('주차 가능'));
   assert.equal(text.match(/�/g).length, 1);
 
@@ -214,12 +215,12 @@ test('인코딩: 깨진 바이트가 조금 섞인 UTF-8은 UTF-8로, BOM이 있
 });
 
 test('탭이 쉼표보다 많으면 탭 구분으로 읽는다(머리글 괄호 안 쉼표가 있어도)', () => {
-  const tsv = '홈 이름(계획)\t미션명\t주소(팜맵 필지 기준, 인근)\t위도\t경도\nQ1_A_TA_SW_01\tQ1_A_TA_SW__01_01 ~ _34\t소원면 송현리 인근\t36.766667\t126.149826\n';
+  const tsv = '홈 이름(계획)\t미션명\t주소(팜맵 필지 기준, 인근)\t위도\t경도\nQ1_A_TA_SW_01\tQ1_A_TA_SW__01_01 ~ _34\t가람면 하늘리 인근\t36.516667\t126.479826\n';
   const { places, columns, errors } = readPlaces(bytes(tsv));
   assert.deepEqual(errors, []);
   assert.deepEqual(columns, ['name', 'mission', 'address', 'lat', 'lng']);
-  assert.equal(places[0].address, '소원면 송현리 인근');
-  assert.equal(places[0].lng, 126.149826);
+  assert.equal(places[0].address, '가람면 하늘리 인근');
+  assert.equal(places[0].lng, 126.479826);
 });
 
 test('좌표는 10진수만 받고 0,0은 빈 좌표로 본다', () => {
@@ -254,9 +255,9 @@ test('메모는 앞뒤 공백을 지키고, 칸마다 길이를 자르며, 오�
 });
 
 test('수식으로 시작하는 글은 내보낼 때 앞에 \'를 붙이고, 가져올 때 뗀다', () => {
-  const original = [{ name: '+cmd', district: '=시군', address: '@주소', phone: '-123', memo: '=1+1', mission: '\t탭', lat: -33.5, lng: 151.2 }];
+  const original = [{ name: '+cmd', period: '=Q1', district: '=시군', address: '@주소', phone: '-123', memo: '=1+1', mission: '\t탭', lat: -33.5, lng: 151.2 }];
   const text = toCsv(original);
-  assert.ok(text.includes("'+cmd,'=시군,'@주소,'-123,-33.5,151.2,"));
+  assert.ok(text.includes("'+cmd,'=Q1,'=시군,'@주소,'-123,-33.5,151.2,"));
   assert.ok(text.includes(",'=1+1,"));
   const { places } = readPlaces(bytes(text));
   const { line, addressGiven, ...back } = places[0];
@@ -290,12 +291,12 @@ test('경고(warnings)는 오류(errors)와 따로 돌려주고, 경고 행도 �
 test('소티(완료/전체): 전체가 미션명을 푼 개수와 다르면 경고, 완료가 있으면 파일당 한 번 경고, 저장하지는 않는다', () => {
   const csv = [
     Q1_HEADER,
-    'Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,소원면,소원면 송현리 인근,36.766667,126.149826,,0/34,',
-    'Q1_A_TA_SW_02,Q1_A_TA_SW__02_01 ~ _27,Q1,태안,소원면,소원면 파도리 인근,36.741223,126.144333,,3/30,',
-    'Q1_D_GH_GS_01,Q1DGHGS0101 ~ 10,Q1,고흥,금산면,금산면 신촌리 인근,34.461021,127.103139,,2/10,',
-    'Q1_D_GH_GS_02,,Q1,고흥,금산면,금산면 신촌리 인근,34.478238,127.115790,,0/8,',
-    'Q1_D_GH_GS_03,단일미션,Q1,고흥,금산면,,34.446642,127.117342,,,',
-    'Q1_D_GH_GS_04,단일미션,Q1,고흥,금산면,,34.460630,127.124649,,모름,',
+    'Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 인근,36.516667,126.479826,,0/34,',
+    'Q1_A_TA_SW_02,Q1_A_TA_SW__02_01 ~ _27,Q1,태안,가람면,가람면 바람리 인근,36.491223,126.474333,,3/30,',
+    'Q1_D_GH_GS_01,Q1DGHGS0101 ~ 10,Q1,고흥,다솜면,다솜면 햇살리 인근,34.861021,127.603139,,2/10,',
+    'Q1_D_GH_GS_02,,Q1,고흥,다솜면,다솜면 햇살리 인근,34.878238,127.615790,,0/8,',
+    'Q1_D_GH_GS_03,단일미션,Q1,고흥,다솜면,,34.846642,127.617342,,,',
+    'Q1_D_GH_GS_04,단일미션,Q1,고흥,다솜면,,34.860630,127.624649,,모름,',
   ].join('\r\n');
   const { places, errors, warnings, columns } = readPlaces(bytes(csv));
   assert.deepEqual(errors, []);
@@ -339,12 +340,12 @@ test('좌표: 한쪽만 0이면 오류, 자동 교정 뒤 대한민국 범위 �
 });
 
 test('세미콜론이 쉼표·탭보다 많으면 세미콜론 구분으로 읽는다', () => {
-  const csv = '홈 이름(계획);미션명;주소(팜맵 필지 기준, 인근);위도;경도\nQ1_A_TA_SW_01;Q1_A_TA_SW__01_01 ~ _34;소원면 송현리, 인근;36.766667;126.149826\n';
+  const csv = '홈 이름(계획);미션명;주소(팜맵 필지 기준, 인근);위도;경도\nQ1_A_TA_SW_01;Q1_A_TA_SW__01_01 ~ _34;가람면 하늘리, 인근;36.516667;126.479826\n';
   const { places, errors, columns } = readPlaces(bytes(csv));
   assert.deepEqual(errors, []);
   assert.deepEqual(columns, ['name', 'mission', 'address', 'lat', 'lng']);
-  assert.equal(places[0].address, '소원면 송현리, 인근');
-  assert.equal(places[0].lng, 126.149826);
+  assert.equal(places[0].address, '가람면 하늘리, 인근');
+  assert.equal(places[0].lng, 126.479826);
   // 세미콜론이 쉼표보다 적으면 쉼표 구분
   assert.deepEqual(parseCsv('이름,메모,위도,경도\n집,a;b,37,127').map((r) => r.cells.length), [4, 4]);
 });
@@ -361,9 +362,9 @@ test('필수 열을 첫 줄에서 못 찾으면 처음 5줄 안의 머리글 줄
 });
 
 test('머리글 충돌: 같은 뜻의 열이 둘이면 하나만 쓰고 경고, 넓은 별칭(위치·시·군·지역·x·y)은 정확한 별칭보다 뒤 순위', () => {
-  const r = readPlaces(bytes('위치,이름,주소,도로명주소,위도,경도,지역,시군\n소원면,집,근흥면,태안로 1,36.7,126.1,충남,태안\n'));
+  const r = readPlaces(bytes('위치,이름,주소,도로명주소,위도,경도,지역,시군\n가람면,집,미르면,태안로 1,36.7,126.1,충남,태안\n'));
   assert.deepEqual(r.errors, []);
-  assert.equal(r.places[0].address, '근흥면');
+  assert.equal(r.places[0].address, '미르면');
   assert.equal(r.places[0].district, '태안');
   assert.deepEqual(r.warnings, [
     { line: 1, reason: "'위치' 열은 '주소' 열과 같은 뜻이라 무시했습니다." },
@@ -401,11 +402,11 @@ test('인코딩: 깨진 글자가 글자 수의 0.5% 이하면(최소 5개) UTF-
 
 test("수식 보호: 앞쪽 공백·제어문자를 건너뛴 첫 글자, 전각 기호, 원래 '로 시작하는 값까지 보호하고 가져올 때 한 겹만 벗긴다", () => {
   const tricky = ['=1+1', ' =1+1', '　＝SUM(A1)', '＋1', '－1', '＠x', '\x01@x', "'", "'가게", "''", "'=1+1", "''=1", '\t=1', '\r=1', 'a=1', '가-나', '1-2', '', ' 앞공백', "\t'a"];
-  const original = tricky.map((memo, i) => ({ name: `P${i}`, district: '', address: '', phone: '', memo, mission: '', lat: 37 + i / 1000, lng: 127 }));
+  const original = tricky.map((memo, i) => ({ name: `P${i}`, period: '', district: '', address: '', phone: '', memo, mission: '', lat: 37 + i / 1000, lng: 127 }));
   const text = toCsv(original);
   const exported = parseCsv(text.replace(/^﻿/, ''))
     .slice(1)
-    .map((r) => r.cells[8]);
+    .map((r) => r.cells[9]);
   assert.deepEqual(exported, [
     "'=1+1",
     "' =1+1",
@@ -435,17 +436,17 @@ test("수식 보호: 앞쪽 공백·제어문자를 건너뛴 첫 글자, 전각
 });
 
 test('시군 떼기: 원본 입력에서 한 번만 떼고, 내보낸 뒤 다시 가져와도 주소가 그대로다', () => {
-  assert.equal(stripDistrict('고흥', '고흥 금산면 신촌리 인근'), '금산면 신촌리 인근');
-  assert.equal(stripDistrict('고흥', '고흥 고흥 금산면'), '고흥 금산면'); // 한 번만
-  assert.equal(stripDistrict('고흥', '고흥읍 옥하리'), '고흥읍 옥하리');
-  assert.equal(stripDistrict(' 고흥 ', '  고흥   금산면 '), '금산면');
+  assert.equal(stripDistrict('고흥', '고흥 다솜면 햇살리 인근'), '다솜면 햇살리 인근');
+  assert.equal(stripDistrict('고흥', '고흥 고흥 다솜면'), '고흥 다솜면'); // 한 번만
+  assert.equal(stripDistrict('고흥', '고흥읍 여울리'), '고흥읍 여울리');
+  assert.equal(stripDistrict(' 고흥 ', '  고흥   다솜면 '), '다솜면');
 
-  const first = readPlaces(bytes('이름,시군,주소,위도,경도\nGS_01,고흥,고흥 금산면 신촌리 인근,34.461021,127.103139\nGH_01,고흥,고흥읍 옥하리,34.6,127.28\n')).places;
-  assert.deepEqual(first.map((p) => p.address), ['금산면 신촌리 인근', '고흥읍 옥하리']);
+  const first = readPlaces(bytes('이름,시군,주소,위도,경도\nGS_01,고흥,고흥 다솜면 햇살리 인근,34.861021,127.603139\nGH_01,고흥,고흥읍 여울리,34.6,127.28\n')).places;
+  assert.deepEqual(first.map((p) => p.address), ['다솜면 햇살리 인근', '고흥읍 여울리']);
   const again = readPlaces(bytes(toCsv(first))).places;
   assert.deepEqual(again.map((p) => [p.district, p.address]), [
-    ['고흥', '금산면 신촌리 인근'],
-    ['고흥', '고흥읍 옥하리'],
+    ['고흥', '다솜면 햇살리 인근'],
+    ['고흥', '고흥읍 여울리'],
   ]);
   const thrice = readPlaces(bytes(toCsv(again))).places;
   assert.deepEqual(thrice.map((p) => p.address), again.map((p) => p.address));
@@ -455,26 +456,27 @@ const existingPlaces = [
   {
     id: 1,
     name: 'SW_01',
+    period: 'Q1',
     district: '태안',
-    lat: 36.766667,
-    lng: 126.149826,
-    address: '소원면 송현리 인근',
+    lat: 36.516667,
+    lng: 126.479826,
+    address: '가람면 하늘리 인근',
     mission: 'Q1_A_TA_SW__01_01 ~ _34',
     missions: [{ mission: 'Q1_A_TA_SW__01_01', done: true }, { mission: 'Q1_A_TA_SW__01_02', done: false }],
   },
-  { id: 2, name: 'SW_02', district: '태안', lat: 36.741223, lng: 126.144333, address: '소원면 파도리 인근', mission: 'Q1_A_TA_SW__02_01 ~ _27', missions: [] },
-  { id: 3, name: 'TB_01', district: '보은', lat: 36.441369, lng: 127.744372, address: '탄부면 고승리 인근', mission: '', missions: undefined },
+  { id: 2, name: 'SW_02', period: 'Q1', district: '태안', lat: 36.491223, lng: 126.474333, address: '가람면 바람리 인근', mission: 'Q1_A_TA_SW__02_01 ~ _27', missions: [] },
+  { id: 3, name: 'TB_01', district: '보은', lat: 36.741369, lng: 127.544372, address: '누리면 새벽리 인근', mission: '', missions: undefined },
 ];
 
-test('nearDuplicates: 이름·시군이 같고 좌표가 다른 기존 장소를 거리와 함께 찾는다(실제 두 Q1 파일의 태안 SW_01·SW_02)', () => {
-  // 홈포인트_Q1 (1).csv의 SW_01·SW_02·SW_03 행
+test('nearDuplicates: 이름·시군·시기가 같고 좌표가 다른 기존 장소를 거리와 함께 찾는다(두 Q1 파일의 태안 SW_01·SW_02, 좌표·주소는 가공 값)', () => {
+  // 홈포인트_Q1 (1).csv의 SW_01·SW_02·SW_03 행 형식(좌표·주소는 가공)
   const csv = [
     Q1_HEADER,
-    'Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _13,Q1,태안,소원면,소원면 파도리 인근,36.739424,126.140615,,0/13,',
-    'Q1_A_TA_SW_02,Q1_A_TA_SW__02_01 ~ _23,Q1,태안,소원면,소원면 모항리 인근,36.765898,126.145816,,0/23,',
-    'Q1_A_TA_SW_03,Q1_A_TA_SW__03_01 ~ _15,Q1,태안,소원면,소원면 신덕리 인근,36.800325,126.169005,,0/15,',
-    'TB_01,,Q1,청주,,,36.5,127.5,,,', // 이름은 같지만 시군이 다르다
-    'TB_01,,Q1,보은,,,36.441369,127.744372,,,', // 좌표까지 같다 → 갱신 경로
+    'Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _13,Q1,태안,가람면,가람면 바람리 인근,36.489424,126.470615,,0/13,',
+    'Q1_A_TA_SW_02,Q1_A_TA_SW__02_01 ~ _23,Q1,태안,가람면,가람면 구름리 인근,36.515898,126.475816,,0/23,',
+    'Q1_A_TA_SW_03,Q1_A_TA_SW__03_01 ~ _15,Q1,태안,가람면,가람면 노을리 인근,36.550325,126.499005,,0/15,',
+    'TB_01,,,청주,,,36.5,127.5,,,', // 이름은 같지만 시군이 다르다
+    'TB_01,,,보은,,,36.741369,127.544372,,,', // 좌표까지 같다(기존 period 없음 = 빈 시기) → 갱신 경로
   ].join('\n');
   const { places } = readPlaces(bytes(csv));
   const found = nearDuplicates(places, existingPlaces);
@@ -486,12 +488,15 @@ test('nearDuplicates: 이름·시군이 같고 좌표가 다른 기존 장소를
     ],
   );
   for (const f of found) assert.ok(f.distanceM > 2700 && f.distanceM < 3200, `${f.name} ${f.distanceM}m`);
-  assert.equal(found[0].distanceM, 3138);
+  assert.equal(found[0].distanceM, 3139);
   assert.equal(found[1].distanceM, 2747);
-  assert.deepEqual(found[0].existing, { id: 1, name: 'SW_01', lat: 36.766667, lng: 126.149826, address: '소원면 송현리 인근' });
+  assert.deepEqual(found[0].existing, { id: 1, name: 'SW_01', lat: 36.516667, lng: 126.479826, address: '가람면 하늘리 인근' });
 
   // 좌표가 소수 7자리 반올림으로 같으면 제외, 같은 이름이 여러 개면 가까운 순
-  assert.deepEqual(nearDuplicates([{ line: 2, name: 'SW_01', district: '태안', lat: 36.76666700004, lng: 126.149826 }], existingPlaces), []);
+  assert.deepEqual(nearDuplicates([{ line: 2, name: 'SW_01', period: 'Q1', district: '태안', lat: 36.51666700004, lng: 126.479826 }], existingPlaces), []);
+  // 시기가 다르면 같은 이름·시군이라도 다른 장소라 알리지 않는다
+  assert.deepEqual(nearDuplicates([{ line: 2, name: 'SW_01', period: 'Q2', district: '태안', lat: 36.5, lng: 126.47 }], existingPlaces), []);
+  assert.equal(nearDuplicates([{ line: 2, name: 'SW_01', period: ' Q1 ', district: '태안', lat: 36.5, lng: 126.47 }], existingPlaces).length, 1);
   const two = [
     { id: 8, name: 'A', district: '', lat: 37.01, lng: 127 },
     { id: 9, name: 'A', district: '', lat: 37.001, lng: 127 },
@@ -507,17 +512,75 @@ test('nearDuplicates: 이름·시군이 같고 좌표가 다른 기존 장소를
   assert.deepEqual(nearDuplicates(places, []), []);
 });
 
-test('missionChanges: 이름·좌표가 같은 기존 장소의 미션명이 새 값(비어 있지 않음)과 다를 때만, 기록 수와 함께 알린다', () => {
+test('missionChanges: 이름·시기·좌표가 같은 기존 장소의 미션명이 새 값(비어 있지 않음)과 다를 때만, 기록 수와 함께 알린다', () => {
   const places = [
-    { line: 2, name: 'SW_01', district: '태안', lat: 36.766667, lng: 126.149826, mission: 'Q2_A_TA_SW__01_01 ~ _40' },
-    { line: 3, name: 'SW_02', district: '', lat: 36.7412230000001, lng: 126.144333, mission: 'Q1_A_TA_SW__02_01 ~ _27' }, // 같음
-    { line: 4, name: 'TB_01', district: '', lat: 36.441369, lng: 127.744372, mission: 'NEW' }, // 기존이 빈 값
-    { line: 5, name: 'SW_01', district: '태안', lat: 36.766667, lng: 126.149826, mission: '' }, // 새 값이 비면 안 바뀜
-    { line: 6, name: 'SW_01', district: '태안', lat: 36.7, lng: 126.1, mission: 'X' }, // 좌표가 다르면 새 장소
+    { line: 2, name: 'SW_01', period: 'Q1', district: '태안', lat: 36.516667, lng: 126.479826, mission: 'Q2_A_TA_SW__01_01 ~ _40' },
+    { line: 3, name: 'SW_02', period: 'Q1', district: '', lat: 36.4912230000001, lng: 126.474333, mission: 'Q1_A_TA_SW__02_01 ~ _27' }, // 같음
+    { line: 4, name: 'TB_01', period: '', district: '', lat: 36.741369, lng: 127.544372, mission: 'NEW' }, // 기존이 빈 값(기존 period 없음 = 빈 시기)
+    { line: 5, name: 'SW_01', period: 'Q1', district: '태안', lat: 36.516667, lng: 126.479826, mission: '' }, // 새 값이 비면 안 바뀜
+    { line: 6, name: 'SW_01', period: 'Q1', district: '태안', lat: 36.7, lng: 126.1, mission: 'X' }, // 좌표가 다르면 새 장소
+    { line: 7, name: 'SW_01', period: 'Q2', district: '태안', lat: 36.516667, lng: 126.479826, mission: 'X' }, // 시기가 다르면 새 장소
   ];
   assert.deepEqual(missionChanges(places, existingPlaces), [
     { line: 2, name: 'SW_01', district: '태안', from: 'Q1_A_TA_SW__01_01 ~ _34', to: 'Q2_A_TA_SW__01_01 ~ _40', recordCount: 2 },
     { line: 4, name: 'TB_01', district: '보은', from: '', to: 'NEW', recordCount: 0 },
   ]);
   assert.deepEqual(missionChanges(places, []), []);
+});
+
+test('시기(period): 별칭으로 읽고 trim, 없으면 빈 칸, 20자 초과는 오류, 같은 이름·좌표라도 시기가 다르면 다른 장소', () => {
+  for (const h of ['시기', '분기', '기간', 'Period', 'quarter', 'PHASE', '시기(분기)']) {
+    const r = readPlaces(bytes(`이름,${h},위도,경도\nA, Q1 ,37,127\n`));
+    assert.deepEqual(r.columns, ['name', 'period', 'lat', 'lng'], h);
+    assert.equal(r.places[0].period, 'Q1', h);
+  }
+  const none = readPlaces(bytes('이름,위도,경도\nA,37,127\n'));
+  assert.equal(none.places[0].period, '');
+  assert.ok(!none.columns.includes('period'));
+
+  const long = readPlaces(bytes(`이름,시기,위도,경도\nA,${'가'.repeat(20)},37,127\nB,${'가'.repeat(21)},37,127\n`));
+  assert.deepEqual(long.places.map((p) => p.name), ['A']);
+  assert.deepEqual(long.errors, [{ line: 3, reason: '시기는 20자 이하여야 합니다.' }]);
+
+  const dup = readPlaces(bytes('이름,시기,위도,경도\nA,Q1,37,127\nA,Q2,37,127\nA,Q1,37.00000001,127\n'));
+  assert.deepEqual(dup.places.map((p) => p.period), ['Q1', 'Q2']);
+  assert.deepEqual(dup.errors, [{ line: 4, reason: '2행과 같은 장소(이름·시기·좌표)라서 건너뜁니다.' }]);
+});
+
+test('toMissionCsv: 미션 한 줄씩, 기록은 채우고 없으면 빈 칸, 범위 밖 기록은 맨 아래에 표시해 함께 내보낸다', () => {
+  const places = [
+    {
+      name: 'SW_01',
+      period: 'Q1',
+      district: '태안',
+      mission: 'Q1_A_TA_SW__01_01 ~ _03',
+      missions: [
+        { mission: 'Q1_A_TA_SW__01_02', done: true, worker: '김가람', flightTime: '12분', batteryNo: '3', batteryLeft: '45', version: 2, updatedAt: '2026-11-01T09:00:00.000Z' },
+        { mission: 'Q0_OLD_01', done: false, worker: '이전', flightTime: '', batteryNo: '', batteryLeft: '', version: 1, updatedAt: '2026-10-01T09:00:00.000Z' },
+      ],
+    },
+    {
+      name: '=GS_01',
+      district: '고흥',
+      mission: '단일미션',
+      missions: [{ mission: '단일미션', done: false, worker: '박', flight_time: '5분', battery_no: '+1', battery_left: '100%', updated_at: '2026-11-02T00:00:00Z' }],
+    },
+    { name: '미션없음', period: 'Q1', district: '', mission: '', missions: [{ mission: 'X_01', done: true, worker: 'a', flightTime: 'b', batteryNo: 'c', batteryLeft: '0' }] },
+  ];
+  const text = toMissionCsv(places);
+  assert.ok(text.startsWith('\uFEFF'));
+  assert.ok(text.endsWith('\r\n'));
+  const rows = parseCsv(text.slice(1)).map((r) => r.cells);
+  assert.deepEqual(rows, [
+    ['시기', '시군', '이름', '미션명', '완료', '작업자', '비행시간', '배터리 번호', '배터리 남은 용량', '마지막 저장'],
+    ['Q1', '태안', 'SW_01', 'Q1_A_TA_SW__01_01', '아니오', '', '', '', '', ''],
+    ['Q1', '태안', 'SW_01', 'Q1_A_TA_SW__01_02', '예', '김가람', '12분', '3', '45', '2026-11-01T09:00:00.000Z'],
+    ['Q1', '태안', 'SW_01', 'Q1_A_TA_SW__01_03', '아니오', '', '', '', '', ''],
+    ['', '고흥', "'=GS_01", '단일미션', '아니오', '박', '5분', "'+1", '100', '2026-11-02T00:00:00Z'],
+    ['Q1', '태안', 'SW_01', 'Q0_OLD_01 (범위 밖)', '아니오', '이전', '', '', '', '2026-10-01T09:00:00.000Z'],
+    ['Q1', '', '미션없음', 'X_01 (범위 밖)', '예', 'a', 'b', 'c', '0', ''],
+  ]);
+  assert.equal(toMissionCsv([]), '\uFEFF시기,시군,이름,미션명,완료,작업자,비행시간,배터리 번호,배터리 남은 용량,마지막 저장\r\n');
+  // 기록 배열이 없거나 이상한 값이 섞여도 깨지지 않는다
+  assert.equal(parseCsv(toMissionCsv([{ name: 'A', mission: 'M', missions: [null, 3] }]).slice(1)).length, 2);
 });

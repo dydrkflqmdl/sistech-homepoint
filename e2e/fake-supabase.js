@@ -5,7 +5,8 @@
 // 메모리 DB와 세션은 localStorage에 둬서 새로고침해도 남는다.
 //
 // 테스트 훅 window.__fake:
-//   seed(places)            DB를 이 장소들로 바꾼다(missions 배열 포함 가능). 구독자에게 알리지 않는다.
+//   seed(places)            DB를 이 장소들로 바꾼다(missions 배열·period 포함 가능). 구독자에게 알리지 않는다.
+//   장소에는 시기(period, 계약 C10, 없으면 '')가 있다. import_places는 이름·좌표·시기가 모두 같아야 같은 장소로 본다.
 //   importRows(rows)        import_places와 같은 규칙으로 넣는다(데이터 준비용, 알림 없음).
 //   store()                 지금 DB(장소 + missions) 복사본. list_places와 같은 모양.
 //   remoteChange(fn, opts)  fn(db)로 DB를 바꾸고 구독자에게 postgres_changes를 보낸다. opts.table 기본 'places', opts.notify 기본 true
@@ -69,7 +70,7 @@
   });
   const placeJson = (db, p) => ({
     id: p.id, name: p.name, district: p.district, address: p.address, phone: p.phone, memo: p.memo, mission: p.mission,
-    lat: p.lat, lng: p.lng, createdAt: p.createdAt, updatedAt: p.updatedAt,
+    period: p.period ?? '', lat: p.lat, lng: p.lng, createdAt: p.createdAt, updatedAt: p.updatedAt,
     missions: db.missions.filter((m) => m.placeId === p.id).sort((a, b) => a.id - b.id).map(missionJson),
   });
   const live = (db) => db.places.filter((p) => !p.deletedAt);
@@ -88,7 +89,7 @@
     const t = now();
     const p = {
       id: db.nextId++, name: r.name, district: r.district ?? '', address: r.address ?? '', phone: r.phone ?? '', memo: r.memo ?? '',
-      mission: r.mission ?? '', lat: r.lat, lng: r.lng, createdAt: t, updatedAt: t,
+      mission: r.mission ?? '', period: r.period ?? '', lat: r.lat, lng: r.lng, createdAt: t, updatedAt: t,
     };
     db.places.push(p);
     return p;
@@ -109,9 +110,11 @@
       const district = String(r.district ?? '').slice(0, 200);
       const address = String(r.address ?? '').slice(0, 200);
       const mission = String(r.mission ?? '').slice(0, 200);
-      const existing = live(db).find((p) => p.name === name && p.lat === lat && p.lng === lng);
+      // 계약 C10: 시기가 다르면 이름·좌표가 같아도 다른 장소다(없으면 '').
+      const period = jsTrim(r.period).slice(0, 50);
+      const existing = live(db).find((p) => p.name === name && p.lat === lat && p.lng === lng && (p.period ?? '') === period);
       if (!existing) {
-        insertPlace(db, { name, district, address, phone: String(r.phone ?? '').slice(0, 200), memo: String(r.memo ?? '').slice(0, 2000), mission, lat, lng });
+        insertPlace(db, { name, district, address, phone: String(r.phone ?? '').slice(0, 200), memo: String(r.memo ?? '').slice(0, 2000), mission, period, lat, lng });
         imported++;
         continue;
       }
@@ -281,7 +284,7 @@
   // DB 행 → 실시간 알림의 행 모양(snake_case)
   const placeRow = (p) => ({
     id: p.id, name: p.name, district: p.district, address: p.address, phone: p.phone, memo: p.memo, mission: p.mission,
-    lat: p.lat, lng: p.lng, created_at: p.createdAt, updated_at: p.updatedAt, deleted_at: p.deletedAt ?? null,
+    period: p.period ?? '', lat: p.lat, lng: p.lng, created_at: p.createdAt, updated_at: p.updatedAt, deleted_at: p.deletedAt ?? null,
   });
   const missionRow = (m) => ({
     id: m.id, place_id: m.placeId, mission: m.mission, done: m.done, worker: m.worker, flight_time: m.flightTime,
@@ -409,7 +412,7 @@
     seed(places = []) {
       const db = emptyDb();
       for (const p of places) {
-        const row = insertPlace(db, { name: p.name, district: p.district, address: p.address, phone: p.phone, memo: p.memo, mission: p.mission, lat: roundCoord(p.lat), lng: roundCoord(p.lng) });
+        const row = insertPlace(db, { name: p.name, district: p.district, address: p.address, phone: p.phone, memo: p.memo, mission: p.mission, period: p.period, lat: roundCoord(p.lat), lng: roundCoord(p.lng) });
         for (const m of p.missions ?? []) {
           db.missions.push({ id: db.nextMid++, placeId: row.id, done: false, worker: '', flightTime: '', batteryNo: '', batteryLeft: '', version: 1, updatedAt: now(), ...m });
         }

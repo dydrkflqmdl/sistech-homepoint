@@ -34,7 +34,9 @@ await ev(`(() => {
   URL.createObjectURL = (blob) => { const url = orig(blob); window.__exports.push({ blob, url }); return url; };
   HTMLAnchorElement.prototype.click = function () { const e = window.__exports.at(-1); if (e && this.href === e.url) e.download = this.download; };
 })()`);
-await ev(`document.querySelector('#export-button').click()`);
+// csv.js에 미션 기록 내보내기(toMissionCsv, 계약 C11)가 있으면 [내보내기]가 메뉴를 띄운다 → [장소 내보내기]를 누른다.
+const clickExportPlaces = `document.querySelector('#export-button').click(); document.querySelector('#export-places')?.click();`;
+await ev(clickExportPlaces);
 await sleep(200);
 const exp = await ev(`(async () => {
   const e = window.__exports.at(-1);
@@ -46,11 +48,11 @@ const lines = exp.text.replace(/^﻿/, '').split('\r\n');
 const today = (d) => d.toISOString().slice(0, 10);
 check('내보내기 Blob 형식 text/csv;charset=utf-8', exp.type === 'text/csv;charset=utf-8', exp.type);
 check('BOM은 맨 앞에 1번만(EF BB BF)', JSON.stringify(exp.head) === '[239,187,191]' && exp.boms === 1, { head: exp.head, boms: exp.boms });
-check('머리글 "이름,시군,주소,전화번호,위도,경도,상태,완료/전체,메모,미션명"', lines[0] === '이름,시군,주소,전화번호,위도,경도,상태,완료/전체,메모,미션명', lines[0]);
+check('머리글 "이름,시기,시군,주소,전화번호,위도,경도,상태,완료/전체,메모,미션명"', lines[0] === '이름,시기,시군,주소,전화번호,위도,경도,상태,완료/전체,메모,미션명', lines[0]);
 check('파일명 places-YYYY-MM-DD.csv(오늘)', /^places-\d{4}-\d{2}-\d{2}\.csv$/.test(exp.download) && exp.download === `places-${today(new Date())}.csv`, exp.download);
-check('행: 진행 상태·완료/전체·수식 방어(\'=1+1)', lines[1] === "SW_01,태안,가람면 하늘리,010-1,37.277767,126.717126,진행 중,1/3,'=1+1,M_01 ~ _03", lines[1]);
-check('행: 줄바꿈·따옴표 메모는 따옴표로 감쌈', lines[2] === 'SW_02,태안,가람면 바람리,,37.167923,126.815733,미진행,0/2,"줄\n바꿈, ""따옴표""",N_01 ~ _02', JSON.stringify(lines[2]));
-check('행: 미션 없는 장소는 완료/전체 빈 칸', lines[3] === 'TB_01,보은,보은읍,,36.49,127.73,미진행,,,', lines[3]);
+check('행: 시기 빈 칸·진행 상태·완료/전체·수식 방어(\'=1+1)', lines[1] === "SW_01,,태안,가람면 하늘리,010-1,37.277767,126.717126,진행 중,1/3,'=1+1,M_01 ~ _03", lines[1]);
+check('행: 줄바꿈·따옴표 메모는 따옴표로 감쌈', lines[2] === 'SW_02,,태안,가람면 바람리,,37.167923,126.815733,미진행,0/2,"줄\n바꿈, ""따옴표""",N_01 ~ _02', JSON.stringify(lines[2]));
+check('행: 미션 없는 장소는 완료/전체 빈 칸', lines[3] === 'TB_01,,보은,보은읍,,36.49,127.73,미진행,,,', lines[3]);
 check('CRLF로 끝나고 행 수 = 장소 + 1', lines.length === 5 && lines[4] === '', lines.length);
 check('임시 링크는 바로 제거', exp.anchors === 0, exp.anchors);
 // 내보낸 CSV를 다시 읽으면 같은 장소(수식 방어 ' 제거)
@@ -59,7 +61,7 @@ const back = readPlaces(new TextEncoder().encode(exp.text));
 check('내보낸 CSV를 readPlaces로 다시 읽으면 3곳·메모 원래대로', back.places.length === 3 && back.places[0].memo === '=1+1' && back.places[1].memo === '줄\n바꿈, "따옴표"' && back.errors.length === 0, back.places.map((p) => p.memo));
 // 한국 시간 아침(UTC로는 전날)에 내보내면? — 관찰용(판정에는 넣지 않음)
 const kstMorning = await ev(`(() => { const RealDate = Date; const fixed = new RealDate('2026-11-07T08:00:00+09:00'); class D extends RealDate { constructor(...a) { super(...(a.length ? a : [fixed])); } static now() { return fixed.getTime(); } }
-  window.Date = D; document.querySelector('#export-button').click(); window.Date = RealDate; return window.__exports.at(-1).download; })()`);
+  window.Date = D; ${clickExportPlaces} window.Date = RealDate; return window.__exports.at(-1).download; })()`);
 console.log('관찰: 한국 시간 2026-11-07 08:00에 내보낸 파일명 =', kstMorning);
 
 // ══ 6. 미션 저장 ══

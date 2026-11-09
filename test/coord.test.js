@@ -5,7 +5,7 @@ import { roundCoord } from '../public/coord.js';
 // DB의 round_coord(round(x::numeric, 7))와 같은 결과여야 한다. SQL과의 비교는 supabase/tests/coord-cases.mjs가 맡는다.
 
 test('소수 7자리로 반올림한다', () => {
-  assert.equal(roundCoord(36.766667), 36.766667);
+  assert.equal(roundCoord(36.543217), 36.543217);
   assert.equal(roundCoord(36.12345678912), 36.1234568);
   assert.equal(roundCoord(126.1), 126.1);
   assert.equal(roundCoord(180), 180);

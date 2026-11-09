@@ -45,6 +45,9 @@ language sql as $$ select t.eq(p_name, to_jsonb(t.err(p_sql)), to_jsonb('P0001: 
 -- 이름으로 장소 id 찾기(지운 장소 포함)
 create function t.pid(p_name text) returns bigint
 language sql as $$ select id from public.places where name = p_name $$;
+-- 이름·시기로 장소 id 찾기(지운 장소 포함). 같은 이름이 시기별로 여러 줄일 때 쓴다.
+create function t.pidp(p_name text, p_period text) returns bigint
+language sql as $$ select id from public.places where name = p_name and period = p_period $$;
 
 -- save_mission 결과에서 status와 record 일부만 본다
 create function t.sm(p_place text, p_mission text, p_fields jsonb, p_base int) returns jsonb
@@ -72,6 +75,18 @@ select t.eq('새 칸: places.deleted_at·updated_by, missions.updated_by',
   (select jsonb_agg(table_name || '.' || column_name || ':' || data_type order by table_name, column_name) from information_schema.columns
    where table_schema = 'public' and (table_name, column_name) in (('places', 'deleted_at'), ('places', 'updated_by'), ('missions', 'updated_by'))),
   '["missions.updated_by:uuid", "places.deleted_at:timestamp with time zone", "places.updated_by:uuid"]');
+-- 시기(계약 C10): places.period text not null default '', 20자까지. 유일 제약은 (name, lat, lng, period).
+select t.eq('places.period: text, not null, 기본값 빈 문자열',
+  (select jsonb_build_array(data_type, is_nullable, column_default) from information_schema.columns
+   where table_schema = 'public' and table_name = 'places' and column_name = 'period'),
+  '["text", "NO", "''''::text"]');
+select t.eq('places 유일 제약은 places_name_lat_lng_period_key (name, lat, lng, period) 하나',
+  (select jsonb_agg(jsonb_build_array(c.conname, (select jsonb_agg(a.attname order by k.o) from unnest(c.conkey) with ordinality k(n, o)
+                                                  join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.n)))
+   from pg_constraint c where c.conrelid = 'public.places'::regclass and c.contype = 'u'),
+  '[["places_name_lat_lng_period_key", ["name", "lat", "lng", "period"]]]');
+select t.ok('places.period 길이 검사 제약', exists (select from pg_constraint where conrelid = 'public.places'::regclass and contype = 'c'
+  and pg_get_constraintdef(oid) like '%char_length(period) <= 20%'));
 -- security definer는 표에 쓰는 RPC 넷, 감사 트리거, 로그인 기록 쓰기 셋뿐이다(RLS·표 권한을 거치지 않고 써야 하는 것만).
 select t.eq('security definer 함수 목록',
   (select jsonb_agg(proname::text order by proname) from pg_proc where pronamespace = 'public'::regnamespace and prosecdef),
@@ -273,6 +288,90 @@ select t.eq('NFC·trim으로 저장(전화·메모는 그대로)',
 select t.eq('같은 이름을 NFC로 다시 가져오면 중복', public.import_places('[{"name":"각","lat":33.5,"lng":126.5}]'),
   '{"imported":0,"duplicates":1,"updated":0,"missionChanged":0}');
 
+-- ---------- 시기(period, 계약 C10) ----------
+-- 같은 이름·좌표라도 시기가 다르면 다른 장소다. 다음 분기 CSV가 앞 분기 장소의 미션명·기록을 덮지 않는다.
+select t.eq('시기 Q1 장소 가져오기', public.import_places('[{"name":"시기점","mission":"PA_1 ~ 2","period":"Q1","lat":35.7,"lng":127.7}]'),
+  '{"imported":1,"duplicates":0,"updated":0,"missionChanged":0}');
+select t.eq('Q1 장소에 기록', public.save_mission(t.pidp('시기점', 'Q1'), 'PA_1', '{"flightTime":"Q1분"}', null) -> 'status', '"ok"');
+select t.eq('같은 이름·좌표, 시기 Q2 → 새 장소(갱신 아님)',
+  public.import_places('[{"name":"시기점","mission":"PB_1 ~ 3","period":"Q2","lat":35.7,"lng":127.7}]'),
+  '{"imported":1,"duplicates":0,"updated":0,"missionChanged":0}');
+select t.eq('Q1 장소의 미션명·기록은 그대로, Q2는 따로',
+  (select jsonb_agg(jsonb_build_array(p.period, p.mission, (select jsonb_agg(m.mission || ':' || m.flight_time) from public.missions m where m.place_id = p.id)) order by p.period)
+   from public.places p where p.name = '시기점'),
+  '[["Q1", "PA_1 ~ 2", ["PA_1:Q1분"]], ["Q2", "PB_1 ~ 3", null]]');
+select t.eq('같은 시기면 예전처럼 갱신(duplicates·updated·missionChanged)',
+  public.import_places('[{"name":"시기점","mission":"PB_1 ~ 4","period":"Q2","lat":35.7,"lng":127.7}]'),
+  '{"imported":0,"duplicates":1,"updated":1,"missionChanged":1}');
+select t.eq('Q2 갱신 뒤 Q1 미션명은 그대로',
+  (select jsonb_object_agg(period, mission) from public.places where name = '시기점'), '{"Q1": "PA_1 ~ 2", "Q2": "PB_1 ~ 4"}');
+select t.eq('시기 앞뒤 공백은 떼고 비교(" Q1 " = Q1 → 중복)',
+  public.import_places(E'[{"name":"시기점","period":" Q1\\u3000","lat":35.7,"lng":127.7}]'),
+  '{"imported":0,"duplicates":1,"updated":0,"missionChanged":0}');
+select t.eq('한 번에 Q3·Q4 두 줄(같은 이름·좌표) → 2 삽입',
+  public.import_places('[{"name":"시기점","period":"Q4","lat":35.7,"lng":127.7},{"name":"시기점","period":"Q3","lat":35.7,"lng":127.7}]'),
+  '{"imported":2,"duplicates":0,"updated":0,"missionChanged":0}');
+select t.eq('시기점은 Q1~Q4 네 장소', (select jsonb_agg(period order by period) from public.places where name = '시기점'), '["Q1", "Q2", "Q3", "Q4"]');
+-- 하위 호환: 시기가 없는 줄(키 없음·null·공백만)은 ''이고 시기 없이 저장된 기존 장소와 합쳐진다.
+select t.eq('기존 장소 B는 시기 빈 문자열', (select jsonb_agg(period) from public.places where name = 'B'), '[""]');
+select t.eq('시기 키 없는 줄 → 기존 장소 B와 중복',
+  public.import_places('[{"name":"B","lat":36.2,"lng":126.2}]'), '{"imported":0,"duplicates":1,"updated":0,"missionChanged":0}');
+select t.eq('시기 null → 기존 장소 B와 중복',
+  public.import_places('[{"name":"B","period":null,"lat":36.2,"lng":126.2}]'), '{"imported":0,"duplicates":1,"updated":0,"missionChanged":0}');
+select t.eq('시기가 공백만이면 빈 문자열 → 기존 장소 B와 중복',
+  public.import_places(E'[{"name":"B","period":" \\t\\u3000 ","lat":36.2,"lng":126.2}]'), '{"imported":0,"duplicates":1,"updated":0,"missionChanged":0}');
+select t.eq('B는 여전히 한 줄', (select to_jsonb(count(*)::int) from public.places where name = 'B'), '1');
+select t.eq('B에 시기 Q1을 주면 새 장소', public.import_places('[{"name":"B","period":"Q1","lat":36.2,"lng":126.2}]') -> 'imported', '1');
+select t.eq('시기 없는 새 장소는 빈 문자열로 저장', (select jsonb_agg(period order by period) from public.places where name = 'B'), '["", "Q1"]');
+select t.ok('B Q1 정리(지우기)', public.delete_place(t.pidp('B', 'Q1')));
+reset role;
+delete from public.places where name = 'B' and period = 'Q1';
+set role authenticated;
+-- 검사: 20자까지, 문자열만
+select t.eq('시기 20자(한글)는 됨',
+  public.import_places(jsonb_build_array(jsonb_build_object('name', '시기20', 'period', repeat('가', 20), 'lat', 1.7, 'lng', 1.7))) -> 'imported', '1');
+select t.eq('시기 20자 저장', (select to_jsonb(char_length(period)) from public.places where name = '시기20'), '20');
+select t.raises('시기 21자는 오류(행 번호 포함)',
+  $q$select public.import_places('[{"line":2,"name":"시기21a","lat":1,"lng":1},{"line":5,"name":"시기21","period":"123456789012345678901","lat":1,"lng":1}]')$q$,
+  '5행: 시기는 20자까지 쓸 수 있습니다.');
+select t.raises('시기 21자는 line이 없으면 순번',
+  $q$select public.import_places(jsonb_build_array(jsonb_build_object('name', '시기21', 'period', repeat('가', 21), 'lat', 1, 'lng', 1)))$q$,
+  '1번째 장소: 시기는 20자까지 쓸 수 있습니다.');
+select t.ok('시기 오류 난 가져오기는 아무것도 넣지 않음', t.pid('시기21a') is null and t.pid('시기21') is null);
+select t.eq('앞뒤 공백을 떼면 20자면 됨',
+  public.import_places(jsonb_build_array(jsonb_build_object('name', '시기공백', 'period', '  ' || repeat('나', 20) || '  ', 'lat', 1.8, 'lng', 1.8))) -> 'imported', '1');
+select t.raises('시기가 숫자면 오류', $q$select public.import_places('[{"line":3,"name":"시기수","period":1,"lat":1,"lng":1}]')$q$,
+  '3행: 시기는 문자열이어야 합니다.');
+reset role;
+select t.ok('표 제약: 21자 시기는 직접 넣어도 거부',
+  t.err($q$insert into public.places (name, lat, lng, period) values ('시기직접', 1, 1, repeat('x', 21))$q$) like '23514:%');
+select t.ok('표 제약: 같은 (이름, 좌표, 시기)는 거부, 시기가 다르면 됨',
+  t.err($q$insert into public.places (name, lat, lng, period) values ('시기점', 35.7, 127.7, 'Q1')$q$) like '23505:%'
+  and t.err($q$insert into public.places (name, lat, lng, period) values ('시기직접', 1, 1, 'Q9'), ('시기직접', 1, 1, 'Q8')$q$) is null);
+delete from public.places where name = '시기직접';
+set role authenticated;
+-- 화면 JSON(place_json)에 period
+select t.eq('list_places 원소에 period',
+  (select jsonb_agg(e -> 'period' order by e ->> 'period') from jsonb_array_elements(public.list_places()) e where e ->> 'name' = '시기점'),
+  '["Q1", "Q2", "Q3", "Q4"]');
+select t.eq('시기 없는 장소의 period는 빈 문자열', (select e -> 'period' from jsonb_array_elements(public.list_places()) e where e ->> 'name' = 'B'), '""');
+select t.eq('get_places 원소에 period', public.get_places(array[t.pidp('시기점', 'Q2')]) #> '{0,period}', '"Q2"');
+select t.eq('update_memo의 place에 period', public.update_memo(t.pidp('시기점', 'Q1'), '시기 메모') #> '{place,period}', '"Q1"');
+-- soft delete 된 같은 (이름, 좌표, 시기) 행이 되살아난다. 시기가 다른 지운 장소는 되살리지 않는다.
+create temp table period_gone as select t.pidp('시기점', 'Q2') as id;
+select t.ok('Q2 지우기', public.delete_place((select id from period_gone)));
+select t.eq('Q3 다시 가져오기는 Q2를 되살리지 않음',
+  public.import_places('[{"name":"시기점","period":"Q3","lat":35.7,"lng":127.7}]'), '{"imported":0,"duplicates":1,"updated":0,"missionChanged":0}');
+select t.ok('Q2는 아직 지운 상태', (select deleted_at is not null from public.places where id = (select id from period_gone)));
+select t.eq('Q2 다시 가져오기 → 되살림(imported 1)',
+  public.import_places('[{"name":"시기점","mission":"PB_1 ~ 4","period":"Q2","lat":35.7,"lng":127.7}]'),
+  '{"imported":1,"duplicates":0,"updated":0,"missionChanged":0}');
+select t.eq('되살린 Q2: 같은 id, deleted_at 비움, 미션명 그대로',
+  (select jsonb_build_array(id = (select id from period_gone), deleted_at is null, mission) from public.places where name = '시기점' and period = 'Q2'),
+  '[true, true, "PB_1 ~ 4"]');
+select t.eq('시기점 Q1 기록은 끝까지 그대로',
+  (select jsonb_agg(m.mission || ':' || m.flight_time) from public.missions m where m.place_id = t.pidp('시기점', 'Q1')), '["PA_1:Q1분"]');
+
 -- ---------- save_mission ----------
 -- A의 미션은 지금 "M_01 ~ 02"(M_01, M_02). 예전 범위의 M_03 기록을 만들 수 없어야 한다.
 select t.raises('없는 장소', $q$select public.save_mission(999999, 'M_01', '{"done":false}', null)$q$, '장소를 찾을 수 없습니다.');
@@ -397,7 +496,7 @@ set role authenticated;
 -- ---------- list_places ----------
 select t.eq('list_places 원소 키',
   (select jsonb_agg(k order by k) from jsonb_object_keys(public.list_places() -> 0) k),
-  '["address","createdAt","district","id","lat","lng","memo","mission","missions","name","phone","updatedAt"]');
+  '["address","createdAt","district","id","lat","lng","memo","mission","missions","name","period","phone","updatedAt"]');
 select t.ok('list_places는 id 순',
   (select bool_and(a < b) from (select (e ->> 'id')::bigint a, lead((e ->> 'id')::bigint) over (order by o) b
                                 from jsonb_array_elements(public.list_places()) with ordinality x(e, o)) s where b is not null));

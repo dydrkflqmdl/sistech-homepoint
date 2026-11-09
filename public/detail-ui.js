@@ -1,6 +1,6 @@
 // 상세 카드: 그리기(길찾기·메모·미션 목록·삭제), 한글 조합 중 다시 그리기 미루기, 장소 고르기·닫기·삭제, Esc 처리.
 import { $, fill, h, refocus, toast } from './dom.js';
-import { hooks, isPlaceGone, state, touchPlace } from './state.js';
+import { hooks, isPlaceGone, periodOf, state, touchPlace } from './state.js';
 import { authEpoch, authFailed } from './session.js';
 import { panToPlace } from './map-ui.js';
 import { discardMemo, flushMemo, memoDrafts, memoStatusView, memoText, onMemoInput } from './memo-ui.js';
@@ -64,7 +64,13 @@ export function renderDetail() {
       { class: 'detail-head' },
       placeDot(p),
       // 장소를 고르면 초점이 여기로 온다(tabindex=-1: 탭 순서에는 넣지 않고 초점만 받을 수 있게).
-      h('h2', { id: 'detail-title', tabindex: '-1' }, p.name, missionBadge(p)),
+      h(
+        'h2',
+        { id: 'detail-title', tabindex: '-1' },
+        p.name,
+        periodOf(p) && h('span', { class: 'period-badge', title: '시기' }, periodOf(p)),
+        missionBadge(p),
+      ),
       h('button', { type: 'button', class: 'icon-btn', 'aria-label': '닫기', onclick: closeDetail }, '×'),
     ),
     // 주소에는 시군이 들어 있지 않다(목록은 시군별로 묶여 보이므로). 상세 카드만 시군을 작은 표시로 앞에 붙인다.

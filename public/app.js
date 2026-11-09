@@ -6,7 +6,7 @@
 import * as loginId from './login-id.js';
 import * as api from './api.js';
 import { $, refocus, toast } from './dom.js';
-import { collapseAllGroups, config, hooks, placeColor, state, visiblePlaces } from './state.js';
+import { collapseAllGroups, config, hooks, periodPlaces, placeColor, state, visiblePlaces } from './state.js';
 import {
   LOGIN_ENDED_MESSAGE,
   bumpAuthEpoch,
@@ -30,10 +30,10 @@ import { cancelSearch, renderFilters, renderList } from './list-ui.js';
 import { confirmDiscardDraft, confirmDiscardMissionDraft, missionAborts, missionDraftDirty, missionSaving } from './missions-ui.js';
 import { dropGonePlace, renderDetail, renderDetailUnlessComposing, requestSelect } from './detail-ui.js';
 import { accounts, accountsReset, renderAccounts } from './accounts-ui.js';
-import { renderImport } from './import-ui.js';
+import { closeExportMenu, renderImport } from './import-ui.js';
 
 // 아래쪽 모듈이 부르는 함수를 넘겨준다(state.js의 hooks 설명 참고).
-Object.assign(hooks, { dropGonePlace, leaveApp, render, renderDetail, renderKeepingInput, renderListAndMap, requestSelect });
+Object.assign(hooks, { closeExportMenu, dropGonePlace, leaveApp, render, renderDetail, renderKeepingInput, renderListAndMap, requestSelect });
 
 let unsubscribeChanges = null;
 
@@ -41,7 +41,7 @@ let unsubscribeChanges = null;
 
 function render() {
   // 미션 저장으로 그 상태의 장소가 하나도 안 남으면 칩도 사라지므로, 아무 칩도 눌리지 않은 채 걸러지지 않게 전체로 되돌린다.
-  if (state.filterColor && !state.places.some((p) => placeColor(p) === state.filterColor)) state.filterColor = null;
+  if (state.filterColor && !periodPlaces().some((p) => placeColor(p) === state.filterColor)) state.filterColor = null;
   const visible = visiblePlaces();
   renderFilters();
   renderList(visible);
@@ -119,15 +119,16 @@ function goHome() {
   state.importSkipped = [];
   state.importResults = null;
   state.importReview = null;
-  // 처음 화면은 시군을 모두 접은 상태다.
+  // 처음 화면은 시군을 모두 접은 상태다. 고른 시기는 그대로 둔다(기억해 둔 설정).
   collapseAllGroups();
+  closeExportMenu();
   // 계정 관리 창도 닫는다(요청 중이면 끝날 때까지 둔다).
   if (accounts.open && !accounts.busy) accountsReset();
   $('#search').value = '';
   renderImport();
   renderAccounts();
   render();
-  fitToPlaces(state.places);
+  fitToPlaces(periodPlaces());
   $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
 }
 
