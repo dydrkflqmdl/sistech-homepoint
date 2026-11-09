@@ -65,7 +65,8 @@ export async function initApi({ supabaseUrl, supabaseAnonKey }) {
 // 서버가 이 시간 안에 답하지 않으면 기다리기를 그만두고 안내한다. 화면의 입력값은 건드리지 않는다.
 let callTimeoutMs = 20000;
 export const TIMEOUT_MESSAGE = '응답이 없습니다. 입력한 내용은 그대로 있습니다.';
-export const ABORT_MESSAGE = '저장을 멈췄습니다. 입력한 내용은 그대로 있습니다.';
+// 끊어도 요청이 이미 서버에 닿았으면 저장됐을 수 있다([다시 시도]하면 화면이 같은 값인지 보고 저장된 것으로 처리한다).
+export const ABORT_MESSAGE = '저장을 멈췄습니다(이미 저장됐을 수도 있습니다). 입력한 내용은 그대로 있습니다.';
 
 // 시간 제한을 바꾼다(자동 점검이 20초를 기다리지 않으려고 쓴다).
 export function setCallTimeout(ms) {

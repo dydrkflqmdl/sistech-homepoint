@@ -192,19 +192,26 @@ const CADASTRAL_STORAGE_KEY = 'cadastral';
 let baseLayerKey = 'map';
 let cadastralOn = false;
 
+// 저장이 막힌 브라우저(사생활 보호 모드 등)에서는 기본값으로 시작한다. 원인은 처음 한 번만 콘솔에 남긴다.
+let storageWarned = false;
+function storageFailed(err) {
+  if (storageWarned) return;
+  storageWarned = true;
+  api.logCause('브라우저 저장소(localStorage)를 쓸 수 없어 지도 설정을 기억하지 못합니다.', err);
+}
 const readStorage = (key) => {
   try {
     return localStorage.getItem(key);
-  } catch {
-    // 저장이 막힌 브라우저(사생활 보호 모드 등)에서는 기본값으로 시작한다.
+  } catch (err) {
+    storageFailed(err);
     return null;
   }
 };
 const writeStorage = (key, value) => {
   try {
     localStorage.setItem(key, value);
-  } catch {
-    // 위와 같음
+  } catch (err) {
+    storageFailed(err);
   }
 };
 
@@ -1460,6 +1467,14 @@ async function submitReset() {
     refocus('#accounts-reset-password');
     return;
   }
+  // 본인이면 곧 로그아웃되므로, 바꾸기 전에 저장하지 않은 미션 기록을 묻고 메모는 끝까지 저장해 둔다.
+  if (self) {
+    if (!confirmDiscardDraft()) {
+      refocus('#accounts-reset-password');
+      return;
+    }
+    await saveAllMemos();
+  }
   const epoch = authEpoch;
   accounts.busy = true;
   accounts.resetInvalid = false;
@@ -1703,18 +1718,23 @@ let detailRenderPending = false;
 $('#detail').addEventListener('compositionstart', () => {
   detailComposing = true;
 });
-$('#detail').addEventListener('compositionend', () => {
+function endDetailComposing() {
   detailComposing = false;
   if (!detailRenderPending) return;
   detailRenderPending = false;
   // compositionend 바로 뒤에 오는 input을 먼저 받게 한 박자 늦춘다.
   setTimeout(renderKeepingInput, 0);
+}
+$('#detail').addEventListener('compositionend', endDetailComposing);
+// 조합 중이던 칸에서 초점이 빠지면 조합은 끝난 것이다(칸이 사라지거나 브라우저에 따라 compositionend가 안 올 수 있다).
+$('#detail').addEventListener('focusout', () => {
+  if (detailComposing) endDetailComposing();
 });
 
 function renderDetailUnlessComposing() {
-  // 고른 장소가 바뀌었거나 상세 정보가 닫히는 경우는 미루지 않는다.
+  // 고른 장소가 바뀌었거나 상세 정보가 닫히는 경우, 초점이 상세 정보 밖에 있는 경우는 미루지 않는다.
   const shown = Number($('#detail').dataset.placeId);
-  if (detailComposing && shown === state.selectedId) {
+  if (detailComposing && shown === state.selectedId && $('#detail').contains(document.activeElement)) {
     detailRenderPending = true;
     return;
   }
@@ -1738,6 +1758,8 @@ function select(id, { pan = false } = {}) {
   if (id !== state.selectedId) {
     state.selectedMission = null;
     state.missionDraft = null;
+    // 떠나는 장소의 메모가 이미 저장됐으면 초안을 지운다(다시 열 때 옛 "저장됨"이 남지 않게). 저장 중·실패한 것은 둔다.
+    if (memoDrafts.get(state.selectedId)?.status === 'saved') discardMemo(state.selectedId);
   }
   state.selectedId = id;
   render();
@@ -1770,18 +1792,28 @@ function closeDetail() {
   else refocus('#search');
 }
 
+// 화면이 직접 바꾼 장소(저장 응답 반영·삭제)의 순번. 목록 받기는 시작할 때 순번을 적어 두고, 그 뒤에 화면이 바꾼 장소에는
+// 받은 값을 넣지 않는다(저장 전에 시작한 받기가 늦게 끝나 방금 저장한 값·지운 장소를 되돌리지 않게). 그런 장소는 곧 다시 받는다.
+let localSeq = 0;
+const localTouch = new Map(); // 장소 id → 순번
+const touchPlace = (id) => localTouch.set(id, ++localSeq);
+const touchedSince = (since) => new Set([...localTouch].filter(([, seq]) => seq > since).map(([id]) => id));
+
 // 다른 기기에서 지워진 장소: 목록에서 빼고 상세 정보를 닫는다. DB 함수는 "장소를 찾을 수 없습니다." 예외를 던진다.
 const isPlaceGone = (err) => /장소를 찾을 수 없습니다/.test(err.message);
 function dropGonePlace(id) {
   state.places = state.places.filter((p) => p.id !== id);
+  touchPlace(id);
   discardMemo(id);
   if (state.selectedId === id) select(null);
   else render();
   toast('이 장소는 다른 기기에서 삭제되었습니다.');
 }
 
+// 저장 응답 등 화면이 직접 바꾼 장소를 넣는다(받기 결과는 commitPlaces로 넣는다).
 function replacePlace(updated) {
   state.places = state.places.map((p) => (p.id === updated.id ? updated : p));
+  touchPlace(updated.id);
 }
 
 // 메모 저장 응답을 반영한다. 응답의 미션 기록은 그사이 화면에서 먼저 바꾼 기록보다 오래됐을 수 있어서 화면 쪽을 남긴다.
@@ -1795,8 +1827,10 @@ function refocus(selector) {
   $(selector)?.focus({ preventScroll: true });
 }
 
-// render()는 상세 정보를 새로 만들므로, 사용자가 이미 옮겨 가서 쓰는 중인(아직 change 전인) 칸의 글자와 초점이 사라진다.
-// 휴대폰에서는 키보드까지 닫힌다. 그 칸을 기억해 두었다가 다시 그린 뒤 같은 칸에 글자·커서·초점을 돌려놓는다.
+// render()는 상세 정보를 새로 만들므로, 사용자가 쓰고 있던 칸의 초점이 사라진다(휴대폰에서는 키보드까지 닫힌다).
+// 그 칸을 기억해 두었다가 다시 그린 뒤 같은 칸에 커서·초점을 돌려놓는다.
+// 값은 되돌려 넣지 않는다: 칸의 값은 상태(메모 초안·미션 초안, 없으면 서버 값)로 다시 그렸다. 옛 칸의 값을 넣으면
+// 초안이 없는 메모 칸에 옛 메모가 남아, 그사이 받은 다른 기기의 메모를 이어 쓴 글로 덮어쓰게 된다.
 function renderKeepingInput() {
   const el = document.activeElement;
   const form = el?.closest?.('#detail .mission-form');
@@ -1805,25 +1839,24 @@ function renderKeepingInput() {
   else if (form && el.tagName === 'INPUT' && el.name) {
     selector = `#detail .mission-form[data-mission="${CSS.escape(form.dataset.mission)}"] input[name="${CSS.escape(el.name)}"]`;
   }
-  const isText = selector && el.type !== 'checkbox';
-  const saved = isText && { value: el.value, start: el.selectionStart, end: el.selectionEnd };
+  const caret = selector && el.type !== 'checkbox' && { start: el.selectionStart, end: el.selectionEnd };
 
   render();
   if (!selector) return;
   const next = $(selector);
   // 같은 칸이 그대로 있으면(한글 조합 중이라 다시 그리지 않음 등) 손대지 않는다.
   if (!next || next === el) return;
-  // 체크 상자는 상태에 이미 반영돼 있으므로 값을 덮어쓰지 않는다.
-  if (saved) {
-    next.value = saved.value;
-    if (saved.start != null) next.setSelectionRange(saved.start, saved.end);
+  if (caret && caret.start != null) {
+    const n = next.value.length;
+    next.setSelectionRange(Math.min(caret.start, n), Math.min(caret.end ?? caret.start, n));
   }
   next.focus({ preventScroll: true });
 }
 
 // 다른 미션을 열거나 닫으면 고치던 값은 버린다. 아직 저장 안 한 미션은 바로 입력 화면으로 연다.
 function toggleMission(name) {
-  if (!confirmDiscardDraft()) return;
+  // 미션을 바꿀 때는 미션 초안만 묻는다(메모는 같은 장소라 그대로 둔다).
+  if (!confirmDiscardMissionDraft()) return;
   state.selectedMission = state.selectedMission === name ? null : name;
   state.missionDraft = null;
   const p = state.places.find((x) => x.id === state.selectedId);
@@ -1860,6 +1893,11 @@ function setMissionRecord(id, record) {
 
 // 저장 중인 미션의 끊개. 저장 중 [취소]를 누르면 기다리기를 그만둔다.
 const missionAborts = new Map();
+
+// 서버 기록이 보낸 다섯 칸과 같은지(남은 용량은 숫자로 맞춘 값끼리).
+const sameMissionFields = (r, f) =>
+  Boolean(r.done) === Boolean(f.done) &&
+  ['worker', 'flightTime', 'batteryNo', 'batteryLeft'].every((k) => String(r[k] ?? '').trim() === String(f[k] ?? '').trim());
 
 // 저장 중 [취소]: 응답을 더 기다리지 않고 입력 화면으로 돌아온다(적던 값은 그대로, [다시 시도]로 다시 보낼 수 있다).
 function stopMissionSave(id, name) {
@@ -1927,6 +1965,10 @@ async function saveMissionDraft(id, name) {
   missionAborts.delete(key);
   if (epoch !== authEpoch) return;
 
+  // 시간 초과·[취소]로 끊긴 앞 저장이 사실은 들어갔던 경우: 최신 기록이 지금 보낸 값과 같으면 저장된 것으로 본다.
+  if (result?.status === 'conflict' && result.record && sameMissionFields(result.record, fields)) {
+    result = { status: 'ok', record: result.record };
+  }
   if (result?.status === 'conflict') {
     // 다른 기기가 먼저 저장했다. 적던 값은 그대로 두고, 최신 기록을 바탕으로 다시 저장할 수 있게 판을 맞춘다.
     // 알림 대신 폼 안의 고정 안내([최신값 불러오기]/[내 값으로 덮어쓰기])로 알린다.
@@ -2027,6 +2069,8 @@ function syncMemoStatus(id) {
 // 글자를 칠 때마다: 초안에 적고 1초 뒤 저장을 예약한다.
 function onMemoInput(id, text) {
   const d = memoDraftFor(id);
+  // 저장이 끝난 초안이면 칸에는 지금 서버 메모가 보이고 있었다. 그것을 바탕으로 고치기 시작한 것이다.
+  if (d.status === 'saved') d.base = findPlace(id)?.memo ?? d.base;
   d.text = text;
   // 충돌 중에는 사람이 고르기 전까지 저절로 저장하지 않는다(적던 글은 계속 고칠 수 있다).
   if (d.status === 'conflict') return;
@@ -2044,7 +2088,11 @@ function onMemoInput(id, text) {
 // 저장에 실패했거나(error) 충돌 중(conflict)인 메모는 여기서 다시 보내지 않는다. 떠나기 전에 버릴지 묻고([다시 저장]은 사람이 누른다).
 function flushMemo(id, text) {
   if (id == null) return;
-  if (text !== undefined) memoDraftFor(id).text = text;
+  if (text !== undefined) {
+    const d0 = memoDraftFor(id);
+    if (d0.status === 'saved') d0.base = findPlace(id)?.memo ?? d0.base;
+    d0.text = text;
+  }
   const d = memoDrafts.get(id);
   if (!d) return;
   if (d.status === 'saving') {
@@ -2058,8 +2106,21 @@ const flushAllMemos = () => {
   for (const [id, d] of memoDrafts) if (d.status === 'dirty') saveMemoNow(id);
 };
 
-// 저장 중인 메모가 모두 끝나기를 기다린다(로그아웃 전에 쓴다).
+// 저장 중인 메모가 모두 끝나기를 기다린다.
 const settleMemos = () => Promise.allSettled([...memoDrafts.values()].map((d) => d.promise).filter(Boolean));
+
+// 기다리던·저장 중인 메모를 모두 저장하고 끝나기를 기다린다(로그아웃·새로고침·본인 비밀번호 변경 전).
+// 저장하는 사이 더 친 글이 있으면 그것도 이어서 저장한다(최대 3번).
+async function saveAllMemos() {
+  for (let i = 0; i < 3; i++) {
+    flushAllMemos();
+    await settleMemos();
+    if (![...memoDrafts.values()].some((d) => d.status === 'dirty' || d.status === 'saving')) return;
+  }
+}
+
+// 저장되지 않은 메모(입력 중·저장 중·실패·충돌)가 남아 있는지.
+const anyUnsavedMemo = () => [...memoDrafts.values()].some((d) => d.status !== 'saved');
 
 function saveMemoNow(id) {
   const d = memoDrafts.get(id);
@@ -2087,6 +2148,7 @@ async function saveMemoDraft(id, d) {
     d.status = 'conflict';
     d.latest = p.memo;
     syncMemoStatus(id);
+    memoConflictElsewhere(id, p);
     return;
   }
   if (p.memo === d.text) {
@@ -2124,9 +2186,11 @@ async function saveMemoDraft(id, d) {
     return;
   }
   mergePlace(res.place);
-  if (res.status === 'conflict') {
+  // 최신 메모가 보낸 글과 같으면(끊긴 앞 저장이 들어갔던 것 등) 저장된 것으로 본다.
+  if (res.status === 'conflict' && res.place.memo !== text) {
     d.status = 'conflict';
     d.latest = res.place.memo;
+    memoConflictElsewhere(id, res.place);
   } else {
     rememberOwnWrite({ placeId: id, place: res.place });
     d.base = res.place.memo;
@@ -2139,9 +2203,16 @@ async function saveMemoDraft(id, d) {
     }
   }
   d.again = false;
+  // 이미 떠난 장소의 메모가 뒤늦게 저장됐으면 초안을 지운다(실패했으면 남겨 두어 돌아왔을 때 [다시 저장]).
+  if (state.selectedId !== id && d.status === 'saved') discardMemo(id);
   // 목록의 메모 표시·지도 말풍선을 고친다. 메모 칸은 다시 만들지 않는다(쓰는 중일 수 있다).
   renderListAndMap();
   syncMemoStatus(id);
+}
+
+// 이미 떠난 장소의 메모가 충돌하면 상태 줄이 안 보이므로 알림으로 알린다(돌아가면 안내와 두 갈래가 남아 있다).
+function memoConflictElsewhere(id, place) {
+  if (state.selectedId !== id) toast(`다른 기기에서 "${place.name}" 메모가 바뀌어 저장하지 못했습니다. 다시 열어 확인해 주세요.`);
 }
 
 // 충돌 안내의 [최신 메모 보기]: 내 글을 버리고 서버의 최신 메모를 칸에 넣는다.
@@ -2191,6 +2262,7 @@ async function removePlace(place) {
       return;
     }
     state.places = state.places.filter((p) => p.id !== place.id);
+    touchPlace(place.id);
     discardMemo(place.id);
     state.selectedId = null;
     state.selectedMission = null;
@@ -2248,6 +2320,7 @@ async function readImportFile(file) {
     bytes = await file.arrayBuffer();
   } catch (err) {
     // 고른 뒤 파일이 지워지거나 바뀐 경우
+    api.logCause('파일 읽기 실패', err);
     throw new Error('파일을 읽지 못했습니다. 다시 골라 주세요.', { cause: err });
   }
   try {
@@ -2448,6 +2521,36 @@ function applyPartial(ids, fetched) {
   commitPlaces(next);
 }
 
+// 전체 받기 결과를 넣는다. 받기를 시작한 뒤(since) 화면이 바꾼 장소는 화면 값을 두고(지운 장소는 되살리지 않고) 곧 다시 받는다.
+function applyFetchedAll(places, since) {
+  const skip = touchedSince(since);
+  if (skip.size > 0) {
+    const local = state.places.filter((p) => skip.has(p.id));
+    places = [...places.filter((p) => !skip.has(p.id)), ...local].sort((a, b) => a.id - b.id);
+    refetchSoon(local.map((p) => p.id));
+  }
+  applyPlaces(places);
+}
+
+// 일부 받기 결과를 넣는다. 규칙은 applyFetchedAll과 같다.
+function applyFetchedSome(ids, places, since) {
+  const skip = touchedSince(since);
+  if (skip.size > 0) {
+    refetchSoon([...ids].filter((id) => skip.has(id) && findPlace(id)));
+    ids = new Set([...ids].filter((id) => !skip.has(id)));
+    places = places.filter((p) => !skip.has(p.id));
+  }
+  applyPartial(ids, places);
+}
+
+// 이 장소들을 곧(300ms 뒤) 다시 받는다. 실시간 알림과 같은 길로 모은다.
+function refetchSoon(ids) {
+  if (ids.length === 0) return;
+  for (const id of ids) remote.changes.push({ table: 'places', type: 'REFETCH', placeId: id, removed: false, row: null });
+  clearTimeout(realtimeTimer);
+  realtimeTimer = setTimeout(flushRemote, REALTIME_DEBOUNCE_MS);
+}
+
 // 목록 받기(전체·일부)는 한 번에 하나씩 차례로 한다. 겹치면 늦게 끝난 오래된 결과가 새 결과를 덮을 수 있다.
 let fetchChain = Promise.resolve();
 function queueFetch(task) {
@@ -2459,23 +2562,25 @@ function queueFetch(task) {
 }
 
 // 장소 전체를 다시 받아 반영한다. 그사이 로그아웃했으면 버린다. 반영했으면 true.
-// 아직 시작하지 않은 전체 받기가 줄에 있으면 그것을 같이 기다린다(같은 목록을 두 번 받지 않게).
+// 같은 로그인에서 아직 시작하지 않은 전체 받기가 줄에 있으면 그것을 같이 기다린다(같은 목록을 두 번 받지 않게).
 let lastRefreshAt = 0;
-let queuedReload = null;
+let queuedReload = null; // { epoch, run }
 function reloadPlaces() {
-  if (queuedReload) return queuedReload;
+  if (queuedReload?.epoch === authEpoch) return queuedReload.run;
   const epoch = authEpoch;
-  const run = queueFetch(async () => {
-    queuedReload = null;
+  const entry = { epoch, run: null };
+  entry.run = queueFetch(async () => {
+    if (queuedReload === entry) queuedReload = null;
     if (epoch !== authEpoch) return false;
     lastRefreshAt = Date.now();
+    const since = localSeq;
     const places = await api.listPlaces();
     if (epoch !== authEpoch) return false;
-    applyPlaces(places);
+    applyFetchedAll(places, since);
     return true;
   });
-  queuedReload = run;
-  return run;
+  queuedReload = entry;
+  return entry.run;
 }
 
 // 로그인 직후·[다시 시도]: "불러오는 중…"을 보이며 전체를 받는다. 실패하면 목록 위에 고정 안내와 [다시 시도].
@@ -2625,7 +2730,10 @@ async function flushRemote() {
     }
   }
   const gone = new Set([...removedIds].filter((id) => findPlace(id)));
-  if (gone.size > 0) commitPlaces(state.places.filter((p) => !gone.has(p.id)));
+  if (gone.size > 0) {
+    for (const id of gone) touchPlace(id);
+    commitPlaces(state.places.filter((p) => !gone.has(p.id)));
+  }
   if (fetchIds.size === 0) return;
   if (fetchIds.size > PARTIAL_MAX) {
     await refreshPlaces({ force: true });
@@ -2635,10 +2743,11 @@ async function flushRemote() {
   try {
     await queueFetch(async () => {
       if (epoch !== authEpoch) return;
+      const since = localSeq;
       const { places, complete } = await api.getPlaces([...fetchIds]);
       if (epoch !== authEpoch) return;
-      if (complete) applyPlaces(places);
-      else applyPartial(fetchIds, places);
+      if (complete) applyFetchedAll(places, since);
+      else applyFetchedSome(fetchIds, places, since);
     });
   } catch (err) {
     if (authFailed(err) || epoch !== authEpoch) return;
@@ -2913,6 +3022,10 @@ function leaveApp(errorMessage, { notice = null } = {}) {
     remote.full = false;
     remoteChangedWhileImporting = false;
     ownWrites.length = 0;
+    // 앞 로그인의 받기가 새 로그인의 받기를 기다리게 하거나 재사용되지 않게 줄을 새로 만든다(늦게 온 결과는 epoch로 버린다).
+    fetchChain = Promise.resolve();
+    queuedReload = null;
+    localTouch.clear();
     clearTimeout(searchTimer);
     searchTimer = null;
     for (const ctrl of missionAborts.values()) ctrl.abort();
@@ -3011,10 +3124,9 @@ $('#logout-button').addEventListener('click', async () => {
     button.disabled = false;
     button.textContent = '로그아웃';
   };
-  // 기다리던·저장 중인 메모가 끝나기를 기다린다. 끝내 저장하지 못한 메모가 있으면 버릴지 묻는다.
-  flushAllMemos();
-  await settleMemos();
-  if ([...memoDrafts.values()].some((d) => d.status === 'error' || d.status === 'conflict') && !confirm('저장하지 못한 메모가 있습니다. 버리고 로그아웃할까요?')) {
+  // 기다리던·저장 중인 메모를 끝까지 저장한다(저장하는 사이 더 친 글까지). 그래도 남으면 버릴지 묻는다.
+  await saveAllMemos();
+  if (anyUnsavedMemo() && !confirm('저장하지 못한 메모가 있습니다. 버리고 로그아웃할까요?')) {
     restore();
     return;
   }
@@ -3068,8 +3180,24 @@ async function checkVersion() {
   }
 }
 if (APP_BUILD) setInterval(checkVersion, VERSION_CHECK_MS);
-$('#update-reload').addEventListener('click', () => {
-  if (confirmDiscardDraft()) location.reload();
+$('#update-reload').addEventListener('click', async () => {
+  if (!confirmDiscardMissionDraft()) return;
+  await saveAllMemos();
+  if (anyUnsavedMemo() && !confirm('저장하지 못한 메모가 있습니다. 버리고 새로고침할까요?')) return;
+  leavingOnPurpose = true;
+  location.reload();
+});
+
+// 탭을 닫거나 새로고침할 때 저장하지 않은 것이 있으면 브라우저가 한 번 묻게 한다(휴대폰 브라우저는 묻지 않을 수 있다).
+// 기다리던 메모는 이때 바로 저장을 시작한다.
+let leavingOnPurpose = false;
+window.addEventListener('beforeunload', (e) => {
+  if (!signedIn() || leavingOnPurpose) return;
+  flushAllMemos();
+  if (missionDraftDirty() || anyUnsavedMemo()) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
 });
 
 // 높이가 낮은 화면(가로로 든 휴대폰, 500px 이하)에서는 지도를 접어 목록을 넓게 쓸 수 있다. 고른 값은 기억한다.
