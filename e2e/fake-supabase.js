@@ -30,6 +30,7 @@
 //   update_memo(…, p_base_memo) 계약 C1: base가 지금 메모와 다르면 { status: 'conflict', place }.
 //                            legacyMemo = true면 옛 서버(인자 2개, 장소를 그대로 돌려줌, 3인자 호출은 PGRST202)
 //   softDelete = true        계약 C3: delete_place가 deleted_at만 찍는다(목록·조회에서 빠짐, 알림은 UPDATE)
+//   snapshotAtCall = ['get_places']  그 RPC는 부른 순간의 DB로 답하고 지연 뒤 돌려준다(늦게 온 옛 받기 결과 흉내)
 //   setAppLoginIds(map)      이메일 → app_metadata.login_id(계약 C4, 다음 setSession·로그인부터)
 //   비밀번호 규칙은 login-id.js의 isValidPassword·PASSWORD_RULE이 있으면 그것을, 없으면 6자~72바이트(길이만)
 (() => {
@@ -440,6 +441,8 @@
     noGetPlaces: false,
     legacyMemo: false,
     softDelete: false,
+    // 이름이 든 RPC는 부른 순간의 DB로 답한다(지연 뒤 도착). 기본은 지연이 끝날 때의 DB.
+    snapshotAtCall: [],
     failNext({ status = 401, code = 'PGRST301', message = 'JWT expired', name = null } = {}) { failQueue.push({ status, code, message, name }); },
     conflictNext(record = null) { conflictQueue.push(record); },
     // [계정 관리] 관리자 이메일 목록·가짜 계정 목록·함수 호출 기록
@@ -521,7 +524,11 @@
             return { data: null, error: { message: e.message, code: e.code, details: null, hint: null }, status: e.status, statusText: 'Bad Request' };
           }
         };
-        const promise = new Promise((resolve) => setTimeout(() => resolve(run()), fake.rpcDelay[name] ?? fake.delay));
+        // snapshotAtCall에 든 RPC는 부른 순간의 DB로 답을 만들고 지연 뒤에 돌려준다(늦게 도착한 옛 결과 흉내).
+        const wait = fake.rpcDelay[name] ?? fake.delay;
+        const promise = fake.snapshotAtCall.includes(name)
+          ? ((out) => new Promise((resolve) => setTimeout(() => resolve(out), wait)))(run())
+          : new Promise((resolve) => setTimeout(() => resolve(run()), wait));
         // PostgrestBuilder처럼 thenable(Promise 자체는 아님)
         return { then: (a, b) => promise.then(a, b) };
       },

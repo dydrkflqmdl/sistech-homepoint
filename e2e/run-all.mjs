@@ -20,6 +20,8 @@ const scripts = [
   'boot-login', 'missions', 'regress', 'multi-import', 'import', 'features', 'login-id', 'accounts', 'shots',
   // 화면 개선(사용자 요청 A-1·A-2, 리뷰 B-3~B-12)
   'ux-worker', 'ux-scroll', 'ux-memo', 'ux-sync', 'ux-perf', 'ux-map', 'ux-a11y', 'ux-accounts', 'ux-import',
+  // 코드 검토에서 나온 경쟁 조건·데이터 손실 경로
+  'ux-review',
 ];
 for (const f of fs.readdirSync(RESULTS)) if (f.startsWith('rpc-')) fs.rmSync(path.join(RESULTS, f));
 const rows = [];

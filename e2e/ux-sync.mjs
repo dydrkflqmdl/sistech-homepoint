@@ -108,7 +108,7 @@ await ev(`__fake.rpcDelay.save_mission = 4000`);
 await submit('M_02'); await sleep(200);
 await ev(`${form('M_02')}.querySelector('.btn.cancel').click()`); await sleep(150);
 v = await ev(`({ form: !!${form('M_02')}, error: ${form('M_02')}?.querySelector('.mission-error p')?.textContent, worker: ${form('M_02')}?.querySelector('input[name=worker]').value, disabled: ${form('M_02')}?.querySelector('input[name=worker]').disabled, submit: ${form('M_02')}?.querySelector('button[type=submit]').textContent, active: document.activeElement?.textContent })`);
-check('저장 중 [취소] → 바로 입력 화면으로(값 그대로, "저장을 멈췄습니다…" + [다시 시도]), 저장 단추에 초점', v.form && v.error === '저장을 멈췄습니다. 입력한 내용은 그대로 있습니다.' && v.worker === '이' && !v.disabled && v.submit === '저장' && v.active === '저장', v);
+check('저장 중 [취소] → 바로 입력 화면으로(값 그대로, "저장을 멈췄습니다(이미 저장됐을 수도…)" + [다시 시도]), 저장 단추에 초점', v.form && v.error === '저장을 멈췄습니다(이미 저장됐을 수도 있습니다). 입력한 내용은 그대로 있습니다.' && v.worker === '이' && !v.disabled && v.submit === '저장' && v.active === '저장', v);
 await ev(`__fake.rpcDelay.save_mission = 20`);
 await sleep(4200);
 await ev(`${form('M_02')}.querySelector('.btn.cancel').click()`); await sleep(150);

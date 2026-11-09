@@ -37,9 +37,10 @@ E2E_PORT=4198 node e2e/run-one.mjs ux-memo  # 하나 또는 몇 개만
 | `ux-a11y` | 누르는 자리 44px, 삭제 확인 문구, 가로 화면 지도 접기, 제목 초점, 알림 칸, 상태 기호, 계정 표 role |
 | `ux-accounts` | 비밀번호 [보기], 길이 규칙·서버 문구, 다른 계정 재설정 확인, 본인 재설정 뒤 로그인 안내 |
 | `ux-import` | 가져오기 전 확인(C7: 경고·근접 중복·미션명 변경), 옛 csv.js에서도 동작 |
+| `ux-review` | 코드 검토에서 나온 경로: 원격 메모를 덮어쓰지 않음, 늦게 온 옛 받기 결과가 방금 저장한 값을 되돌리지 않음, 로그아웃·새로고침·탭 닫기·본인 비밀번호 변경 전 메모 저장, 다시 로그인 시 멈춤 없음, 끊긴 저장 재시도, 조합 상태 해제 |
 
 `probe-a2.mjs`·`probe-header.mjs`는 run-all에 넣지 않는 진단 스크립트입니다.
 
 ## 가짜 서버(`fake-supabase.js`)
 
-메모리 DB를 localStorage에 두고, 진짜 Supabase처럼 바뀐 행마다 실시간 알림(postgres_changes)을 보냅니다. 점검 스크립트는 `window.__fake`로 데이터를 넣거나(`seed`, `importRows`, `remoteChange`), 실패를 만들고(`failNext({ name })`, `conflictNext`, `fnFailNext`), 서버 판을 바꿉니다(`noGetPlaces`, `legacyMemo`, `softDelete`). 자세한 목록은 파일 머리 주석에 있습니다.
+메모리 DB를 localStorage에 두고, 진짜 Supabase처럼 바뀐 행마다 실시간 알림(postgres_changes)을 보냅니다. 점검 스크립트는 `window.__fake`로 데이터를 넣거나(`seed`, `importRows`, `remoteChange`), 실패를 만들고(`failNext({ name })`, `conflictNext`, `fnFailNext`), 서버 판을 바꿉니다(`noGetPlaces`, `legacyMemo`, `softDelete`, `snapshotAtCall`). 자세한 목록은 파일 머리 주석에 있습니다.
