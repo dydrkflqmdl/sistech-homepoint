@@ -46,9 +46,6 @@ check('합계 줄: 저장 12', /합계[^|]*?저장\s*12/.test(panel ?? ''));
 check('패널에 "false" 없음', !/false/.test(panel ?? ''));
 const api = await store();
 check('DB 장소 12곳(10 + 2)', api.length === 12, String(api.length));
-// 가져온 뒤에는 최신 시기(Q1)가 골라진다(C10). 전체 목록을 보려고 시기 [전체]를 누른다.
-await ev(`document.querySelector('#period-filters [data-all]')?.click()`);
-await sleep(200);
 // 접힌 시군의 줄은 DOM에 없으므로(화면 성능 개선) 목록 수는 요약 문구와 시군 머리의 수로 본다.
 const listCount = await ev(`document.querySelector('#list-summary').textContent`);
 const groups = await ev(`[...document.querySelectorAll('#place-list .group-head .group-name')].map(g => g.textContent.trim())`);

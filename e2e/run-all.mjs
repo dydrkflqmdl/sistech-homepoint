@@ -22,8 +22,8 @@ const scripts = [
   'ux-worker', 'ux-scroll', 'ux-memo', 'ux-sync', 'ux-perf', 'ux-map', 'ux-a11y', 'ux-accounts', 'ux-import',
   // 코드 검토에서 나온 경쟁 조건·데이터 손실 경로
   'ux-review',
-  // 시기(C10)·미션 기록 내보내기(C11)
-  'ux-period',
+  // 내보내기 메뉴(장소 / 미션 기록, 계약 C11)
+  'ux-export',
 ];
 for (const f of fs.readdirSync(RESULTS)) if (f.startsWith('rpc-')) fs.rmSync(path.join(RESULTS, f));
 const rows = [];
