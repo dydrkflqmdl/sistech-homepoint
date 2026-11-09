@@ -7,15 +7,14 @@
 --      row에 period 키가 와도 무시한다(예전 화면이 보내도 오류 없이 같은 이름·좌표 장소와 합쳐진다).
 --   3) 유일 제약 places_name_lat_lng_period_key → places_name_coord unique (name, lat, lng), places_period_len 제약과 period 칸 삭제.
 -- list_places·get_places·update_memo는 place_json을 쓰므로 저절로 period가 빠진다. save_mission·delete_place는 바꾸지 않는다.
--- 마이그레이션 파일 하나가 한 트랜잭션이라, 중간에 멈추면 이 파일의 변경은 모두 되돌려진다.
+-- Supabase CLI(db push)는 파일을 문장 단위로 실행한다(파일 전체가 한 트랜잭션이 아니다). 그래서 트랜잭션 블록이 필요한
+-- lock table 같은 문장은 쓰지 않고, 되돌릴 수 없는 변경(제약 교체·칸 삭제) 앞에 검사 DO 블록을 둬서 검사에서 멈추면 아무것도 바뀌지 않게 한다.
 
 -- ===================================================================
 -- 0) 시기만 다른 같은 장소 검사
 -- ===================================================================
 
--- 검사와 제약 교체 사이에 다른 요청이 같은 이름·좌표의 다른 시기 장소를 넣지 못하게 먼저 표를 잠근다.
--- (어차피 아래 alter table이 같은 잠금을 잡는다. 순서만 앞당긴다.)
-lock table public.places in access exclusive mode;
+-- 검사와 제약 교체 사이의 짧은 틈에 다른 시기 장소가 들어오면 아래 alter table의 unique 추가가 실패해 배포가 멈춘다(데이터는 그대로). 그때 다시 배포하면 된다.
 
 do $$
 declare

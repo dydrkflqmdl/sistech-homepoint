@@ -43,7 +43,7 @@ for EXPOSED in 0 1; do
 
   "${PSQL[@]}" -d $DB -v ON_ERROR_STOP=1 -v exposed=$EXPOSED -f "$S/shim.sql" 2>&1 | grep -v 'wal_level\|HINT:  Set wal' || true
   for f in $MIGRATION; do
-    "${PSQL[@]}" -d $DB -v ON_ERROR_STOP=1 -1 -f "$f"
+    "${PSQL[@]}" -d $DB -v ON_ERROR_STOP=1 -f "$f"
   done
   "${PSQL[@]}" -d $DB -v ON_ERROR_STOP=1 -v cases="$CASES" -v coord_cases="$COORD_CASES" -v conn="host=127.0.0.1 port=$PORT dbname=$DB user=postgres" -f "$S/tests.sql"
 
