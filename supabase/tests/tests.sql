@@ -5,8 +5,12 @@
 \set ON_ERROR_STOP on
 \pset pager off
 -- 현장 사용자 둘(JWT sub). 쓰기 RPC는 auth.uid()가 있어야 한다.
+-- 미션 기록의 이름은 JWT의 아이디(app_metadata.login_id → user_metadata.login_id → email 앞부분)로 정해진다.
+-- u1은 user_metadata를 스스로 바꾼 경우(바꾼이름1)도 흉내 낸다. 기록에는 app_metadata 값(김현장)이 들어가야 한다.
 \set u1 eeeeeeee-0000-0000-0000-000000000001
 \set u2 eeeeeeee-0000-0000-0000-000000000002
+\set u1_claims '{"email":"u1@sistech.local","app_metadata":{"login_id":"김현장"},"user_metadata":{"login_id":"바꾼이름1"}}'
+\set u2_claims '{"email":"u2@sistech.local","app_metadata":{"login_id":"박현장"}}'
 
 -- ---------- 검사 도구 ----------
 create schema t;
@@ -45,6 +49,16 @@ language sql as $$ select id from public.places where name = p_name $$;
 -- save_mission 결과에서 status와 record 일부만 본다
 create function t.sm(p_place text, p_mission text, p_fields jsonb, p_base int) returns jsonb
 language sql as $$ select public.save_mission(t.pid(p_place), p_mission, p_fields, p_base) $$;
+
+-- 로그인 흉내: PostgREST처럼 JWT 클레임(request.jwt.claims, JSON)과 예전 방식의 request.jwt.claim.sub를 함께 넣는다.
+create function t.login(p_sub text, p_claims jsonb default '{}') returns void
+language sql as $$
+  select set_config('request.jwt.claim.sub', p_sub, false),
+         set_config('request.jwt.claims', (coalesce(p_claims, '{}') || jsonb_build_object('sub', p_sub))::text, false)
+$$;
+-- 로그인하지 않은 상태(대시보드·마이그레이션처럼 JWT 없음)
+create function t.logout() returns void
+language sql as $$ select set_config('request.jwt.claim.sub', '', false), set_config('request.jwt.claims', '', false) $$;
 
 \o /dev/null
 -- ---------- 구조 ----------
@@ -155,8 +169,8 @@ select t.raises('sub 없이 save_mission', $q$select public.save_mission(1, 'x',
 select t.raises('sub 없이 update_memo', $q$select public.update_memo(1, 'x')$q$, '로그인이 필요합니다.');
 select t.raises('sub 없이 delete_place', 'select public.delete_place(1)', '로그인이 필요합니다.');
 select t.eq('읽기 RPC는 sub 없이도 동작(아직 장소 없음)', public.list_places(), '[]');
--- 여기부터 현장 사용자 u1로 로그인한 상태
-select set_config('request.jwt.claim.sub', :'u1', false);
+-- 여기부터 현장 사용자 u1로 로그인한 상태(JWT 클레임에 아이디 포함)
+select t.login(:'u1', :'u1_claims');
 
 -- ---------- import_places ----------
 select t.eq('프런트가 함께 보내는 line 등 모르는 키는 무시',
@@ -183,7 +197,7 @@ select t.eq('이름이 다르면 새 장소', public.import_places('[{"name":"A2
   '{"imported":1,"duplicates":0,"updated":0,"missionChanged":0}');
 
 -- 미션 기록을 하나 만들어 두고 가져오기가 지우지 않는지 본다
-select t.eq('기록 하나 만들기', t.sm('A', 'M_02', '{"worker":"홍길동"}', null) -> 'status', '"ok"');
+select t.eq('기록 하나 만들기(보낸 이름 "홍길동"은 쓰지 않음)', t.sm('A', 'M_02', '{"worker":"홍길동"}', null) -> 'status', '"ok"');
 select t.eq('시군만 다르면 updated 1, missionChanged 0, 전화·메모는 그대로',
   public.import_places('[{"name":"A","district":"서산시","address":"","phone":"999","memo":"바뀐메모","mission":"","lat":36.1234568,"lng":126.1}]'),
   '{"imported":0,"duplicates":1,"updated":1,"missionChanged":0}');
@@ -207,7 +221,7 @@ select t.eq('미션명이 같으면 missionChanged 0(시군만 바뀜)',
   '{"imported":0,"duplicates":1,"updated":1,"missionChanged":0}');
 select t.eq('가져오기 뒤에도 미션 기록·메모 보존',
   (select jsonb_build_array(p.memo, m.worker, m.version) from public.places p join public.missions m on m.place_id = p.id where p.name = 'A'),
-  '["메모1","홍길동",1]');
+  '["메모1","김현장",1]');
 select t.eq('한 번에 같은 장소 두 줄: 1 삽입 1 중복',
   public.import_places('[{"name":"C","lat":35,"lng":127},{"name":"C","lat":35,"lng":127}]'),
   '{"imported":1,"duplicates":1,"updated":0,"missionChanged":0}');
@@ -270,21 +284,21 @@ select t.raises('본문이 객체가 아님', $q$select t.sm('A', 'M_01', '[]', 
 select t.raises('본문 null', $q$select t.sm('A', 'M_01', null, null)$q$, '잘못된 요청 본문입니다.');
 select t.raises('done이 문자열', $q$select t.sm('A', 'M_01', '{"done":"true"}', null)$q$, '완료 여부는 true/false여야 합니다.');
 select t.raises('done이 null', $q$select t.sm('A', 'M_01', '{"done":null}', null)$q$, '완료 여부는 true/false여야 합니다.');
-select t.raises('worker 숫자', $q$select t.sm('A', 'M_01', '{"worker":5}', null)$q$, '이름은(는) 문자열이어야 합니다.');
+select t.eq('이름(worker)은 쓰지 않으므로 종류를 검사하지 않음(기록 없음 + base 77 → 충돌)', t.sm('A', 'M_01', '{"worker":5}', 77), '{"status":"conflict","record":null}');
 select t.raises('flightTime 숫자', $q$select t.sm('A', 'M_01', '{"flightTime":5}', null)$q$, '비행시간은(는) 문자열이어야 합니다.');
 select t.raises('batteryNo null', $q$select t.sm('A', 'M_01', '{"batteryNo":null}', null)$q$, '배터리 번호은(는) 문자열이어야 합니다.');
 select t.raises('batteryLeft 숫자', $q$select t.sm('A', 'M_01', '{"batteryLeft":45}', null)$q$, '배터리 남은 용량은(는) 문자열이어야 합니다.');
 select t.raises('허용 키가 없으면', $q$select t.sm('A', 'M_01', '{"foo":1,"baseVersion":1,"version":3}', null)$q$, '바꿀 내용이 없습니다.');
 select t.raises('빈 객체', $q$select t.sm('A', 'M_01', '{}', null)$q$, '바꿀 내용이 없습니다.');
-select t.raises('형식 오류가 충돌보다 먼저', $q$select t.sm('A', 'M_01', '{"worker":1}', 77)$q$, '이름은(는) 문자열이어야 합니다.');
+select t.raises('형식 오류가 충돌보다 먼저', $q$select t.sm('A', 'M_01', '{"flightTime":1}', 77)$q$, '비행시간은(는) 문자열이어야 합니다.');
 select t.eq('기록이 없는데 base 1이면 충돌(record null)', t.sm('A', 'M_01', '{"worker":"x"}', 1), '{"status":"conflict","record":null}');
 select t.ok('충돌이면 기록을 만들지 않음', not exists (select from public.missions where place_id = t.pid('A') and mission = 'M_01'));
 
-select t.eq('새 기록: 줄바꿈·탭은 공백 하나로, 앞뒤 공백 제거, version 1',
-  (select jsonb_build_object('status', r -> 'status', 'worker', r #> '{record,worker}', 'version', r #> '{record,version}', 'done', r #> '{record,done}',
+select t.eq('새 기록: 이름은 보낸 값 대신 저장자 아이디, 다른 칸은 줄바꿈·탭을 공백 하나로·앞뒤 공백 제거, version 1',
+  (select jsonb_build_object('status', r -> 'status', 'worker', r #> '{record,worker}', 'batteryNo', r #> '{record,batteryNo}', 'version', r #> '{record,version}', 'done', r #> '{record,done}',
                              'batteryLeft', r #> '{record,batteryLeft}', 'mission', r #> '{record,mission}', 'keys', (select jsonb_agg(k order by k) from jsonb_object_keys(r -> 'record') k))
-   from t.sm('A', 'M_01', E'{"worker":" \\u3000홍\\t\\n길동\\r\\n ","unknown":1}', null) r),
-  '{"status":"ok","worker":"홍 길동","version":1,"done":false,"batteryLeft":"","mission":"M_01",
+   from t.sm('A', 'M_01', E'{"worker":" \\u3000홍\\t\\n길동\\r\\n ","batteryNo":" \\u30003\\t\\n번\\r\\n ","unknown":1}', null) r),
+  '{"status":"ok","worker":"김현장","batteryNo":"3 번","version":1,"done":false,"batteryLeft":"","mission":"M_01",
     "keys":["batteryLeft","batteryNo","done","flightTime","mission","updatedAt","version","worker"]}');
 select t.ok('updatedAt은 UTC ISO 8601',
   (select (t.sm('A', 'M_01', '{"flightTime":"10분"}', 1) #>> '{record,updatedAt}') ~ '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$'));
@@ -295,7 +309,7 @@ select t.eq('base가 오래되면 충돌', t.sm('A', 'M_01', '{"worker":"y"}', 1
 select t.eq('충돌 판정이 남은 용량 검사보다 먼저', t.sm('A', 'M_01', '{"batteryLeft":"abc"}', 1) -> 'status', '"conflict"');
 select t.eq('batteryLeft "45%" → "45", version 3',
   (select jsonb_build_array(r #> '{record,batteryLeft}', r #> '{record,version}', r #> '{record,worker}') from t.sm('A', 'M_01', '{"batteryLeft":" 45% "}', 2) r),
-  '["45",3,"홍 길동"]');
+  '["45",3,"김현장"]');
 select t.eq('batteryLeft "045" → "45"', t.sm('A', 'M_01', '{"batteryLeft":"045"}', 3) #> '{record,batteryLeft}', '"45"');
 select t.eq('batteryLeft "100"', t.sm('A', 'M_01', '{"batteryLeft":"100"}', 4) #> '{record,batteryLeft}', '"100"');
 select t.eq('batteryLeft "0%" → "0"', t.sm('A', 'M_01', '{"batteryLeft":"0%"}', 5) #> '{record,batteryLeft}', '"0"');
@@ -310,8 +324,8 @@ select t.eq('네 칸을 채우며 완료',
   (select jsonb_build_array(r -> 'status', r #> '{record,done}', r #> '{record,version}', r #> '{record,batteryLeft}')
    from t.sm('A', 'M_01', '{"done":true,"batteryNo":"3","batteryLeft":"20%"}', 7) r),
   '["ok",true,8,"20"]');
-select t.raises('완료된 기록에서 이름을 공백으로 비우면 거부', $q$select t.sm('A', 'M_01', '{"worker":"  \t "}', 8)$q$, '완료로 저장하려면 이름, 비행시간, 사용한 배터리 번호, 마지막 배터리 남은 용량을 모두 적어야 합니다.');
-select t.eq('완료 해제와 함께 비우기는 허용', t.sm('A', 'M_01', '{"done":false,"worker":""}', 8) #> '{record,version}', '9');
+select t.raises('완료된 기록에서 비행시간을 공백으로 비우면 거부', $q$select t.sm('A', 'M_01', '{"flightTime":"  \t "}', 8)$q$, '완료로 저장하려면 이름, 비행시간, 사용한 배터리 번호, 마지막 배터리 남은 용량을 모두 적어야 합니다.');
+select t.eq('완료 해제와 함께 비우기는 허용', t.sm('A', 'M_01', '{"done":false,"flightTime":""}', 8) #> '{record,version}', '9');
 select t.eq('텍스트는 200자로 자름', (select to_jsonb(char_length(t.sm('A', 'M_01', jsonb_build_object('batteryNo', repeat('가', 250)), 9) #>> '{record,batteryNo}'))), '200');
 select t.eq('일부 칸만 바꾸면 다른 칸은 그대로',
   (select jsonb_build_array(r #> '{record,flightTime}', r #> '{record,batteryLeft}', r #> '{record,done}', r #> '{record,version}') from t.sm('A', 'M_01', '{"flightTime":"5분"}', 10) r),
@@ -335,7 +349,7 @@ reset role;
 
 -- ---------- 대시보드(postgres)처럼 표 권한이 있는 쓰기도 트리거가 지킨다 ----------
 -- 로그인 없이(JWT 없이) 쓰는 것을 흉내 낸다.
-select set_config('request.jwt.claim.sub', '', false);
+select t.logout();
 insert into public.places (name, mission, lat, lng) values ('직접', 'K_1 ~ 3', 1.123456789, 2);
 select t.eq('직접 삽입도 좌표를 7자리로', (select to_jsonb(lat) from public.places where name = '직접'), '1.1234568');
 select t.ok('로그인 없이 쓰면 updated_by null', (select updated_by is null from public.places where name = '직접'));
@@ -361,23 +375,23 @@ select t.eq('version을 줄여도 이전 값 + 1(4)', (select to_jsonb(version) 
 select t.raises('직접 수정: 범위 밖 미션으로 바꾸기 거부',
   format($q$update public.missions set mission = 'K_9' where place_id = %s and mission = 'K_1'$q$, t.pid('직접')), '이 장소에 없는 미션입니다.');
 -- 화면이 들고 있던 오래된 version으로 저장하면 충돌(직접 쓰기가 version을 올렸으므로)
-select set_config('request.jwt.claim.sub', :'u1', false);
+select t.login(:'u1', :'u1_claims');
 set role authenticated;
 select t.eq('직접 수정 뒤 오래된 version 저장은 충돌(최신 기록과 함께)',
   (select jsonb_build_array(r -> 'status', r #> '{record,version}', r #> '{record,worker}') from t.sm('직접', 'K_1', '{"worker":"화면"}', 1) r),
   '["conflict",4,"직접3"]');
-select t.eq('최신 version으로는 저장, updated_by는 로그인 사용자',
-  (select jsonb_build_array(r -> 'status', r #> '{record,version}') from t.sm('직접', 'K_1', '{"worker":"화면"}', 4) r), '["ok",5]');
+select t.eq('최신 version으로는 저장(이름은 저장자 아이디), updated_by는 로그인 사용자',
+  (select jsonb_build_array(r -> 'status', r #> '{record,version}', r #> '{record,worker}') from t.sm('직접', 'K_1', '{"worker":"화면"}', 4) r), '["ok",5,"김현장"]');
 reset role;
 select t.ok('RPC로 고친 기록의 updated_by = u1',
   (select updated_by = :'u1'::uuid from public.missions where place_id = t.pid('직접') and mission = 'K_1'));
 -- 대시보드에서 장소를 아예 지우는 것(완전 삭제)은 그대로 된다. 기록도 함께 지워진다.
-select set_config('request.jwt.claim.sub', '', false);
+select t.logout();
 create temp table direct_gone as select t.pid('직접') as id;
 delete from public.places where name = '직접';
 select t.ok('대시보드 완전 삭제: 장소와 기록 모두 없음',
   t.pid('직접') is null and not exists (select from public.missions where place_id = (select id from direct_gone)));
-select set_config('request.jwt.claim.sub', :'u1', false);
+select t.login(:'u1', :'u1_claims');
 set role authenticated;
 
 -- ---------- list_places ----------
@@ -468,19 +482,19 @@ select t.eq('되살린 뒤 다시 가져오면 평소처럼 중복', public.impo
 select t.eq('되살린 장소에 이어서 저장(version 12)', t.sm('A', 'M_01', '{"worker":"되살림"}', 11) #> '{record,version}', '12');
 -- 지운 장소를 미션명을 바꿔 두 줄로 가져오기: 첫 줄은 되살림(imported, missionChanged로 세지 않음), 둘째 줄은 평소 갱신
 select t.eq('RV 가져오기', public.import_places('[{"name":"RV","mission":"V_1 ~ 2","lat":35.1,"lng":127.1}]') -> 'imported', '1');
-select t.eq('RV 기록', t.sm('RV', 'V_2', '{"worker":"옛"}', null) -> 'status', '"ok"');
+select t.eq('RV 기록', t.sm('RV', 'V_2', '{"flightTime":"옛"}', null) -> 'status', '"ok"');
 select t.ok('RV 지우기', public.delete_place(t.pid('RV')));
 select t.eq('지운 장소 + 같은 장소 두 줄: 1 되살림, 1 중복(갱신·missionChanged)',
   public.import_places('[{"name":"RV","mission":"V_1 ~ 3","lat":35.1,"lng":127.1},{"name":"RV","mission":"V_1 ~ 4","lat":35.1,"lng":127.1}]'),
   '{"imported":1,"duplicates":1,"updated":1,"missionChanged":1}');
 select t.eq('RV: 미션명은 마지막 줄 값, 옛 기록(V_2) 남음',
-  (select jsonb_build_array(p.mission, p.deleted_at is null, m.mission, m.worker) from public.places p join public.missions m on m.place_id = p.id where p.name = 'RV'),
+  (select jsonb_build_array(p.mission, p.deleted_at is null, m.mission, m.flight_time) from public.places p join public.missions m on m.place_id = p.id where p.name = 'RV'),
   '["V_1 ~ 4", true, "V_2", "옛"]');
 
 -- ---------- 범위 밖 기록 ----------
 -- 미션명 범위가 줄면 범위 밖 기록은 지우지 않고 남긴다(화면이 숨김). 고칠 수는 없고, 범위가 돌아오면 이어서 고친다.
 select t.eq('범위 시험 장소(R_1 ~ 3)', public.import_places('[{"name":"R","mission":"R_1 ~ 3","lat":35.2,"lng":127.2}]') -> 'imported', '1');
-select t.eq('R_3 기록(version 1)', t.sm('R', 'R_3', '{"worker":"범위"}', null) #> '{record,version}', '1');
+select t.eq('R_3 기록(version 1)', t.sm('R', 'R_3', '{"batteryNo":"범위"}', null) #> '{record,version}', '1');
 select t.eq('미션명 범위를 줄이면 missionChanged', public.import_places('[{"name":"R","mission":"R_1 ~ 2","lat":35.2,"lng":127.2}]'),
   '{"imported":0,"duplicates":1,"updated":1,"missionChanged":1}');
 select t.eq('범위 밖 기록도 list_places에 그대로 나옴',
@@ -493,15 +507,49 @@ select t.raises('범위 밖 기록은 대시보드 직접 UPDATE도 트리거가
 set role authenticated;
 select t.eq('범위를 되돌리기', public.import_places('[{"name":"R","mission":"R_1 ~ 3","lat":35.2,"lng":127.2}]') -> 'missionChanged', '1');
 select t.eq('범위가 돌아오면 같은 기록을 이어서 고침(version 2)',
-  (select jsonb_build_array(r -> 'status', r #> '{record,version}', r #> '{record,worker}') from t.sm('R', 'R_3', '{"flightTime":"7분"}', 1) r),
+  (select jsonb_build_array(r -> 'status', r #> '{record,version}', r #> '{record,batteryNo}') from t.sm('R', 'R_3', '{"flightTime":"7분"}', 1) r),
   '["ok",2,"범위"]');
+
+-- ---------- 미션 기록 이름 = 저장한 사람의 아이디(화면이 보낸 이름은 쓰지 않음) ----------
+select t.eq('이름 시험 장소(W_1 ~ 3)', public.import_places('[{"name":"W","mission":"W_1 ~ 3","lat":35.3,"lng":127.3}]') -> 'imported', '1');
+select t.eq('보낸 이름 대신 JWT app_metadata.login_id(사용자가 바꾼 user_metadata는 무시)',
+  (select jsonb_build_array(r -> 'status', r #> '{record,worker}', r #> '{record,flightTime}') from t.sm('W', 'W_1', '{"worker":"다른 사람","flightTime":"1분"}', null) r),
+  '["ok","김현장","1분"]');
+select t.eq('이름 값이 문자열이 아니어도 저장자 아이디', t.sm('W', 'W_1', '{"worker":5}', 1) #> '{record,worker}', '"김현장"');
+select t.login(:'u2', :'u2_claims');
+select t.eq('이름 키 없이 저장하면 기존 이름 유지(다른 사람이 저장해도)',
+  (select jsonb_build_array(r #> '{record,worker}', r #> '{record,flightTime}', r #> '{record,version}') from t.sm('W', 'W_1', '{"flightTime":"2분"}', 2) r),
+  '["김현장","2분",3]');
+select t.ok('이름은 그대로지만 updated_by는 마지막에 쓴 u2', (select updated_by = :'u2'::uuid from public.missions where place_id = t.pid('W') and mission = 'W_1'));
+select t.eq('이름 키가 있으면(빈 값이라도) 저장하는 사람(u2)의 아이디로 바뀜', t.sm('W', 'W_1', '{"worker":""}', 3) #> '{record,worker}', '"박현장"');
+-- 아이디를 고르는 순서: app_metadata.login_id → user_metadata.login_id → email의 @ 앞부분
+select t.login(:'u1', '{"email":"u1@sistech.local","app_metadata":{"login_id":"  "},"user_metadata":{"login_id":" 사용자메타 "}}');
+select t.eq('app_metadata.login_id가 비어 있으면 user_metadata.login_id(앞뒤 공백 제거)', t.sm('W', 'W_1', '{"worker":"x"}', 4) #> '{record,worker}', '"사용자메타"');
+select t.login(:'u1', '{"email":"xn--4k0bz9vb1i@sistech.local","app_metadata":{"provider":"email"}}');
+select t.eq('둘 다 없으면 email의 @ 앞부분(xn--… 그대로)', t.sm('W', 'W_1', '{"worker":"x"}', 5) #> '{record,worker}', '"xn--4k0bz9vb1i"');
+select t.login(:'u1', '{}');
+select t.raises('아이디를 전혀 알 수 없으면 이름 키가 있는 저장은 거부', $q$select t.sm('W', 'W_1', '{"worker":"x"}', 6)$q$,
+  '저장한 사람의 아이디를 알 수 없습니다. 다시 로그인해 주세요.');
+select t.eq('아이디를 몰라도 이름 키가 없는 저장은 됨(기존 이름 유지)',
+  (select jsonb_build_array(r -> 'status', r #> '{record,worker}') from t.sm('W', 'W_1', '{"batteryNo":"1"}', 6) r), '["ok","xn--4k0bz9vb1i"]');
+select t.login(:'u1', :'u1_claims');
+-- 완료 조건은 그대로: 이름이 빈 기록을 이름 키 없이 완료로 저장하면 거부, 이름 키를 보내면 아이디가 들어가 완료
+select t.eq('이름 없이 칸만 채운 새 기록(W_2)은 이름이 빈 칸',
+  (select jsonb_build_array(r -> 'status', r #> '{record,worker}') from t.sm('W', 'W_2', '{"flightTime":"3분","batteryNo":"2","batteryLeft":"50"}', null) r), '["ok",""]');
+select t.raises('이름이 빈 기록을 이름 키 없이 완료로 저장하면 거부', $q$select t.sm('W', 'W_2', '{"done":true}', 1)$q$,
+  '완료로 저장하려면 이름, 비행시간, 사용한 배터리 번호, 마지막 배터리 남은 용량을 모두 적어야 합니다.');
+select t.eq('이름 키와 함께 완료로 저장하면 저장자 아이디로 완료',
+  (select jsonb_build_array(r -> 'status', r #> '{record,done}', r #> '{record,worker}') from t.sm('W', 'W_2', '{"done":true,"worker":""}', 1) r), '["ok",true,"김현장"]');
+select t.eq('완료된 기록에 이름을 공백으로 보내도 아이디가 들어가 완료 유지',
+  (select jsonb_build_array(r -> 'status', r #> '{record,done}', r #> '{record,worker}') from t.sm('W', 'W_2', '{"worker":"  "}', 2) r), '["ok",true,"김현장"]');
 
 -- ---------- 감사 로그·updated_by ----------
 -- 다른 사용자(u2)가 쓰면 그 사용자가 남는다
-select set_config('request.jwt.claim.sub', :'u2', false);
+select t.login(:'u2', :'u2_claims');
 select t.eq('u2가 B 메모 저장', public.update_memo(t.pid('B'), 'u2 메모') -> 'status', '"ok"');
-select t.eq('u2가 A 기록 저장', t.sm('A', 'M_02', '{"worker":"u2"}', 1) -> 'status', '"ok"');
-select set_config('request.jwt.claim.sub', :'u1', false);
+select t.eq('u2가 A 기록 저장(이름은 u2의 아이디)',
+  (select jsonb_build_array(r -> 'status', r #> '{record,worker}') from t.sm('A', 'M_02', '{"worker":"u2"}', 1) r), '["ok","박현장"]');
+select t.login(:'u1', :'u1_claims');
 select t.ok('authenticated: audit_log select 거부', t.err('select * from public.audit_log') like '42501:%');
 select t.ok('authenticated: audit_log insert 거부', t.err($q$insert into public.audit_log (tbl, op) values ('places', 'INSERT')$q$) like '42501:%');
 select t.ok('authenticated: audit_log update·delete 거부',
@@ -584,6 +632,8 @@ select dblink_exec('a', 'set role authenticated');
 select dblink_exec('b', 'set role authenticated');
 select dblink_exec('a', format('set request.jwt.claim.sub = %L', :'u1'));
 select dblink_exec('b', format('set request.jwt.claim.sub = %L', :'u2'));
+select dblink_exec('a', format('set request.jwt.claims = %L', (:'u1_claims'::jsonb || jsonb_build_object('sub', :'u1'::text))::text));
+select dblink_exec('b', format('set request.jwt.claims = %L', (:'u2_claims'::jsonb || jsonb_build_object('sub', :'u2'::text))::text));
 
 -- 1) 기록이 있을 때 두 세션이 같은 version 1을 기준으로 저장
 select dblink_exec('a', 'begin');
@@ -595,7 +645,7 @@ select t.ok('세션 B는 A가 끝날 때까지 기다림', dblink_is_busy('b') =
 select dblink_exec('a', 'commit');
 create temp table r1 as select r::jsonb as r from dblink_get_result('b') as x(r text);
 select t.eq('세션 B는 충돌, 최신 기록(A, version 2)을 받음',
-  (select jsonb_build_array(r -> 'status', r #> '{record,worker}', r #> '{record,version}') from r1), '["conflict","A",2]');
+  (select jsonb_build_array(r -> 'status', r #> '{record,worker}', r #> '{record,version}') from r1), '["conflict","김현장",2]');
 select * from dblink_get_result('b') as x(r text);
 
 -- 2) 기록이 없을 때 두 세션이 모두 base null로 처음 저장
@@ -608,7 +658,7 @@ select t.ok('세션 B는 기다림(처음 저장)', dblink_is_busy('b') = 1);
 select dblink_exec('a', 'commit');
 create temp table r2 as select r::jsonb as r from dblink_get_result('b') as x(r text);
 select t.eq('세션 B는 충돌, A가 만든 기록(version 1)을 받음',
-  (select jsonb_build_array(r -> 'status', r #> '{record,worker}', r #> '{record,version}') from r2), '["conflict","A",1]');
+  (select jsonb_build_array(r -> 'status', r #> '{record,worker}', r #> '{record,version}') from r2), '["conflict","김현장",1]');
 select * from dblink_get_result('b') as x(r text);
 
 -- 3) 장소 잠금을 거치지 않는 대시보드 직접 쓰기(postgres)가 version을 안 올려도 트리거가 올리므로 저장은 충돌로 막힌다
@@ -636,11 +686,11 @@ create temp table r4 as select r from dblink_get_result('b') as x(r text);
 select t.eq('삭제 커밋 뒤 기다리던 저장은 장소 없음 오류', (select to_jsonb(r) from r4), '"P0001: 장소를 찾을 수 없습니다."');
 select * from dblink_get_result('b') as x(r text);
 select t.eq('기다리던 저장은 아무것도 쓰지 않음(C_1은 A의 version 2 그대로, 기록은 남음)',
-  (select jsonb_build_array(worker, version) from public.missions where place_id = t.pid('동시') and mission = 'C_1'), '["A", 2]');
+  (select jsonb_build_array(worker, version) from public.missions where place_id = t.pid('동시') and mission = 'C_1'), '["김현장", 2]');
 
 -- 5) 두 기기가 같은 메모를 같은 기준으로 동시에 저장하면 뒤에 온 쪽은 충돌(계약 C1)
 set role authenticated;
-select set_config('request.jwt.claim.sub', :'u1', false);
+select t.login(:'u1', :'u1_claims');
 select t.eq('메모 동시성용 장소', public.import_places('[{"name":"메모동시","memo":"처음","lat":34.5,"lng":128.5}]') -> 'imported', '1');
 reset role;
 select dblink_exec('a', 'begin');
@@ -672,6 +722,25 @@ select dblink_exec('a', 'commit');
 create temp table r6 as select r::jsonb as r from dblink_get_result('b', false) as x(r text);
 select t.eq('세션 B 가져오기도 끝남(둘 다 시군 갱신)', (select r from r6), '{"imported":0,"duplicates":2,"updated":2,"missionChanged":0}');
 select * from dblink_get_result('b') as x(r text);
+
+-- 7) 두 기기가 같은 장소의 다른 미션을 동시에 저장하면(장소 잠금으로 줄 섬) 각 기록에는 각자의 아이디가 들어간다.
+--    화면이 보낸 이름(서로 상대 아이디를 적어 보냄)은 쓰지 않는다.
+set role authenticated;
+select t.eq('이름 동시성용 장소', public.import_places('[{"name":"이름동시","mission":"W_1 ~ 2","lat":34.9,"lng":128.9}]') -> 'imported', '1');
+reset role;
+select dblink_exec('a', 'begin');
+select t.eq('세션 A(김현장)가 W_1 저장(커밋 전, 이름은 "박현장"이라고 보냄)',
+  (select r::jsonb #> '{record,worker}' from dblink('a', $q$select t.sm('이름동시', 'W_1', '{"worker":"박현장","flightTime":"A"}', null)::text$q$) as x(r text)), '"김현장"');
+select dblink_send_query('b', $q$select t.sm('이름동시', 'W_2', '{"worker":"김현장","flightTime":"B"}', null)::text$q$);
+select pg_sleep(0.5);
+select t.ok('세션 B(박현장)는 같은 장소라 A가 끝날 때까지 기다림', dblink_is_busy('b') = 1);
+select dblink_exec('a', 'commit');
+create temp table r7 as select r::jsonb as r from dblink_get_result('b') as x(r text);
+select t.eq('세션 B 저장 ok, 이름은 B의 아이디', (select jsonb_build_array(r -> 'status', r #> '{record,worker}') from r7), '["ok","박현장"]');
+select * from dblink_get_result('b') as x(r text);
+select t.eq('두 기록의 이름·updated_by는 각자의 것',
+  (select jsonb_agg(jsonb_build_array(mission, worker, flight_time, updated_by::text) order by mission) from public.missions where place_id = t.pid('이름동시')),
+  jsonb_build_array(jsonb_build_array('W_1', '김현장', 'A', :'u1'::text), jsonb_build_array('W_2', '박현장', 'B', :'u2'::text)));
 select dblink_disconnect('a');
 select dblink_disconnect('b');
 
@@ -680,6 +749,8 @@ select dblink_disconnect('b');
 -- ===================================================================
 
 -- ---------- 구조·권한 ----------
+-- 앞 구간의 u1 클레임이 남아 있으면 JWT 대비 경로 검사가 흔들리므로 비우고 시작한다.
+select t.logout();
 select t.ok('login_logs RLS 켜짐', (select relrowsecurity from pg_class where oid = 'public.login_logs'::regclass));
 select t.ok('auth.sessions에 로그인 기록 트리거가 있음',
   exists (select from pg_trigger where tgrelid = 'auth.sessions'::regclass and tgname = 'login_logs_on_session' and not tgisinternal));
