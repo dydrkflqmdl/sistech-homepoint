@@ -36,14 +36,20 @@ p {
   margin: 0;
 }
 
-/* 레이아웃: 휴대폰은 지도 위·목록 아래, 넓은 화면은 목록 왼쪽·지도 오른쪽 */
+/* 레이아웃: 휴대폰은 지도 위·목록 아래, 넓은 화면은 목록 왼쪽·지도 오른쪽.
+   앱 화면은 문서(페이지) 자체가 스크롤되지 않는다. 스크롤은 목록 패널(.panel) 안에서만 한다.
+   position: relative + overflow: hidden은 안전망이다. 패널 밖으로 새는 요소가 있어도 문서 높이를 늘리지 못한다. */
 .app {
+  position: relative;
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
+  grid-template-areas: 'band' 'top' 'main';
   height: 100dvh;
+  overflow: hidden;
 }
 
 .topbar {
+  grid-area: top;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -101,6 +107,7 @@ p {
 }
 
 .layout {
+  grid-area: main;
   display: grid;
   grid-template-rows: 42% 1fr;
   /* 문서에서는 목록(패널)이 지도보다 먼저 오지만(키보드·화면 읽기 순서), 휴대폰 화면에서는 지도를 위에 둔다 */
@@ -134,13 +141,18 @@ p {
   overflow-wrap: anywhere;
 }
 
+/* position: relative가 중요하다. 패널 안의 화면 읽기 전용 글자(.sr-only)·계정 표 머리 줄은 position: absolute인데,
+   위치를 잡은 조상이 없으면 문서 전체를 기준으로 놓여 패널 스크롤 밖으로 샌다. 계정 관리 창처럼 긴 내용이 위에 열려
+   시군 머리가 화면 아래로 밀리면, 그 글자들이 문서 높이를 늘려 페이지 전체가 한 번 더 스크롤됐다(머리글·지도가 밀려 올라감). */
 .panel {
   grid-area: panel;
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
   min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
 }
 
