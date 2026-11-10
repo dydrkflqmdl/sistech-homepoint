@@ -68,6 +68,27 @@ test('숫자 묶음이 15자리를 넘으면 범위로 보지 않는다', () => 
   assert.deepEqual(missionNames('a0000000000000001~3'), ['a0000000000000001~3']);
 });
 
+test('빗금으로 나뉜 미션명은 조각마다 펼쳐 이어 붙인다(한 행에 포인트 두 개)', () => {
+  const bs = missionNames('Q1ASSBS1701 ~ 09 / Q1ASSBS1801 ~ 05');
+  assert.equal(bs.length, 14); // 소티 0/14
+  assert.equal(bs[0], 'Q1ASSBS1701');
+  assert.equal(bs[8], 'Q1ASSBS1709');
+  assert.equal(bs[9], 'Q1ASSBS1801');
+  assert.equal(bs[13], 'Q1ASSBS1805');
+  assert.equal(missionNames('Q1ASSIJ1001 ~ 17 / Q1ASSIJ1101 ~ 07').length, 24);
+  assert.equal(missionNames('Q1ASSIJ1201 ~ 13 / Q1ASSIJ1301 ~ 10').length, 23);
+  assert.deepEqual(missionNames('A1~3 ／ B1~2'), ['A1', 'A2', 'A3', 'B1', 'B2']); // 전각 빗금
+  assert.deepEqual(missionNames('A1~3 / A2~4'), ['A1', 'A2', 'A3', 'A4']); // 겹치는 미션은 한 번만
+  assert.deepEqual(missionNames('A1~3 / B1~2 / C5'), ['A1', 'A2', 'A3', 'B1', 'B2', 'C5']);
+  // 빈 조각이 있으면 나누지 않고 예전처럼 통째로 본다
+  assert.deepEqual(missionNames('A1~3 /'), ['A1~3 /']);
+  assert.deepEqual(missionNames('A1~3 /  / B1~2'), ['A1~3 /  / B1~2']);
+  // 합쳐서 500개를 넘으면 펼치지 않는다
+  assert.equal(missionNames('X1~300 / Y1~200').length, 500);
+  assert.deepEqual(missionNames('X1~300 / Y1~201'), ['X1~300 / Y1~201']);
+  assert.deepEqual(missionProgress('Q1ASSBS1701 ~ 09 / Q1ASSBS1801 ~ 05', [{ mission: 'Q1ASSBS1803', done: true }]), { total: 14, done: 1 });
+});
+
 test('범위가 아니거나 이상한 범위는 미션 하나로 본다', () => {
   assert.deepEqual(missionNames(''), []);
   assert.deepEqual(missionNames('  '), []);

@@ -14,8 +14,28 @@ const MAX_DIGITS = 15;
 // 이름에 붙인다 → Q1DGHGS0101 … Q1DGHGS0110. 뒷자리가 1이 아니면("Q1_A_10 ~ 9", "Q1DGHGS0100 ~ 10") 미션 하나다.
 // 전각 숫자(０-９)는 반각으로 바꿔 읽고, 결과 이름도 반각이다. 번호가 15자리를 넘거나 500개 이상이면 펼치지 않는다.
 // 범위가 아닌 미션명은 미션 하나로 본다.
+// 한 행에 포인트 두 개가 합쳐진 "Q1ASSBS1701 ~ 09 / Q1ASSBS1801 ~ 05"처럼 빗금(/ ／)으로 나뉜 미션명은 조각마다
+// 위 규칙으로 펼쳐 이어 붙인다(9개 + 5개 = 14개). 빈 조각이 있으면("A1~3 /") 나누지 않고 통째로 본다.
+// 조각끼리 같은 미션은 한 번만 세고, 합쳐서 500개를 넘으면 펼치지 않는다.
 // 이 규칙은 DB 함수 mission_names(supabase/migrations)와 똑같아야 한다. 바꾸면 양쪽을 함께 바꾼다.
 export function missionNames(raw) {
+  const parts = String(raw ?? '').split(/[/／]/);
+  if (parts.length < 2 || parts.some((p) => p.trim() === '')) return missionNamesOne(raw);
+  const names = [];
+  const seen = new Set();
+  for (const part of parts) {
+    for (const name of missionNamesOne(part)) {
+      if (!seen.has(name)) {
+        seen.add(name);
+        names.push(name);
+      }
+    }
+  }
+  return names.length > MAX_MISSIONS ? missionNamesOne(raw) : names;
+}
+
+// 빗금으로 나뉘지 않은 미션명 하나를 펼친다(위 규칙).
+function missionNamesOne(raw) {
   const text = String(raw ?? '')
     .trim()
     .replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
