@@ -24,6 +24,10 @@ const scripts = [
   'ux-review',
   // 내보내기 메뉴(장소 / 미션 기록, 계약 C11)
   'ux-export',
+  // 휴대폰 머리글 메뉴(☰), 미션 기록 창(모달)·비행시간 분·초, 상세 정보를 고른 장소 줄 아래에
+  'ux-menu', 'ux-mission-modal', 'ux-detail-inline',
+  // 휴대폰 아래 창 높이 조절 바
+  'ux-sheet',
 ];
 for (const f of fs.readdirSync(RESULTS)) if (f.startsWith('rpc-')) fs.rmSync(path.join(RESULTS, f));
 const rows = [];

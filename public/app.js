@@ -1,5 +1,5 @@
 // 화면의 뼈대: 모듈을 이어 붙이고(hooks), 다시 그리기, 처음 화면, 로그인·로그아웃 전환, 연결 상태·새 버전 띠, 시작.
-// 각 화면 조각은 아래 모듈에 있다. 의존은 한 방향(dom → state → session → map-ui·memo-ui → sync → list-ui·missions-ui
+// 각 화면 조각은 아래 모듈에 있다. 의존은 한 방향(dom → menu-ui → state → session → map-ui·memo-ui → sync → list-ui·missions-ui
 // → detail-ui → accounts-ui·import-ui → app)이고, 아래 모듈이 위 모듈 함수를 부를 때는 state.js의 hooks를 거친다.
 // login-id.js는 다른 담당이 함수를 더해 가는 파일이라 이름공간으로 가져온다.
 // 아직 없는 이름(isValidPassword 등)을 이름으로 가져오면 모듈 전체가 안 열리므로, 쓸 때 있는지 보고 쓴다.
@@ -31,6 +31,8 @@ import { confirmDiscardDraft, confirmDiscardMissionDraft, missionAborts, mission
 import { dropGonePlace, renderDetail, renderDetailUnlessComposing, requestSelect } from './detail-ui.js';
 import { accounts, accountsReset, renderAccounts } from './accounts-ui.js';
 import { closeExportMenu, renderImport } from './import-ui.js';
+// 휴대폰 아래 창 높이 조절 바(손잡이 이벤트만 건다).
+import './sheet-ui.js';
 
 // 아래쪽 모듈이 부르는 함수를 넘겨준다(state.js의 hooks 설명 참고).
 Object.assign(hooks, { closeExportMenu, dropGonePlace, leaveApp, render, renderDetail, renderKeepingInput, renderListAndMap, requestSelect });

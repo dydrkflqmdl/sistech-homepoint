@@ -32,7 +32,8 @@ const view = `(() => {
   return {
     login: !q('#login').hidden, app: !q('.app').hidden,
     loginError: q('#login-error').hidden ? null : q('#login-error').textContent,
-    buttonShown: !!q('#accounts-button') && !q('#accounts-button').hidden && q('#accounts-button').offsetParent !== null,
+    // 휴대폰(390)에서는 머리글 버튼이 ☰ 안에 접혀 있다. 관리자에게 보이는지는 ☰를 펼쳤을 때 기준으로 본다.
+    buttonShown: (() => { const m = q('#menu-button'), narrow = m.offsetParent !== null && !q('.topbar').classList.contains('menu-open'); if (narrow) m.click(); const shown = !!q('#accounts-button') && !q('#accounts-button').hidden && q('#accounts-button').offsetParent !== null; if (narrow) m.click(); return shown; })(),
     panelOpen: !panel.hidden, panelChildren: panel.children.length,
     message: msg && !msg.hidden ? msg.textContent : null, messageError: !!msg?.classList.contains('error'), messageRole: msg?.getAttribute('role') ?? null,
     rows: [...document.querySelectorAll('#accounts-panel .accounts-row')].map((tr) => ({
@@ -248,7 +249,7 @@ await waitPanel(b, `document.querySelectorAll('#accounts-panel .accounts-row').l
 await click(b, '#accounts-close');
 await sleep(100);
 v = await b.ev(view);
-check('[닫기] → 창 닫힘, 초점은 #accounts-button', !v.panelOpen && v.active === 'accounts-button', v);
+check('[닫기] → 창 닫힘, 초점은 머리글(휴대폰에서는 계정 관리 버튼이 접혀 있어 ☰)', !v.panelOpen && v.active === 'menu-button', v);
 
 // ── 401 → 세션 만료로 로그아웃 ──
 await click(b, '#accounts-button');

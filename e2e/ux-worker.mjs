@@ -5,6 +5,7 @@
 import { launch, PROJECT, prepare, reporter, sleep } from './lib.mjs';
 
 const { loginIdToEmail } = await import(PROJECT + '/public/login-id.js');
+const { parseFlightTime, formatFlightTime } = await import(PROJECT + '/public/flight-time.js');
 const { check, finish } = reporter('ux-worker');
 const b = await launch('ux-worker');
 const ev = b.ev;
@@ -23,7 +24,18 @@ const workerInfo = (m) => ev(`(() => { const f = ${form(m)}; const i = f?.queryS
     hint: f.querySelector('.field-hint')?.textContent ?? null, note: f.querySelector('.field-note')?.textContent ?? null,
     describedBy: hintIds.every((id) => !!document.getElementById(id)) && hintIds.includes('worker-hint') }; })()`);
 const openMission = (m) => ev(`document.querySelector('#detail .mission-item[data-mission="${m}"]').click()`);
-const fill = (m, values) => ev(`(() => { const f = ${form(m)}; for (const [k, v] of Object.entries(${JSON.stringify(values)})) {
+// 비행시간은 분·초 두 칸: fill의 flightTime('10분')은 flightMin·flightSec로 나눠 넣는다.
+const splitFlight = (values) => {
+  if (!('flightTime' in values)) return values;
+  const { flightTime, ...rest } = values;
+  const t = parseFlightTime(flightTime);
+  return { ...rest, flightMin: t.min, flightSec: t.sec };
+};
+const flight = async (m) => {
+  const t = await ev(`(() => { const f = ${form(m)}; return [f.querySelector('input[name=flightMin]').value, f.querySelector('input[name=flightSec]').value]; })()`);
+  return formatFlightTime(t[0], t[1]);
+};
+const fill = (m, values) => ev(`(() => { const f = ${form(m)}; for (const [k, v] of Object.entries(${JSON.stringify(splitFlight(values))})) {
   const i = f.querySelector('input[name="' + k + '"]'); if (i.type === 'checkbox') { if (i.checked !== v) i.click(); } else { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); } } })()`);
 const submit = (m) => ev(`${form(m)}.querySelector('button[type=submit]').click()`);
 const record = (m) => ev(`__fake.store().find(p => p.name === 'SW_01').missions.find(x => x.mission === ${JSON.stringify(m)}) ?? null`);
@@ -44,7 +56,7 @@ check('이름 칸은 회색 바탕 + 라벨 옆 "로그인한 아이디로 기�
 await fill('M_02', { worker: '다른사람' });
 check('이름 칸에 다른 값을 넣으려 해도 로그인 아이디 그대로', (await workerInfo('M_02'))?.value === '손두병');
 let c0 = await confirms();
-await openMission('M_02'); await sleep(150); // 같은 미션을 눌러 닫기
+await ev(`document.querySelector('#detail .mission-dialog .mission-dialog-close').click()`); await sleep(150); // 창 닫기(×)
 check('이름만 있는(고친 것 없는) 새 미션은 닫을 때 묻지 않음', (await confirms()) === c0 && !(await ev(`!!${form('M_02')}`)), { asked: (await confirms()) - c0 });
 
 // ── 3. 저장: worker는 늘 로그인 아이디 ──
@@ -79,12 +91,14 @@ check('실시간으로 상세 정보를 다시 그려도 이름 칸은 로그인
 await fill('M_03', { flightTime: '7분' });
 await ev(`__fake.conflictNext({ done: false, worker: '박', flightTime: '5분', batteryNo: '9', batteryLeft: '10', version: 4, updatedAt: '' })`);
 await submit('M_03'); await idle('M_03'); await sleep(150);
-let v = await ev(`({ latest: ${form('M_03')}.querySelector('.mission-conflict-latest')?.textContent, flight: ${form('M_03')}.querySelector('input[name=flightTime]').value })`);
+let v = await ev(`({ latest: ${form('M_03')}.querySelector('.mission-conflict-latest')?.textContent })`);
+v.flight = await flight('M_03');
 w = await workerInfo('M_03');
 check('충돌 → 최신 저장값에는 저장한 사람(박), 이름 칸은 로그인 아이디, 적던 비행시간은 그대로', v.latest === '최신 저장값: 미완료 · 박 · 5분 · 9 · 10%' && w.value === '손두병' && v.flight === '7분', { v, w });
 await ev(`${form('M_03')}.querySelector('.conflict-latest').click()`); await sleep(150);
 w = await workerInfo('M_03');
-v = await ev(`({ panel: !!${form('M_03')}.querySelector('.mission-conflict'), flight: ${form('M_03')}.querySelector('input[name=flightTime]').value, active: document.activeElement?.name })`);
+v = await ev(`({ panel: !!${form('M_03')}.querySelector('.mission-conflict'), active: document.activeElement?.name })`);
+v.flight = await flight('M_03');
 check('[최신값 불러오기] → 최신 값(5분)으로, 이름 칸은 로그인 아이디 + "지금 기록의 이름은 박입니다…" 안내', !v.panel && v.flight === '5분' && w.value === '손두병' && /지금 기록의 이름은 박입니다/.test(w.note ?? '') && v.active === 'done', { v, w });
 await fill('M_03', { flightTime: '8분' });
 await ev(`__fake.conflictNext({ done: false, worker: '최', flightTime: '6분', batteryNo: '9', batteryLeft: '10', version: 6, updatedAt: '' })`);
@@ -97,6 +111,7 @@ check('[내 값으로 덮어쓰기] → 최신 판(6)을 바탕으로 내 값(8�
 // ── 7. 메타데이터가 없는 계정은 이메일(xn--)에서 되살린 아이디 ──
 await prepare(b, { places, email: KIM });
 await ev(`__e2e.row('SW_01').click()`); await sleep(250);
+await b.waitFor(`!!document.querySelector('#detail .mission-item[data-mission="M_04"]')`, 3000);
 await openMission('M_04'); await sleep(150);
 check('메타데이터 없는 계정 → 이메일에서 되살린 김철수가 이름 칸에', (await workerInfo('M_04'))?.value === '김철수');
 

@@ -47,6 +47,10 @@
     isEmpty() { return !this.sw; }
   }
 
+  class Point {
+    constructor(x, y) { this.x = x; this.y = y; }
+  }
+
   const MapTypeId = { ROADMAP: 1, NORMAL: 1, SKYVIEW: 2, HYBRID: 3, OVERLAY: 4, ROADVIEW: 5, TRAFFIC: 6, TERRAIN: 7, BICYCLE: 8, BICYCLE_HYBRID: 9, USE_DISTRICT: 10 };
 
   class KMap {
@@ -91,7 +95,28 @@
     getMapTypeId() { return this.mapTypeId; }
     addOverlayMapTypeId(id) { this.__overlayTypes.add(id); this.__calls.push(['addOverlayMapTypeId', id]); }
     removeOverlayMapTypeId(id) { this.__overlayTypes.delete(id); this.__calls.push(['removeOverlayMapTypeId', id]); }
-    relayout() {}
+    // 진짜 SDK처럼 relayout 때 칸 크기를 다시 읽는다(그 전까지 좌표 변환은 옛 크기 기준). 가운데 좌표는 그대로 둔다.
+    relayout() {
+      const r = this.container.getBoundingClientRect();
+      this.__size = { w: r.width, h: r.height };
+      this.__calls.push(['relayout', Math.round(r.width), Math.round(r.height)]);
+    }
+    // 단계마다 두 배씩 넓어지는 단순한 평면 투영(점검용). 칸 좌표 ↔ 위경도.
+    getProjection() {
+      const m = this;
+      const size = () => m.__size ?? (() => { const r = m.container.getBoundingClientRect(); return (m.__size = { w: r.width, h: r.height }); })();
+      const deg = () => 0.00001 * 2 ** m.level;
+      return {
+        coordsFromContainerPoint(p) {
+          const { w, h } = size();
+          return new LatLng(m.center.lat - (p.y - h / 2) * deg(), m.center.lng + (p.x - w / 2) * deg());
+        },
+        containerPointFromCoords(ll) {
+          const { w, h } = size();
+          return new Point(w / 2 + (ll.lng - m.center.lng) / deg(), h / 2 - (ll.lat - m.center.lat) / deg());
+        },
+      };
+    }
     setDraggable() {}
     setZoomable() {}
   }
@@ -146,6 +171,7 @@
       Map: KMap,
       LatLng,
       LatLngBounds,
+      Point,
       CustomOverlay,
       MapTypeId,
       event,

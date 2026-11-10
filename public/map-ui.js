@@ -287,6 +287,22 @@ export function fitToPlaces(places) {
   if (kmap.getLevel() < 3) kmap.setLevel(3);
 }
 
+// 지도 칸 크기를 바꾸되 화면에 보이던 지도는 제자리(위 끝 기준)에 둔다. 휴대폰 아래 창 높이 조절(sheet-ui.js)이 쓴다.
+// apply()가 칸 크기를 바꾼다. 카카오 지도는 relayout하면 가운데 좌표를 새 칸의 가운데에 두므로, 칸이 아래로 늘거나
+// 줄면 지도가 그 절반만큼 밀린다. 새 칸의 가운데에 올 좌표를 (옛 화면 기준으로) 미리 구해 relayout 뒤 그 자리로 바로 옮긴다.
+export function resizeMapKeepingTop(apply) {
+  const el = $('#map');
+  const before = el.getBoundingClientRect();
+  apply();
+  if (!kmap) return;
+  const after = el.getBoundingClientRect();
+  if (after.width < 1 || after.height < 1) return;
+  if (Math.abs(after.height - before.height) < 1 && Math.abs(after.width - before.width) < 1) return;
+  const center = kmap.getProjection().coordsFromContainerPoint(new kakao.maps.Point(after.width / 2, after.height / 2));
+  kmap.relayout();
+  kmap.setCenter(center);
+}
+
 // 고른 장소로 지도를 옮긴다. 멀리 있으면 4단계(예전 15배율쯤)까지 다가간다.
 export function panToPlace(p) {
   if (!kmap) return;

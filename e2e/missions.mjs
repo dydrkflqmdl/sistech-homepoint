@@ -74,13 +74,18 @@ const editorInfo = await evaluate(`(() => {
   const ed = document.querySelector('#detail .mission-editor');
   return { current: btn.getAttribute('aria-current'), nextIsEditor: next?.classList.contains('mission-editor') ?? false,
            hasCheckbox: !!ed?.querySelector('input[type=checkbox]'), textInputs: ed?.querySelectorAll('input:not([type=checkbox])').length ?? 0,
-           labels: [...(ed?.querySelectorAll('label') ?? [])].map(l => l.textContent.trim()).join(' | '),
+           inputNames: [...(ed?.querySelectorAll('input:not([type=checkbox])') ?? [])].map(i => i.name).join(),
+           labels: [...(ed?.querySelectorAll('label, #flight-label') ?? [])].map(l => l.textContent.trim()).join(' | '),
+           dialogOpen: !!ed?.querySelector('dialog.mission-dialog')?.open, title: ed?.querySelector('#mission-dialog-title')?.textContent, place: ed?.querySelector('.mission-dialog-place')?.textContent,
+           active: document.activeElement?.name,
            saveBtn: ed?.querySelector('form.mission-form button.btn.primary[type=submit]')?.textContent.trim(), cancelBtn: ed?.querySelector('form.mission-form button.btn.cancel')?.textContent.trim(),
            colSpan: ed ? getComputedStyle(ed).gridColumn : null };
 })()`);
 check('선택한 미션 aria-current=true', editorInfo.current === 'true', JSON.stringify(editorInfo.current));
 check('편집 폼이 선택한 미션 바로 아래', editorInfo.nextIsEditor);
-check('완료 체크박스 + 입력 4개', editorInfo.hasCheckbox && editorInfo.textInputs === 4, `inputs=${editorInfo.textInputs}`);
+check('미션 기록 창(모달)이 열림: 제목 미션명·장소명, 초점 완료 체크', editorInfo.dialogOpen && editorInfo.title === 'Q1_A_TA_SW__01_01' && editorInfo.place === 'SW_01' && editorInfo.active === 'done', JSON.stringify([editorInfo.dialogOpen, editorInfo.title, editorInfo.place, editorInfo.active]));
+// 비행시간은 분·초 두 칸이라 글자 칸은 이름·분·초·배터리 번호·용량 5개다.
+check('완료 체크박스 + 입력 5개(비행시간 분·초 두 칸)', editorInfo.hasCheckbox && editorInfo.textInputs === 5 && editorInfo.inputNames === 'worker,flightMin,flightSec,batteryNo,batteryLeft', `inputs=${editorInfo.inputNames}`);
 check('새 미션은 편집 모드 + 저장/취소 버튼', editorInfo.saveBtn === '저장' && editorInfo.cancelBtn === '취소', JSON.stringify([editorInfo.saveBtn, editorInfo.cancelBtn]));
 check('라벨 한국어(이름/비행시간/배터리/용량)', /이름/.test(editorInfo.labels) && /비행시간/.test(editorInfo.labels) && /배터리/.test(editorInfo.labels) && /용량/.test(editorInfo.labels), editorInfo.labels);
 await shot('phone-editor');
@@ -95,28 +100,41 @@ const setInput = async (labelRe, value) => evaluate(`(() => {
   input.dispatchEvent(new Event('change', { bubbles: true }));
   return !!input;
 })()`);
+// 이름(name)으로 칸을 찾아 값을 넣는다. 비행시간 분·초 칸은 라벨 글자가 '분'·'초'뿐이라 이것으로 넣는다.
+const setByName = async (name, value) => evaluate(`(() => {
+  const input = document.querySelector('#detail .mission-editor input[name="${name}"]');
+  input.value = ${JSON.stringify(value)};
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return input.value;
+})()`);
+const setFlight = async (min, sec) => { await setByName('flightMin', min); await setByName('flightSec', sec); };
 // 완료만 체크하고 저장 → 차단되어야 한다
 await evaluate(`(() => { const cb = document.querySelector('#detail .mission-editor input[type=checkbox]'); cb.click(); return cb.checked; })()`);
 await sleep(200);
 await evaluate(`document.querySelector('#detail .mission-editor form.mission-form button.btn.primary[type=submit]').click()`);
 await sleep(600);
 const blocked = await evaluate(`(() => ({ toast: document.querySelector('#toast')?.textContent, hidden: document.querySelector('#toast')?.hidden,
+  notice: (() => { const n = document.querySelector('#detail .mission-editor .mission-form-notice'); return n && !n.hidden ? n.textContent : null; })(), active: document.activeElement?.name,
   invalid: [...document.querySelectorAll('#detail .mission-editor input[aria-invalid="true"]')].map(i => i.name), stillEdit: !!document.querySelector('#detail .mission-editor form.mission-form'),
   worker: document.querySelector('#detail .mission-editor input[name="worker"]')?.value }))()`);
-// 이름 칸은 로그인 아이디(이 계정은 login_id가 없어 이메일)로 미리 채워져 있으므로 빈 칸은 나머지 셋이다.
-check('완료 체크 + 빈 칸이면 저장 차단(토스트·빨간 칸 3개·편집 유지, 이름은 로그인 아이디로 고정)', blocked.hidden === false && /모두 적어야/.test(blocked.toast ?? '') && blocked.invalid.join() === 'flightTime,batteryNo,batteryLeft' && blocked.worker === 'admin@sistech.test' && blocked.stillEdit, JSON.stringify(blocked));
+// 이름 칸은 로그인 아이디(이 계정은 login_id가 없어 이메일)로 미리 채워져 있으므로 빈 칸은 나머지(비행시간 분·초, 배터리 둘)다.
+// 막힌 까닭은 알림(토스트)이 아니라 창 안 안내(.mission-form-notice)로 보이고, 초점은 첫 빨간 칸(분)으로 간다.
+check('완료 체크 + 빈 칸이면 저장 차단(창 안 안내·빨간 칸 4개·첫 칸 초점·편집 유지, 토스트 없음, 이름은 로그인 아이디로 고정)', /모두 적어야/.test(blocked.notice ?? '') && !(blocked.hidden === false && /모두 적어야/.test(blocked.toast ?? '')) && blocked.invalid.join() === 'flightMin,flightSec,batteryNo,batteryLeft' && blocked.active === 'flightMin' && blocked.worker === 'admin@sistech.test' && blocked.stillEdit, JSON.stringify(blocked));
 const blockedApi = await store();
 check('차단 시 서버에 기록 없음', (blockedApi.find((p) => p.name === 'SW_01')?.missions ?? []).length === 0);
 // 이름 칸은 읽기 전용: 값을 바꾸려 해도 로그인 아이디로 남는다.
 await setInput('/이름/', '홍길동'); await sleep(300);
 const workerLocked = await evaluate(`(() => { const i = document.querySelector('#detail .mission-editor input[name="worker"]'); return { readOnly: i.readOnly, value: i.value }; })()`);
 check('이름 칸은 읽기 전용이고 값을 넣어도 로그인 아이디 그대로', workerLocked.readOnly && workerLocked.value === 'admin@sistech.test', JSON.stringify(workerLocked));
-await setInput('/비행시간/', '12분 30초'); await sleep(300);
+await setFlight('12', '30'); await sleep(300);
 await setInput('/배터리 번호/', '3'); await sleep(300);
 await setInput('/남은 용량/', '45%'); await sleep(300);
 const unit = await evaluate(`(() => { const i = [...document.querySelectorAll('#detail .mission-editor label')].find(l => /남은 용량/.test(l.textContent)).querySelector('input'); return { value: i.value, inputmode: i.getAttribute('inputmode'), unit: !!i.closest('label').querySelector('.unit-label'), invalidLeft: document.querySelectorAll('#detail .mission-editor input[aria-invalid="true"]').length }; })()`);
 check('용량 입력은 숫자만 남고(45) % 표시는 별도', unit.value === '45' && unit.inputmode === 'numeric' && unit.unit === true, JSON.stringify(unit));
 check('입력하면 빨간 표시 해제', unit.invalidLeft === 0, String(unit.invalidLeft));
+const noticeGone = await evaluate(`document.querySelector('#detail .mission-editor .mission-form-notice')?.hidden`);
+check('막힌 칸을 고치면 창 안 안내가 사라짐', noticeGone === true, String(noticeGone));
 // 저장 전에는 서버에 아무것도 없어야 한다
 const preSave = await store();
 check('저장 버튼 전에는 서버에 기록 없음', (preSave.find((p) => p.name === 'SW_01')?.missions ?? []).length === 0);
@@ -138,8 +156,7 @@ const after = await evaluate(`(() => {
   const label = [...document.querySelectorAll('.pin')].map(p => p.querySelector('.memo-progress')?.textContent).filter(Boolean);
   return { h3: document.querySelector('#detail .missions h3')?.textContent, doneClass: btn.classList.contains('done'),
            doneBg: getComputedStyle(btn).backgroundColor, otherBg: getComputedStyle(other).backgroundColor,
-           view: !!document.querySelector('#detail .mission-editor .mission-view'), editBtn: document.querySelector('#detail .mission-editor .mission-view button.btn.edit')?.textContent.trim(),
-           summary: [...document.querySelectorAll('#detail .mission-editor .mission-summary dd')].map(d => d.textContent.trim()).join(' | '),
+           dialogOpen: !!document.querySelector('#detail dialog.mission-dialog')?.open, focusMission: document.activeElement?.dataset?.mission ?? null, toast: document.querySelector('#toast')?.textContent,
            badge: list?.querySelector('.badge')?.textContent, headBadge: document.querySelector('#detail .detail-head h2 .badge')?.textContent, sepBorder: (() => { const r = document.querySelector('#detail .detail-head h2 .badge .rest'); return r ? getComputedStyle(r).borderLeftWidth + ' ' + getComputedStyle(r).borderLeftStyle : null; })(), checked: document.querySelector('#detail .mission-editor input[type=checkbox]')?.checked,
            labels: label, falseText: /false/.test(document.querySelector('.panel').textContent) };
 })()`);
@@ -155,24 +172,31 @@ const colorAfter = await evaluate(`(() => {
 })()`);
 check('미션 1개 완료 → 목록·상세 점 주황(진행 중)', colorAfter.listDot === 'rgb(247, 107, 21)' && colorAfter.headDot === 'rgb(247, 107, 21)', JSON.stringify([colorAfter.listDot, colorAfter.headDot]));
 check('필터 칩에 진행 중 1', colorAfter.chips.some((c) => /^진행 중\s*1$/.test(c)), JSON.stringify(colorAfter.chips));
-check('저장 후 보기 모드 + 수정 버튼', after.view === true && after.editBtn === '수정', JSON.stringify([after.view, after.editBtn]));
-check('보기 모드 요약에 저장값 표시(이름은 로그인 아이디, 용량은 45%로)', /admin@sistech\.test/.test(after.summary) && /12분 30초/.test(after.summary) && /45%/.test(after.summary), after.summary);
+// 저장하면 창이 닫히고 초점은 그 미션 버튼으로 돌아간다. 보기 화면은 미션 버튼을 다시 눌러 확인한다.
+check('저장 후 창 닫힘 + 초점은 미션 버튼 + "저장했습니다" 알림', after.dialogOpen === false && after.focusMission === 'Q1_A_TA_SW__01_01' && /미션 기록을 저장했습니다/.test(after.toast ?? ''), JSON.stringify([after.dialogOpen, after.focusMission, after.toast]));
+const openMission = (n) => evaluate(`document.querySelector('#detail .mission-item[data-mission="${n}"]').click()`);
+await openMission('Q1_A_TA_SW__01_01'); await sleep(300);
+const reopened = await evaluate(`(() => ({ view: !!document.querySelector('#detail .mission-editor .mission-view'), editBtn: document.querySelector('#detail .mission-editor .mission-view button.btn.edit')?.textContent.trim(),
+  active: document.activeElement?.classList.contains('edit') ?? false,
+  summary: [...document.querySelectorAll('#detail .mission-editor .mission-summary dd')].map(d => d.textContent.trim()).join(' | ') }))()`);
+check('미션 버튼을 다시 누르면 보기 화면 + 수정 버튼(초점)', reopened.view === true && reopened.editBtn === '수정' && reopened.active, JSON.stringify(reopened));
+check('보기 모드 요약에 저장값 표시(이름은 로그인 아이디, 용량은 45%로)', /admin@sistech\.test/.test(reopened.summary) && /12분 30초/.test(reopened.summary) && /45%/.test(reopened.summary), reopened.summary);
 check('상세 제목 옆 배지 미션 1/34 ┃ 남은 미션 개수 33', /미션\s*1\s*\/\s*34/.test(after.headBadge ?? '') && /남은 미션 개수\s*33/.test(after.headBadge ?? ''), JSON.stringify(after.headBadge));
 check('남은 미션 개수 앞 구분선', after.sepBorder === '1px solid', JSON.stringify(after.sepBorder));
 check('지도 말풍선에 1/34', after.labels.some((t) => /1\s*\/\s*34/.test(t)), JSON.stringify(after.labels));
 check('패널에 "false" 없음(저장 후)', after.falseText === false);
 await shot('phone-done');
 
-// 5b. 메모를 저장한 직후 다른 입력 칸으로 옮겨 타이핑 중 → 메모 응답이 와서 다시 그려도 초점·입력이 유지되고 미션 상태가 덮이지 않아야 한다
+// 5b. (보기 화면에서 [수정]) 메모를 저장한 직후 다른 입력 칸으로 옮겨 타이핑 중 → 메모 응답이 와서 다시 그려도 초점·입력이 유지되고 미션 상태가 덮이지 않아야 한다
 await evaluate(`document.querySelector('#detail .mission-editor .mission-view button.btn.edit').click()`);
 await sleep(300);
 const focusKept = await evaluate(`(async () => {
   const ta = document.querySelector('#detail .memo textarea');
   ta.focus(); ta.value = '메모수정'; ta.dispatchEvent(new Event('change', { bubbles: true }));
-  const field = document.querySelector('#detail .mission-editor input[name="flightTime"]');
+  const field = document.querySelector('#detail .mission-editor input[name="batteryNo"]');
   field.focus(); field.value = '입력중'; field.dispatchEvent(new Event('input', { bubbles: true }));
   await new Promise(r => setTimeout(r, 900));
-  const now = document.querySelector('#detail .mission-editor input[name="flightTime"]');
+  const now = document.querySelector('#detail .mission-editor input[name="batteryNo"]');
   return { focused: document.activeElement === now, value: now?.value, h3: document.querySelector('#detail .missions h3')?.textContent,
            doneBtn: !!document.querySelector('#detail .mission-list .mission-item.done'), memo: document.querySelector('#detail .memo textarea')?.value };
 })()`);
@@ -182,18 +206,20 @@ check('메모 응답이 미션 완료 상태를 덮지 않음', /1\s*\/\s*34/.te
 await evaluate(`document.querySelector('#detail .mission-editor form.mission-form button.btn.cancel').click()`);
 await sleep(300);
 const cancelled = await evaluate(`(() => ({ view: !!document.querySelector('#detail .mission-editor .mission-view'), summary: [...document.querySelectorAll('#detail .mission-editor .mission-summary dd')].map(d => d.textContent.trim()).join(' | ') }))()`);
-check('취소하면 보기 모드로 돌아가고 저장값 유지', cancelled.view && /12분 30초/.test(cancelled.summary) && !/입력중/.test(cancelled.summary), JSON.stringify(cancelled));
-// 다시 수정 → 비행시간 변경 → 저장(Enter 대신 버튼) → 서버 확인
+check('취소하면 보기 모드로 돌아가고 저장값 유지', cancelled.view && /12분 30초/.test(cancelled.summary) && !/입력중/.test(cancelled.summary) && / 3 /.test(' ' + cancelled.summary + ' '), JSON.stringify(cancelled));
+// 다시 수정 → 비행시간 변경(분 15, 초 비움) → 저장(Enter 대신 버튼) → 서버 확인
 await evaluate(`document.querySelector('#detail .mission-editor .mission-view button.btn.edit').click()`);
 await sleep(300);
-await setInput('/비행시간/', '입력중');
+await setFlight('15', '');
 await evaluate(`document.querySelector('#detail .mission-editor form.mission-form button.btn.primary[type=submit]').click()`);
 await sleep(900);
 const api2 = await store();
 const rec2 = api2.find((p) => p.name === 'SW_01')?.missions?.find((m) => m.mission === 'Q1_A_TA_SW__01_01');
-check('이어서 저장한 값이 서버에 반영(완료·이름은 유지)', rec2?.flightTime === '입력중' && rec2?.worker === 'admin@sistech.test' && rec2?.done === true, JSON.stringify(rec2));
+check('이어서 저장한 값이 서버에 반영(완료·이름은 유지)', rec2?.flightTime === '15분' && rec2?.worker === 'admin@sistech.test' && rec2?.done === true, JSON.stringify(rec2));
 
 // 5c. 충돌 감지: 수정 모드로 연 뒤 다른 기기(API)가 먼저 저장 → 저장 시 409 안내, 다시 저장하면 성공
+// 저장하면 창이 닫히므로 미션 버튼으로 다시 열고 [수정]을 누른다.
+await openMission('Q1_A_TA_SW__01_01'); await sleep(300);
 await evaluate(`document.querySelector('#detail .mission-editor .mission-view button.btn.edit').click()`);
 await sleep(300);
 const sw01Id = api2.find((p) => p.name === 'SW_01').id;
@@ -201,19 +227,19 @@ const sw01Id = api2.find((p) => p.name === 'SW_01').id;
 const otherVersion = await evaluate(`__fake.remoteChange((db) => { const m = db.missions.find(x => x.placeId === ${sw01Id} && x.mission === 'Q1_A_TA_SW__01_01'); m.worker = '다른기기'; m.version += 1; return m.version; }, { table: 'missions' })`);
 await sleep(600);
 check('다른 기기 저장(가짜 DB) 성공', otherVersion >= 3, String(otherVersion));
-await setInput('/비행시간/', '20분');
+await setFlight('20', '');
 await evaluate(`document.querySelector('#detail .mission-editor form.mission-form button.btn.primary[type=submit]').click()`);
 await sleep(900);
 const conflict = await evaluate(`(() => ({ panel: document.querySelector('#detail .mission-editor .mission-conflict-message')?.textContent, stillEdit: !!document.querySelector('#detail .mission-editor form.mission-form'),
-  flight: [...document.querySelectorAll('#detail .mission-editor label')].find(l => /비행시간/.test(l.textContent))?.querySelector('input')?.value,
+  flight: [document.querySelector('#detail .mission-editor input[name="flightMin"]')?.value, document.querySelector('#detail .mission-editor input[name="flightSec"]')?.value].join('|'),
   latest: document.querySelector('#detail .mission-editor')?.textContent.includes('다른기기') }))()`);
-check('충돌 시 폼 안 고정 안내 + 편집 유지 + 입력값 보존 + 최신값 표시', /다른 기기에서 먼저 저장된 기록이 있습니다/.test(conflict.panel ?? '') && conflict.stillEdit && conflict.flight === '20분' && conflict.latest === true, JSON.stringify(conflict));
+check('충돌 시 폼 안 고정 안내 + 편집 유지 + 입력값 보존 + 최신값 표시', /다른 기기에서 먼저 저장된 기록이 있습니다/.test(conflict.panel ?? '') && conflict.stillEdit && conflict.flight === '20|' && conflict.latest === true, JSON.stringify(conflict));
 await evaluate(`document.querySelector('#detail .mission-editor form.mission-form button.btn.primary[type=submit]').click()`);
 await sleep(900);
 const resolved = await store().then((ps) => ps.find((p) => p.name === 'SW_01').missions.find((m) => m.mission === 'Q1_A_TA_SW__01_01'));
 check('다시 저장하면 성공(비행시간 20분, version 증가)', resolved?.flightTime === '20분' && resolved?.version >= 3 && resolved?.done === true, JSON.stringify(resolved));
-const viewAgain = await evaluate(`!!document.querySelector('#detail .mission-editor .mission-view')`);
-check('재저장 후 보기 모드', viewAgain === true);
+const viewAgain = await evaluate(`({ open: !!document.querySelector('#detail dialog.mission-dialog')?.open, focus: document.activeElement?.dataset?.mission ?? null })`);
+check('재저장 후 창 닫힘 + 초점은 미션 버튼', viewAgain.open === false && viewAgain.focus === 'Q1_A_TA_SW__01_01', JSON.stringify(viewAgain));
 
 // 6. 메모가 있는 장소의 말풍선: "진행 + 메모" (SW_02에 메모를 API로 넣어 두었음)
 const memoLabel = await evaluate(`(() => {

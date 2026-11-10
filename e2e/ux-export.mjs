@@ -26,8 +26,9 @@ await ev(captureExports);
 const lastExport = () => ev(`(async () => { const e = window.__exports.at(-1); return e ? { download: e.download, text: new TextDecoder('utf-8', { ignoreBOM: true }).decode(await e.blob.arrayBuffer()) } : null; })()`);
 const topbarH = () => ev(`Math.round(document.querySelector('.topbar').getBoundingClientRect().height)`);
 
-// ── 메뉴 모양·초점 ──
+// ── 메뉴 모양·초점 ── 휴대폰(390)에서는 [내보내기]가 ☰ 안에 있으므로 먼저 펼친다(펼친 칸은 [내보내기] 메뉴를 고를 때까지 남는다).
 const h0 = await topbarH();
+await ev(`document.querySelector('#menu-button').click()`); await sleep(50);
 await ev(`document.querySelector('#export-button').click()`); await sleep(150);
 let v = await ev(`(() => {
   const m = document.querySelector('#export-menu'), r = m.getBoundingClientRect(), btn = document.querySelector('#export-button');

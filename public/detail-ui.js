@@ -5,21 +5,7 @@ import { authEpoch, authFailed } from './session.js';
 import { panToPlace } from './map-ui.js';
 import { discardMemo, flushMemo, memoDrafts, memoStatusView, memoText, onMemoInput } from './memo-ui.js';
 import { districtOf, groupHeadSelector, listItemSelector, missionBadge, placeDot } from './list-ui.js';
-import {
-  cancelMissionDraft,
-  confirmDiscardDraft,
-  confirmDiscardMissionDraft,
-  draftMatches,
-  missionDraftDirty,
-  missionDraftFor,
-  missionEditing,
-  missionForm,
-  missionKey,
-  missionRecord,
-  missionSaving,
-  missionView,
-  toggleMission,
-} from './missions-ui.js';
+import { closeMissionDialog, confirmDiscardDraft, missionDialog, missionRecord, toggleMission } from './missions-ui.js';
 import { kakaoMapViewUrl, openKakaoMapRoute } from './kakao.js';
 import { missionNames, missionProgress } from './mission.js';
 import * as api from './api.js';
@@ -95,7 +81,8 @@ export function renderDetail() {
         'section',
         { class: 'missions' },
         h('h3', {}, `미션 ${progress.done}/${progress.total}`),
-        // 이름이 거의 같아서 맨 뒤 번호를 굵게 보여 준다. 고른 미션 바로 아래 줄에 기록 입력 칸을 펼친다.
+        // 이름이 거의 같아서 맨 뒤 번호를 굵게 보여 준다. 고른 미션은 기록 창(모달)으로 연다. 창은 그 버튼 다음 줄
+        // (li.mission-editor, 자리는 차지하지 않음)에 두고 아래에서 showModal()로 띄운다.
         h(
           'ol',
           { class: 'mission-list' },
@@ -122,7 +109,7 @@ export function renderDetail() {
                   record.done && [h('span', { class: 'mission-check', 'aria-hidden': 'true' }, '✓'), h('span', { class: 'sr-only' }, '완료')],
                 ),
               ),
-              open && h('li', { class: 'mission-editor' }, missionEditing(p, m) ? missionForm(p, missionDraftFor(p, m)) : missionView(p, record)),
+              open && h('li', { class: 'mission-editor' }, missionDialog(p, m)),
             ];
           }),
         ),
@@ -130,6 +117,10 @@ export function renderDetail() {
     // 실수로 누르지 않게 다른 버튼과 떨어뜨려 맨 아래에 둔다(styles.css .delete-place).
     h('div', { class: 'delete-place' }, h('button', { type: 'button', class: 'link danger', onclick: () => removePlace(p) }, '이 장소 삭제')),
   );
+  // 미션 기록 창은 다시 그릴 때마다 새로 만들어지므로 그때마다 모달로 띄운다(맨 위 층, 뒤쪽은 누를 수 없음).
+  // 초점은 창 안의 autofocus 칸으로 가고, 쓰던 칸이 있었으면 renderKeepingInput(app.js)이 그 칸으로 돌려놓는다.
+  const dialog = box.querySelector('dialog.mission-dialog');
+  if (dialog && !dialog.open) dialog.showModal();
 }
 
 // 상세 정보 안에서 한글을 조합하는 중이면(IME) 상세 정보는 다시 그리지 않고 미뤄 둔다.
@@ -177,7 +168,25 @@ function select(id, { pan = false } = {}) {
   const p = state.places.find((x) => x.id === id);
   if (!p) return;
   if (pan) panToPlace(p);
-  $('.panel').scrollTo({ top: 0, behavior: 'smooth' });
+  revealSelected(id);
+}
+
+// 상세 정보는 고른 장소 줄 바로 아래에 펼쳐진다(list-ui.js renderList). 고른 뒤 목록(.panel) 스크롤을 맞춘다.
+// 규칙은 하나다: 고른 장소 줄을 늘 패널 맨 위에 둔다(그 아래가 상세 정보). 아래 창 높이(sheet-ui.js)·상세 정보 길이·
+// 누른 자리·지도 핀으로 골랐는지와 상관없이 같다. 목록 끝이라 더 내릴 곳이 없으면 갈 수 있는 데까지.
+// 애니메이션 없이 바로 옮긴다: 다시 그리기와 같은 순간에 끝나 화면에는 마지막 모습만 보인다. 부드럽게 움직이면 위쪽(앞서
+// 고른 장소 아래)의 상세 정보가 닫히며 줄이 당겨지는 것까지 겹쳐, 아래쪽 장소를 누를 때 화면이 위로 튀는 것처럼 보였다.
+// 패널에는 scroll-behavior를 두지 않으므로 scrollTop을 바꾸면 바로 옮겨진다. 줄이 목록에 없어 상세 정보가 원래 자리(목록 위)면 맨 위로.
+const REVEAL_GAP = 8;
+function revealSelected(id) {
+  const panel = $('.panel');
+  const row = $(listItemSelector(id));
+  const box = $('#detail');
+  if (!row || !box?.closest('#place-list')) {
+    panel.scrollTop = 0;
+    return;
+  }
+  panel.scrollTop += row.getBoundingClientRect().top - panel.getBoundingClientRect().top - REVEAL_GAP;
 }
 
 // 사람이 다른 장소를 고를 때 쓴다. 저장 안 한 미션 기록·메모가 버려지면 먼저 묻고, 그만두면 false.
@@ -240,20 +249,15 @@ async function removePlace(place) {
   }
 }
 
-// Esc: 미션 기록을 고치는 중이면 먼저 [취소], 그다음 Esc에 상세 정보를 닫는다.
-// 미션 입력 칸 안에서는 아무것도 안 고쳤을 때만 취소한다(적던 값을 실수로 날리지 않게). 다른 입력 칸에서는 아무것도 안 한다.
+// Esc: 미션 기록 창이 열려 있으면 그 창만 닫는다(고치던 값이 있으면 버릴지 묻고, 저장 중이면 닫지 않는다).
+// 브라우저가 모달을 스스로 닫지 않게 기본 동작은 막는다. 창이 없으면 상세 정보를 닫는다(입력 칸 안에서는 아무것도 안 한다).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || state.selectedId === null) return;
-  const inField = e.target.closest?.('input, textarea, select');
-  const p = state.places.find((x) => x.id === state.selectedId);
-  const d = state.missionDraft;
-  if (p && d && draftMatches(p, state.selectedMission)) {
-    if (inField && (!e.target.closest('.mission-form') || missionDraftDirty())) return;
-    if (missionSaving.has(missionKey(p.id, d.mission))) return;
-    if (!confirmDiscardMissionDraft()) return;
-    cancelMissionDraft(p, d.mission);
+  if (state.selectedMission != null) {
+    e.preventDefault();
+    closeMissionDialog();
     return;
   }
-  if (inField) return;
+  if (e.target.closest?.('input, textarea, select')) return;
   closeDetail();
 });

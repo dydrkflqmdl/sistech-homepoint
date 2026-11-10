@@ -223,21 +223,56 @@ export function renderList(visible) {
   searchOpensGroups = state.query.trim() !== '' && visible.length <= SEARCH_OPEN_MAX;
 
   // 접힌 시군은 줄(DOM)을 만들지 않는다. 장소가 수천 곳이어도 펼친 시군만 그린다.
-  fill(
-    $('#place-list'),
-    [...groups]
-      .filter(([, places]) => places.length > 0)
-      .map(([district, places], i) => {
-        const open = groupOpen(district, places);
-        const listId = `group-${i}`;
-        return h(
-          'li',
-          { class: 'group' },
-          groupHead(district, places, open, listId),
-          h('ul', { class: 'group-items', id: listId, hidden: !open }, open && places.map(placeRow)),
-        );
-      }),
-  );
+  const items = [...groups]
+    .filter(([, places]) => places.length > 0)
+    .map(([district, places], i) => ({ district, places, open: groupOpen(district, places), listId: `group-${i}` }));
+  // 상세 정보는 고른 장소 줄 바로 아래에 펼친다. 그 줄이 목록에 없으면(거르기·검색으로 빠짐, 사용자가 시군을 접음)
+  // 원래 자리(검색 칸 위)로 돌아간다.
+  const sel = state.selectedId;
+  const target = sel == null ? null : items.find((g) => g.open && g.places.some((p) => p.id === sel));
+  if (!target && detailBox.nextElementSibling !== detailHome) detailHome.before(detailBox);
+  // 상세 정보가 이미 같은 시군 묶음 안에 있으면 그 묶음(li.group·ul)과 자리(li.detail-slot)는 새로 만들지 않고 둘레만 바꾼다.
+  // 상세 정보를 DOM에서 떼었다 붙이면 쓰던 칸의 초점·한글 조합이 끊기고 열린 미션 기록 창(모달)이 닫히기 때문이다.
+  const kept = target && detailSlot.isConnected ? detailSlot.closest('#place-list > li.group') : null;
+  const keptGroup = kept?.dataset.district === target?.district ? kept : null;
+  if (target && detailBox.parentNode !== detailSlot) detailSlot.append(detailBox);
+
+  const rowsOf = (g) => {
+    if (!g.open) return [];
+    const rows = g.places.map(placeRow);
+    if (g === target) rows.splice(g.places.findIndex((p) => p.id === sel) + 1, 0, detailSlot);
+    return rows;
+  };
+  const nodes = items.map((g) => {
+    const head = groupHead(g.district, g.places, g.open, g.listId);
+    if (g === target && keptGroup) {
+      keptGroup.firstElementChild.replaceWith(head);
+      const ul = keptGroup.querySelector(':scope > ul.group-items');
+      ul.id = g.listId;
+      ul.hidden = false;
+      replaceChildrenKeeping(ul, rowsOf(g), detailSlot);
+      return keptGroup;
+    }
+    return h('li', { class: 'group', 'data-district': g.district }, head, h('ul', { class: 'group-items', id: g.listId, hidden: !g.open }, rowsOf(g)));
+  });
+  replaceChildrenKeeping($('#place-list'), nodes, keptGroup);
+}
+
+// 상세 정보(#detail)와 그 원래 자리(검색·거르기 칸 바로 위). 목록 안에 끼울 때는 li.detail-slot에 담는다.
+const detailBox = $('#detail');
+const detailHome = $('.filters');
+const detailSlot = h('li', { class: 'detail-slot' });
+
+// parent의 자식을 nodes로 바꾸되, keep(이미 parent의 자식이고 nodes 안에 있음)은 떼지 않고 그 앞뒤만 바꾼다.
+function replaceChildrenKeeping(parent, nodes, keep) {
+  if (!keep || keep.parentNode !== parent) {
+    fill(parent, nodes);
+    return;
+  }
+  for (const child of [...parent.childNodes]) if (child !== keep) child.remove();
+  const at = nodes.indexOf(keep);
+  keep.before(...nodes.slice(0, at));
+  keep.after(...nodes.slice(at + 1));
 }
 
 // 검색: 150ms 동안 더 치지 않으면 걸러 그린다. 한글을 조합하는 중(IME)에는 기다렸다가 조합이 끝나면 그린다.

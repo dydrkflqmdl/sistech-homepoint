@@ -1,6 +1,8 @@
 // B-3 목록 불러오는 중·실패, B-6 응답 시간 제한·저장 중 취소, B-5 미션 충돌 두 갈래,
 // B-7 실시간: 내가 방금 저장한 변경은 건너뜀, 바뀐 장소만 get_places(C2), 지운 장소(C3 deleted_at·DELETE)는 바로 뺌, get_places가 없으면 전체로.
-import { launch, prepare, reporter, sleep } from './lib.mjs';
+import { launch, PROJECT, prepare, reporter, sleep } from './lib.mjs';
+
+const { parseFlightTime, formatFlightTime } = await import(PROJECT + '/public/flight-time.js');
 
 const { check, finish } = reporter('ux-sync');
 const b = await launch('ux-sync');
@@ -16,7 +18,21 @@ const listState = `({ status: document.querySelector('#list-status').hidden ? nu
   empty: !document.querySelector('#empty').hidden, groups: document.querySelectorAll('#place-list .group').length, summary: document.querySelector('#list-summary').textContent,
   retry: !!document.querySelector('#list-retry') })`;
 const form = (m) => `document.querySelector('#detail .mission-form[data-mission="${m}"]')`;
-const fill = (m, values) => ev(`(() => { const f = ${form(m)}; for (const [k, v] of Object.entries(${JSON.stringify(values)})) {
+// 비행시간은 분·초 두 칸: fill의 flightTime('10분')은 flightMin·flightSec로 나눠 넣는다.
+const splitFlight = (values) => {
+  if (!('flightTime' in values)) return values;
+  const { flightTime, ...rest } = values;
+  const t = parseFlightTime(flightTime);
+  return { ...rest, flightMin: t.min, flightSec: t.sec };
+};
+const flight = async (m) => {
+  const t = await ev(`(() => { const f = ${form(m)}; return [f.querySelector('input[name=flightMin]').value, f.querySelector('input[name=flightSec]').value]; })()`);
+  return formatFlightTime(t[0], t[1]);
+};
+// 미션 기록 창(모달)이 닫혔는지. 저장에 성공하면 창이 닫히고 초점은 그 미션 버튼으로 간다.
+const dialogClosed = `!document.querySelector('#detail .mission-dialog')`;
+const closeDialog = () => ev(`document.querySelector('#detail .mission-dialog .mission-dialog-close')?.click()`);
+const fill = (m, values) => ev(`(() => { const f = ${form(m)}; for (const [k, v] of Object.entries(${JSON.stringify(splitFlight(values))})) {
   const i = f.querySelector('input[name="' + k + '"]'); if (i.type === 'checkbox') { if (i.checked !== v) i.click(); } else { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); } } })()`);
 const submit = (m) => ev(`${form(m)}.querySelector('button[type=submit]').click()`);
 const setTimeoutMs = (ms) => ev(`import('./api.js').then((m) => m.setCallTimeout(${ms}))`);
@@ -89,17 +105,19 @@ await fill('M_01', { flightTime: '10분', batteryNo: '2', batteryLeft: '40' });
 await setTimeoutMs(700);
 await ev(`__fake.rpcDelay.save_mission = 3000`);
 await submit('M_01'); await sleep(150);
-v = await ev(`({ saving: ${form('M_01')}.querySelector('button[type=submit]').textContent, submitDisabled: ${form('M_01')}.querySelector('button[type=submit]').disabled, cancelDisabled: ${form('M_01')}.querySelector('.btn.cancel').disabled, inputsDisabled: ${form('M_01')}.querySelector('input[name=flightTime]').disabled })`);
+v = await ev(`({ saving: ${form('M_01')}.querySelector('button[type=submit]').textContent, submitDisabled: ${form('M_01')}.querySelector('button[type=submit]').disabled, cancelDisabled: ${form('M_01')}.querySelector('.btn.cancel').disabled, inputsDisabled: ${form('M_01')}.querySelector('input[name=flightMin]').disabled && ${form('M_01')}.querySelector('input[name=flightSec]').disabled })`);
 check('저장 중: [저장 중…]·입력 잠김, [취소]는 누를 수 있음', v.saving === '저장 중…' && v.submitDisabled && !v.cancelDisabled && v.inputsDisabled, v);
 await b.waitFor(`!!${form('M_01')}?.querySelector('.mission-error')`, 3000);
-v = await ev(`({ error: ${form('M_01')}.querySelector('.mission-error p')?.textContent, retry: !!${form('M_01')}.querySelector('.mission-retry'), worker: ${form('M_01')}.querySelector('input[name=flightTime]').value, disabled: ${form('M_01')}.querySelector('input[name=worker]').disabled, toast: document.querySelector('#toast').textContent })`);
-check('시간 초과 → 폼 안에 "응답이 없습니다. 입력한 내용은 그대로 있습니다." + [다시 시도], 적던 값 그대로·다시 고칠 수 있음',
-  v.error === '응답이 없습니다. 입력한 내용은 그대로 있습니다.' && v.retry && v.worker === '10분' && !v.disabled && v.toast === v.error, v);
+v = await ev(`({ error: ${form('M_01')}.querySelector('.mission-error p')?.textContent, retry: !!${form('M_01')}.querySelector('.mission-retry'), disabled: ${form('M_01')}.querySelector('input[name=worker]').disabled, toast: document.querySelector('#toast').textContent })`);
+v.flight = await flight('M_01');
+check('시간 초과 → 창 안 폼에 "응답이 없습니다. 입력한 내용은 그대로 있습니다." + [다시 시도], 적던 값 그대로·다시 고칠 수 있음, 알림(토스트)은 띄우지 않음',
+  v.error === '응답이 없습니다. 입력한 내용은 그대로 있습니다.' && v.retry && v.flight === '10분' && !v.disabled && v.toast !== v.error, v);
 await ev(`__fake.rpcDelay.save_mission = 20`);
 await setTimeoutMs(20000);
 await ev(`${form('M_01')}.querySelector('.mission-retry').click()`);
-await b.waitFor(`!!document.querySelector('#detail .mission-view[data-mission="M_01"]')`, 3000);
-check('[다시 시도] → 저장되어 보기 화면(이름은 로그인 아이디)', (await ev(`(() => { const m = __fake.store().find(p => p.name === 'SW_01').missions.find(m => m.mission === 'M_01'); return m?.flightTime + '|' + m?.worker; })()`)) === '10분|admin@sistech.test');
+await b.waitFor(dialogClosed, 3000); await sleep(100);
+v = await ev(`({ rec: (() => { const m = __fake.store().find(p => p.name === 'SW_01').missions.find(m => m.mission === 'M_01'); return m?.flightTime + '|' + m?.worker; })(), active: document.activeElement?.dataset?.mission ?? null })`);
+check('[다시 시도] → 저장되어 창 닫힘, 초점은 M_01 버튼(이름은 로그인 아이디)', v.rec === '10분|admin@sistech.test' && v.active === 'M_01', v);
 
 // 저장 중 [취소]: 기다리기를 그만두고 입력 화면으로(값 그대로)
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_02"]').click()`); await sleep(150);
@@ -112,6 +130,7 @@ check('저장 중 [취소] → 바로 입력 화면으로(값 그대로, "저장
 await ev(`__fake.rpcDelay.save_mission = 20`);
 await sleep(4200);
 await ev(`${form('M_02')}.querySelector('.btn.cancel').click()`); await sleep(150);
+await closeDialog(); await sleep(150); // 저장된 미션이면 [취소] 뒤 창 안 보기 화면이 남는다 → ×로 닫음
 
 // ── B-5: 충돌 두 갈래 ──
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_03"]').click()`); await sleep(150);
@@ -125,13 +144,14 @@ check('충돌 → 폼 안 고정 안내 문구 + [최신값 불러오기]·[내 
 await sleep(3800);
 check('충돌 안내는 사라지지 않음(3.8초 뒤에도)', await ev(`!!${form('M_03')}.querySelector('.mission-conflict')`));
 await ev(`${form('M_03')}.querySelector('.conflict-latest').click()`); await sleep(150);
-v = await ev(`({ panel: !!${form('M_03')}.querySelector('.mission-conflict'), worker: ${form('M_03')}.querySelector('input[name=worker]').value, battery: ${form('M_03')}.querySelector('input[name=batteryNo]').value, flight: ${form('M_03')}.querySelector('input[name=flightTime]').value })`);
+v = await ev(`({ panel: !!${form('M_03')}.querySelector('.mission-conflict'), worker: ${form('M_03')}.querySelector('input[name=worker]').value, battery: ${form('M_03')}.querySelector('input[name=batteryNo]').value })`);
+v.flight = await flight('M_03');
 check('[최신값 불러오기] → 서버 최신 값으로 바꾸고 안내 닫음(이름 칸은 로그인 아이디 그대로)', !v.panel && v.worker === 'admin@sistech.test' && v.flight === '1분' && v.battery === '5', v);
 await fill('M_03', { flightTime: '2분' });
 await ev(`__fake.conflictNext({ done: false, worker: '또다른', flightTime: '4분', batteryNo: '5', batteryLeft: '50', version: 5, updatedAt: '' })`);
 await submit('M_03'); await sleep(300);
 await ev(`${form('M_03')}.querySelector('.conflict-overwrite').click()`);
-await b.waitFor(`!!document.querySelector('#detail .mission-view[data-mission="M_03"]')`, 3000);
+await b.waitFor(dialogClosed, 3000);
 v = await ev(`__fake.store().find(p => p.name === 'SW_01').missions.find(m => m.mission === 'M_03')`);
 check('[내 값으로 덮어쓰기] → 최신 판(5)을 바탕으로 내 값 저장(version 6, 이름은 로그인 아이디)', v.worker === 'admin@sistech.test' && v.flightTime === '2분' && v.version === 6, v);
 
@@ -143,7 +163,7 @@ await ev(`document.querySelector('#detail .mission-item[data-mission="M_01"]').c
 await ev(`document.querySelector('#detail .mission-view[data-mission="M_01"] .btn.edit').click()`); await sleep(100);
 await fill('M_01', { flightTime: '11분' });
 await submit('M_01');
-await b.waitFor(`!!document.querySelector('#detail .mission-view[data-mission="M_01"]')`, 3000);
+await b.waitFor(dialogClosed, 3000);
 await ev(`(() => { const t = document.querySelector('#memo-input'); t.value = '내 메모'; t.dispatchEvent(new Event('change', { bubbles: true })); })()`);
 await sleep(900);
 const echoes = await ev(`__fake.emitted.filter(e => e.table === 'missions' || e.table === 'places').length`);

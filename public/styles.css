@@ -64,14 +64,8 @@ p {
 .topbar h1 {
   font-size: 17px;
   font-weight: 700;
-  /* 제목은 임의로 접지 않는다. 휴대폰에서는 아래 <br> 규칙으로 "HOME POINT / NAVI" 두 줄에 고정한다.
-     (버튼 줄에 밀려 낱말마다 세 줄로 접히는 것을 막는다) */
+  /* 제목은 접지 않는다(휴대폰에서는 버튼이 ☰ 안으로 접혀 한 줄이 들어간다). */
   white-space: nowrap;
-}
-
-/* 넓은 화면은 한 줄. 휴대폰(767px 이하)에서만 줄바꿈을 살린다. */
-.topbar h1 br {
-  display: none;
 }
 
 /* 제목 묶음(제목 + "by SISTECH"). 버튼 칸에 밀릴 때 안쪽 제목 폭 아래로는 줄지 않는다. */
@@ -165,6 +159,110 @@ p {
 /* 목록처럼 overflow가 걸린 요소가 패널 높이에 맞춰 줄어들며 잘리지 않게 한다. 넘치면 패널 전체가 스크롤된다. */
 .panel > * {
   flex-shrink: 0;
+}
+
+/* 높이 조절 바: 휴대폰에서만 보인다(아래 @media). */
+.sheet-handle {
+  display: none;
+}
+
+/* ── 휴대폰: 지도 위, 아래 창(목록·상세 정보), 그 사이 높이 조절 바(sheet-ui.js) ──────────
+   지도 칸 높이(--map-h, 기본 42%)는 바를 끌어 바꾼다. 지도 72px·아래 창 160px보다 작아지지 않는다(sheet-ui.js와 같은 값).
+   끄는 동안(.sheet-dragging)에는 지도 칸을 아래 끝까지 늘려 두고 바·아래 창만 --sheet-top을 따라 움직여 지도를 덮는다.
+   손을 떼면 지도 칸이 다시 바 위 끝까지로 맞춰져 카카오 로고·저작권 표시가 가려지지 않는다. */
+@media (max-width: 767px) {
+  .layout {
+    --map-top: clamp(72px, var(--map-h, 42%), calc(100% - 160px));
+    --handle-h: 28px;
+    position: relative;
+    display: block;
+  }
+
+  .app.sheet-dragging .layout {
+    --map-top: var(--sheet-top);
+  }
+
+  /* z-index 0으로 지도 안(카카오 판·지도 종류 버튼)의 층을 이 칸 안에 가둬, 아래 창이 늘 그 위에 오게 한다. */
+  .map-area {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 0;
+    height: var(--map-top);
+    overflow: hidden;
+  }
+
+  .app.sheet-dragging .map-area {
+    height: 100%;
+  }
+
+  .sheet-handle {
+    position: absolute;
+    top: var(--map-top);
+    right: 0;
+    left: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: var(--handle-h);
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+    box-shadow: 0 -2px 8px rgb(0 0 0 / 0.06);
+    cursor: ns-resize;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* 누르는 자리를 지도 쪽으로 8px 더 넓혀 44px에 가깝게 한다(보이는 바는 28px). */
+  .sheet-handle::before {
+    content: '';
+    position: absolute;
+    inset: -8px 0 0;
+  }
+
+  .sheet-grip {
+    width: 40px;
+    height: 5px;
+    border-radius: 999px;
+    background: #c9c9c4;
+  }
+
+  .sheet-handle:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: -3px;
+  }
+
+  .app.sheet-dragging .sheet-grip,
+  .sheet-handle:active .sheet-grip {
+    background: var(--muted);
+  }
+
+  .panel {
+    position: absolute;
+    top: calc(var(--map-top) + var(--handle-h));
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1;
+    background: var(--bg);
+  }
+
+  /* 높이가 낮아 지도를 접은 경우(@media max-height: 500px의 [지도 접기])에는 바 없이 아래 창이 다 쓴다. */
+  .app.map-collapsed .layout {
+    --map-top: 0px;
+  }
+
+  .app.map-collapsed .sheet-handle {
+    display: none;
+  }
+
+  .app.map-collapsed .panel {
+    top: 0;
+  }
 }
 
 @media (min-width: 768px) {
@@ -527,9 +625,98 @@ p {
   font-weight: 700;
 }
 
-/* 고른 미션 바로 아래 한 줄을 통째로 쓰는 기록 입력 칸 */
+/* 고른 미션의 기록 창(모달 dialog)을 담는 줄. 창은 맨 위 층에 뜨므로 목록 안에서는 자리를 차지하지 않는다. */
 .mission-list .mission-editor {
+  display: contents;
   grid-column: 1 / -1;
+}
+
+/* ── 미션 기록 창(모달, missions-ui.js missionDialog) ─────── */
+
+.mission-dialog {
+  width: min(440px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  margin: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.mission-dialog::backdrop {
+  background: rgb(28 28 30 / 0.5);
+}
+
+/* 창 안을 꽉 채운다: dialog 자신이 눌리면 바깥(배경)을 누른 것이다. */
+.mission-dialog-body {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px 16px;
+}
+
+.mission-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mission-dialog-head h3 {
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.mission-dialog-place {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* 창 안에서는 입력·보기 화면의 카드 테두리를 빼고 창 자체를 카드로 쓴다. */
+.mission-dialog .mission-form,
+.mission-dialog .mission-view {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+/* 저장 전 검사에서 막힌 까닭(창이 화면 아래 알림을 덮으므로 창 안에 보인다). */
+.mission-form-notice {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fdecec;
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.mission-form-notice[hidden] {
+  display: none;
+}
+
+/* 비행시간: [  ]분 [  ]초 두 칸을 한 줄에 */
+.mission-form .flight-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.mission-form .flight-part {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: 6px;
+  min-width: 0;
 }
 
 .mission-form {
@@ -936,11 +1123,15 @@ p {
   display: none;
 }
 
-.list li + li {
+/* 목록 줄 규칙은 목록 자신의 줄(시군 머리·장소 줄·상세 정보 자리)에만 건다. 고른 장소 아래에 끼워 넣는
+   상세 정보(li.detail-slot 안 #detail)의 버튼·목록·점에는 번지지 않게 자손(.list button)이 아니라 자식(>)으로 고른다. */
+.list > li + li,
+.group-items > li + li {
   border-top: 1px solid var(--line);
 }
 
-.list button {
+.list > li > button,
+.group-items > li > button {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -954,17 +1145,17 @@ p {
   cursor: pointer;
 }
 
-.list button:hover,
-.list button[aria-current='true'] {
+.group-items > li > button:hover,
+.group-items > li > button[aria-current='true'] {
   background: #f2f2ef;
 }
 
-.list .dot {
+.group-items > li > button .dot {
   margin-top: 3px;
 }
 
 /* 메모 말풍선: 메모가 있으면(.on) 진하게, 없으면 흐리게 자리만 지킨다 */
-.list .memo-icon {
+.group-items > li > button .memo-icon {
   flex: none;
   width: 18px;
   height: 18px;
@@ -973,24 +1164,24 @@ p {
   color: #cfcfca;
 }
 
-.list .memo-icon svg {
+.group-items > li > button .memo-icon svg {
   display: block;
   width: 100%;
   height: 100%;
   fill: currentColor;
 }
 
-.list .memo-icon.on {
+.group-items > li > button .memo-icon.on {
   color: var(--text);
 }
 
-.list .text {
+.group-items > li > button .text {
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
 
-.list .name {
+.group-items > li > button .name {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -1069,8 +1260,19 @@ p {
   list-style: none;
 }
 
+/* 고른 장소 줄 바로 아래에 상세 정보를 끼워 넣는 자리(list-ui.js renderList). 줄과 구분되게 바탕을 깔고 카드를 띄운다. */
+.detail-slot {
+  padding: 8px;
+  background: var(--bg);
+}
+
+/* 목록 안에서는 상세 정보가 패널 위쪽처럼 바깥 여백·그림자 없이 자리 폭에 맞는다. */
+.detail-slot > .detail {
+  margin: 0;
+}
+
 /* 묶음 안의 장소 줄은 머리보다 조금 들여 쓴다 */
-.group-items button {
+.group-items > li > button {
   padding-left: 22px;
 }
 
@@ -1111,7 +1313,7 @@ p {
   font-weight: 500;
 }
 
-.list .addr {
+.group-items > li > button .addr {
   color: var(--muted);
   font-size: 13px;
   overflow-wrap: anywhere;
@@ -1495,15 +1697,109 @@ body.dragging .drop-overlay {
   white-space: nowrap;
 }
 
-/* 휴대폰: 긴 아이디(이메일 계정이면 주소)가 제목을 세 줄로 밀어내지 않게 더 짧게 자른다(전체는 툴팁) */
+
+/* ── 휴대폰 머리글 메뉴(☰, menu-ui.js) ───────────────────── */
+
+/* 넓은 화면에서는 숨긴다. 버튼은 머리글에 그대로 늘어놓는다. */
+.menu-button {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.menu-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.menu-button .menu-icon-close,
+.topbar.menu-open .menu-button .menu-icon-open {
+  display: none;
+}
+
+.topbar.menu-open .menu-button .menu-icon-close {
+  display: block;
+}
+
+/* 휴대폰: 버튼 줄을 접어 두고 ☰로 펼친다. 펼친 칸은 머리글 오른쪽 아래에 겹쳐 떠서 머리글 높이·지도 크기는 그대로다.
+   [내보내기] 메뉴(.menu, z-index 2050)는 이 칸 위에 한 겹 더 뜬다. */
 @media (max-width: 767px) {
-  .user-name {
-    max-width: 110px;
+  .topbar {
+    position: relative;
   }
 
-  /* 제목을 "HOME POINT / NAVI" 두 줄로 쌓아 버튼 칸을 넓게 남긴다 */
-  .topbar h1 br {
-    display: inline;
+  .menu-button {
+    display: inline-flex;
+  }
+
+  .topbar .actions {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 8px;
+    z-index: 2040;
+    display: none;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+    width: 240px;
+    max-width: calc(100vw - 16px);
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 0.14);
+  }
+
+  .topbar.menu-open .actions {
+    display: flex;
+  }
+
+  /* 펼친 칸 안의 버튼은 [내보내기] 메뉴 항목처럼 한 줄씩 왼쪽 정렬로 쓴다(누르는 높이 44px 유지). */
+  .topbar .actions .btn {
+    justify-content: flex-start;
+    width: 100%;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 8px;
+    background: none;
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  .topbar .actions .btn:hover,
+  .topbar .actions .btn:focus-visible {
+    background: var(--bg);
+  }
+
+  /* 맨 아래 계정 줄: 아이디와 [로그아웃]을 선으로 나눠 둔다. */
+  .topbar .account {
+    justify-content: space-between;
+    margin-top: 4px;
+    padding: 4px 0 0 12px;
+    border-top: 1px solid var(--line);
+  }
+
+  .topbar .account .btn {
+    width: auto;
+  }
+
+  /* 긴 아이디(이메일 계정이면 주소)는 잘라 보인다(전체는 툴팁). */
+  .topbar .user-name {
+    max-width: 140px;
   }
 }
 

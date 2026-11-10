@@ -124,7 +124,11 @@ check('로그인 후 목록 2곳(시군 2묶음)', v3.groups === 2 && v3.summary
 check('로그인 후 초점이 제목 링크로', v3.active === 'home-link', v3.active);
 check('로그인 폼 비움(비밀번호 칸 빈 값)', (await b.ev(`document.querySelector('#login-password').value`)) === '');
 check('실시간 구독 1개', (await b.ev(`__fake.channels`)) === 1);
-check('로그인 후 가져오기·내보내기 버튼 보임', v3.importVisible && v3.exportVisible, v3);
+// 휴대폰(390)에서는 버튼이 ☰ 안에 접혀 있으므로 ☰를 펼쳐 본다.
+await b.ev(`document.querySelector('#menu-button').click()`);
+const v3m = await b.ev(view);
+await b.ev(`document.querySelector('#menu-button').click()`);
+check('로그인 후 (☰를 펼치면) 가져오기·내보내기 버튼 보임', !v3.importVisible && v3m.importVisible && v3m.exportVisible, { v3, v3m });
 
 // 새로고침 → 로그인 유지
 await b.navigate(URL_BASE, 300);

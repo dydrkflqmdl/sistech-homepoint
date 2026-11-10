@@ -21,6 +21,9 @@ const status = () => ev(`document.querySelector('#memo-status')?.textContent.tri
 const waitSaved = () => b.waitFor(`document.querySelector('#memo-status')?.textContent.trim() === '저장됨'`, 4000);
 const confirms = () => ev(`window.__confirms.length`);
 const form = (m) => `document.querySelector('#detail .mission-form[data-mission="${m}"]')`;
+// 미션 기록 창(모달): 저장에 성공하면 닫히고, 열려 있는 동안 뒤쪽(메모·미션 버튼)은 누를 수 없다.
+const dialogClosed = `!document.querySelector('#detail .mission-dialog')`;
+const closeDialog = () => ev(`document.querySelector('#detail .mission-dialog .mission-dialog-close')?.click()`);
 const fill = (m, values) => ev(`(() => { const f = ${form(m)}; for (const [k, v] of Object.entries(${JSON.stringify(values)})) {
   const i = f.querySelector('input[name="' + k + '"]'); if (i.type === 'checkbox') { if (i.checked !== v) i.click(); } else { i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); } } })()`);
 
@@ -49,25 +52,28 @@ check('이어 써도 거짓 충돌 없이 "저장됨"(base는 원격 두 번째)
 // ── 3. 늦게 온 옛 받기 결과가 방금 저장한 미션 기록을 되돌리지 않음(그사이 다른 기기 변경도 놓치지 않음) ──
 await ev(`__fake.snapshotAtCall = ['get_places']; __fake.rpcDelay.get_places = 900;`);
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_01"]').click()`); await sleep(150);
-await fill('M_01', { flightTime: '내기록' });
+await fill('M_01', { batteryNo: '내기록' }); // 비행시간은 숫자 칸이라 글자 값은 배터리 번호로
 const g0 = await ev(`__fake.calls.filter(c => c.name === 'get_places').length`);
 await ev(`__fake.remoteChange((db) => { db.missions.push({ id: db.nextMid++, placeId: 1, mission: 'M_02', done: true, worker: '다른기기', flightTime: '1', batteryNo: '1', batteryLeft: '1', version: 1, updatedAt: '' }); }, { table: 'missions' })`);
 await b.waitFor(`__fake.calls.filter(c => c.name === 'get_places').length > ${g0}`, 2000);
 await ev(`${form('M_01')}.querySelector('button[type=submit]').click()`);
-await b.waitFor(`!!document.querySelector('#detail .mission-view[data-mission="M_01"]')`, 2000);
+await b.waitFor(dialogClosed, 2000); // 저장하면 창이 닫힘
 await sleep(1100); // 옛 결과(내 저장 전 스냅숏)가 도착한 뒤
-v = await ev(`({ view: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), worker: document.querySelector('#detail .mission-view[data-mission="M_01"] dd:nth-of-type(3)')?.textContent })`);
-check('내 저장 전에 시작한 받기 결과가 늦게 와도 방금 저장한 기록(보기 화면·내기록)이 되돌아가지 않음', v.view && v.worker === '내기록', v);
+await ev(`document.querySelector('#detail .mission-item[data-mission="M_01"]').click()`); await sleep(150); // 다시 열어 보기 화면 확인
+v = await ev(`({ view: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), battery: document.querySelector('#detail .mission-view[data-mission="M_01"] dd:nth-of-type(4)')?.textContent })`);
+check('내 저장 전에 시작한 받기 결과가 늦게 와도 방금 저장한 기록(보기 화면·내기록)이 되돌아가지 않음', v.view && v.battery === '내기록', v);
 await b.waitFor(`document.querySelector('#detail .mission-item[data-mission="M_02"]')?.classList.contains('done')`, 4000);
 v = await ev(`({ m2: document.querySelector('#detail .mission-item[data-mission="M_02"]').classList.contains('done'), m1: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), gets: __fake.calls.filter(c => c.name === 'get_places').length - ${g0} })`);
 check('그 장소만 다시 받아 그사이 다른 기기의 변경(M_02 완료)도 반영', v.m2 && v.m1 && v.gets === 2, v);
 await ev(`__fake.snapshotAtCall = []; __fake.rpcDelay.get_places = 20;`);
 
 // ── 6. 저장 중 [취소] 뒤 [다시 시도]: 앞 요청이 이미 들어갔으면 거짓 충돌 대신 저장된 것으로 ──
+await closeDialog(); await sleep(150);
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_02"]').click()`); await sleep(150); // M_02 보기 화면(다른 기기 기록)
+await closeDialog(); await sleep(150);
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_01"]').click()`); await sleep(150);
 await ev(`document.querySelector('#detail .mission-view[data-mission="M_01"] .btn.edit').click()`); await sleep(100);
-await fill('M_01', { flightTime: '6분' });
+await fill('M_01', { flightMin: '6' });
 await ev(`__fake.rpcDelay.save_mission = 1200`);
 await ev(`${form('M_01')}.querySelector('button[type=submit]').click()`); await sleep(300);
 await ev(`${form('M_01')}.querySelector('.btn.cancel').click()`); await sleep(1300); // 가짜 서버는 끊겨도 저장을 마친다
@@ -75,9 +81,9 @@ await ev(`__fake.rpcDelay.save_mission = 20`);
 check('끊었지만 서버에는 들어간 상태(version 2)', (await ev(`__fake.store()[0].missions.find(m => m.mission === 'M_01').version`)) === 2);
 await ev(`document.querySelector('#toast').textContent = ''`);
 await ev(`${form('M_01')}.querySelector('.mission-retry').click()`);
-await b.waitFor(`!!document.querySelector('#detail .mission-view[data-mission="M_01"]')`, 3000);
-v = await ev(`({ conflict: !!document.querySelector('#detail .mission-conflict'), toast: document.querySelector('#toast').textContent, version: __fake.store()[0].missions.find(m => m.mission === 'M_01').version })`);
-check('[다시 시도] → 최신 기록이 내 값과 같아 충돌 대신 "저장했습니다"(보기 화면)', !v.conflict && v.toast === '미션 기록을 저장했습니다.' && v.version === 2, v);
+await b.waitFor(dialogClosed, 3000);
+v = await ev(`({ conflict: !!document.querySelector('#detail .mission-conflict'), toast: document.querySelector('#toast').textContent, version: __fake.store()[0].missions.find(m => m.mission === 'M_01').version, flight: __fake.store()[0].missions.find(m => m.mission === 'M_01').flightTime })`);
+check('[다시 시도] → 최신 기록이 내 값과 같아 충돌 대신 "저장했습니다"(창 닫힘, 6분)', !v.conflict && v.toast === '미션 기록을 저장했습니다.' && v.version === 2 && v.flight === '6분', v);
 
 // ── 10. 미션을 열고 닫을 때는 메모를 묻지 않음 ──
 await ev(`__fake.failNext({ status: 500, code: 'XX000', message: 'boom', name: 'update_memo' })`);
@@ -87,6 +93,9 @@ let c0 = await confirms();
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_02"]').click()`); await sleep(150);
 v = { asked: (await confirms()) - c0, memo: await status() };
 check('저장 못 한 메모가 있어도 미션을 바꿀 때는 메모를 묻지 않고 그대로 둠', v.asked === 0 && /저장 안 됨/.test(v.memo), v);
+await closeDialog(); await sleep(150);
+v = { asked: (await confirms()) - c0, memo: await status(), closed: await ev(dialogClosed) };
+check('미션 창을 닫을 때도 메모를 묻지 않고 그대로 둠', v.asked === 0 && v.closed && /저장 안 됨/.test(v.memo), v);
 await ev(`document.querySelector('#memo-status .memo-retry').click()`);
 await waitSaved();
 

@@ -2,6 +2,7 @@
 // 상태를 바꾸는 일(enterApp·leaveApp)은 app.js가 하고, 다른 모듈은 여기 값을 읽기만 한다(ES 모듈의 live binding).
 import { $, fill, h } from './dom.js';
 import { hooks } from './state.js';
+import { closeTopMenu } from './menu-ui.js';
 import * as loginId from './login-id.js';
 
 // 로그인할 때마다 하나씩 올린다. 응답을 기다리는 사이 로그아웃·다른 계정 로그인이 있었으면 그 응답은 버린다.
@@ -25,9 +26,12 @@ export const currentWorkerName = () => String(currentUser?.name ?? '').trim();
 export const LOGIN_ENDED_MESSAGE = '로그인이 만료되었거나 다른 창에서 로그아웃했습니다. 다시 로그인해 주세요.';
 
 // 한 번에 하나만 보인다: 'boot'(설정 없음·불러오는 중), 'login', 'app'.
-// 앱 화면을 떠나면 [내보내기] 메뉴(import-ui.js, 위쪽 모듈이라 hooks로 부른다)도 닫는다.
+// 앱 화면을 떠나면 [내보내기] 메뉴(import-ui.js, 위쪽 모듈이라 hooks로 부른다)와 휴대폰 머리글 메뉴(☰)도 닫는다.
 export function showView(view) {
-  if (view !== 'app') hooks.closeExportMenu();
+  if (view !== 'app') {
+    hooks.closeExportMenu();
+    closeTopMenu();
+  }
   $('#boot-message').hidden = view !== 'boot';
   $('#login').hidden = view !== 'login';
   $('.app').hidden = view !== 'app';

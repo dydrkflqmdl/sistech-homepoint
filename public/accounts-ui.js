@@ -1,5 +1,6 @@
 // 계정 관리 창: 목록·새 계정·비밀번호 재설정([보기], 길이 규칙, 다른 계정 확인, 본인 재설정 뒤 로그아웃). Edge Function admin-users를 부른다.
 import { $, fill, h, refocus } from './dom.js';
+import { headerFocusTarget } from './menu-ui.js';
 import { hooks } from './state.js';
 import { authEpoch, authFailed, currentUser, setLoggingOut } from './session.js';
 import { saveAllMemos } from './memo-ui.js';
@@ -125,7 +126,7 @@ function closeAccounts() {
   if (accounts.busy) return;
   accountsReset();
   renderAccounts();
-  refocus('#accounts-button');
+  refocus(headerFocusTarget('#accounts-button'));
 }
 
 // 목록을 새로 받는다. 세션이 끝났으면 로그인 화면으로 가고, 다른 실패는 창 안에 보여 준다.

@@ -45,13 +45,17 @@
         </div>
       </div>
       <header class="topbar">
-        <!-- 휴대폰에서는 <br>이 살아나 "HOME POINT / NAVI" 두 줄, 넓은 화면에서는 <br>이 숨어 한 줄(styles.css .topbar h1 br).
-             <br> 뒤의 빈칸은 한 줄일 때 낱말 사이 띄어쓰기가 되고, 두 줄일 때는 줄 머리라 사라진다. -->
+        <!-- 휴대폰에서도 버튼은 ☰ 안으로 접히므로 제목은 늘 한 줄이다. -->
         <div class="brand">
-          <h1><a id="home-link" href="./" title="처음 화면으로">HOME POINT<br /> NAVI</a></h1>
+          <h1><a id="home-link" href="./" title="처음 화면으로">HOME POINT NAVI</a></h1>
           <p class="brand-by">by SISTECH</p>
         </div>
-        <div class="actions">
+        <!-- 휴대폰(767px 이하)에서는 버튼 줄(.actions)을 숨기고 이 ☰ 단추로 펼친다(menu-ui.js). 넓은 화면에서는 ☰가 숨는다. -->
+        <button type="button" class="menu-button" id="menu-button" aria-controls="top-actions" aria-expanded="false" aria-label="메뉴 열기">
+          <svg class="menu-icon-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+          <svg class="menu-icon-close" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+        <div class="actions" id="top-actions">
           <button type="button" class="btn primary" id="import-button">CSV 가져오기</button>
           <input id="csv-input" type="file" accept=".csv,.tsv,.txt,text/csv" multiple hidden />
           <button type="button" class="btn" id="export-button">내보내기</button>
@@ -65,6 +69,10 @@
       </header>
 
       <main class="layout">
+        <!-- 휴대폰에서 지도와 아래 창(목록) 사이의 높이 조절 바(sheet-ui.js). 넓은 화면에서는 숨는다. -->
+        <div class="sheet-handle" id="sheet-handle" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="map-area" aria-label="목록 창 높이 조절(위아래로 끌기, 두 번 누르면 기본)" aria-valuemin="0" aria-valuemax="100" aria-valuenow="42">
+          <span class="sheet-grip" aria-hidden="true"></span>
+        </div>
         <aside class="panel">
           <!-- 높이가 낮은 화면(가로로 든 휴대폰)에서만 보인다. 지도를 접어 목록을 넓게 쓴다. -->
           <button type="button" class="btn map-toggle" id="map-toggle" aria-controls="map-area" aria-expanded="true">지도 접기</button>
