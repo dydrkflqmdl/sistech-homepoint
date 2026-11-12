@@ -1,5 +1,5 @@
 // 계정 권한 3단계(관리자·직원·외주) 화면 확인. 서버는 가짜 supabase(fake-supabase.js: my_role·외주 거절·admin-users set_role).
-// 1) 외주: 가져오기·내보내기·계정 관리·장소 삭제가 없고(390·1280), 끌어다 놓기·숨은 입력·강제 클릭도 아무 일 없음, 메모는 직원처럼 쓰고 저장됨(지도 말풍선에도 보임), 미션 기록은 저장됨, 머리글 "· 외주"
+// 1) 외주: 가져오기·내보내기·계정 관리·장소 삭제가 없고(390·1280), 끌어다 놓기·숨은 입력·강제 클릭도 아무 일 없음, 메모는 직원처럼 쓰고 저장됨(지도 말풍선에도 보임), 미션 기록은 저장됨, 머리글은 이름만
 // 2) 직원: 계정 관리만 없고 나머지는 예전 그대로  3) 관리자: 권한 열·외주로 만들기·직원↔외주 바꾸기(요청 중 잠금)·관리자 행은 못 바꿈·서버 오류 문구
 // 4) 낡은 화면(토큰은 직원, DB는 외주): 메모는 저장되고, 삭제·가져오기는 서버가 거절하면 한국어 문구를 알리고 화면이 외주로 바뀜(예전 서버 문구도 알아봄)
 //    5) 외주 → 직원으로 같은 탭에서 바꿔 로그인하면 단추가 돌아옴
@@ -105,8 +105,8 @@ await prepare(b, { places, email: CON, roles: { [CON]: 'contractor' } });
 const jwtRole = await ev(`__fake.session().user.app_metadata.role ?? null`);
 check('외주 세션: 토큰의 app_metadata.role = contractor, 로그인 직후 my_role 호출', jwtRole === 'contractor' && (await calls('my_role')) >= 1, { jwtRole, myRole: await calls('my_role') });
 let v = await ev(view);
-check('390 외주: body.role-contractor·data-role, 머리글 "홍외주 · 외주"(☰ 왼쪽·aria-label·title)',
-  v.body.includes('role-contractor') && v.dataRole === 'contractor' && v.header === '홍외주 · 외주' && v.headerLabel === '로그인: 홍외주 · 외주' && v.headerTitle === '홍외주 · 외주' && v.tagRight <= v.menuLeft, v);
+check('390 외주: body.role-contractor·data-role, 머리글 "홍외주"(☰ 왼쪽·aria-label·title)',
+  v.body.includes('role-contractor') && v.dataRole === 'contractor' && v.header === '홍외주' && v.headerLabel === '로그인: 홍외주' && v.headerTitle === '홍외주' && v.tagRight <= v.menuLeft, v);
 check('390 외주: ☰ 안에 가져오기·내보내기·계정 관리 없음(로그아웃만), 가로 넘침 없음', !v.import && !v.csv && !v.export && !v.accounts && v.logout && !v.overflowX, v);
 await hostile('390 외주');
 await openPlace('SW_01');
@@ -177,8 +177,8 @@ check('390 외주: 장소 목록 검색은 메모까지 찾음', await (async ()
 await b.setViewport(1280, 800, false);
 await sleep(400);
 v = await ev(view);
-check('1280 외주: 머리글 #user-name "홍외주 · 외주", 가져오기·내보내기·계정 관리 없음, 로그아웃은 보임',
-  !v.narrow && v.header === '홍외주 · 외주' && v.headerTitle === '홍외주 · 외주' && !v.import && !v.csv && !v.export && !v.accounts && v.logout && !v.overflowX, v);
+check('1280 외주: 머리글 #user-name "홍외주", 가져오기·내보내기·계정 관리 없음, 로그아웃은 보임',
+  !v.narrow && v.header === '홍외주' && v.headerTitle === '홍외주' && !v.import && !v.csv && !v.export && !v.accounts && v.logout && !v.overflowX, v);
 await hostile('1280 외주');
 await openPlace('SW_01');
 v = await ev(view);
@@ -233,7 +233,7 @@ await login('홍외주');
 await waitApp();
 await sleep(400);
 v = await ev(view);
-check('my_role가 500으로 실패해도 로그아웃되지 않고 처음 연 토큰의 역할(외주) 그대로: 단추 숨김·머리글 "· 외주"', v.body.includes('role-contractor') && !v.import && !v.export && v.header === '홍외주 · 외주', v);
+check('my_role가 500으로 실패해도 로그아웃되지 않고 처음 연 토큰의 역할(외주) 그대로: 단추 숨김·머리글은 이름만(역할 글자 없음)', v.body.includes('role-contractor') && !v.import && !v.export && v.header === '홍외주', v);
 check('실패한 my_role는 한 번만 부르고 다시 부르지 않음', (await calls('my_role')) - myRoleBefore === 1, (await calls('my_role')) - myRoleBefore);
 
 // ── 4) 낡은 화면: 토큰은 직원, DB는 외주 ──
@@ -258,8 +258,8 @@ await b.waitFor(`document.querySelector('#toast').textContent === ${JSON.stringi
 check('낡은 화면에서 장소를 삭제하면 거절 문구가 알림으로 보이고 장소는 그대로', (await toastText()) === REJECT && (await ev(`__fake.store().some((p) => p.name === 'SW_01')`)));
 await b.waitFor(`document.body.classList.contains('role-contractor')`, 4000);
 v = await ev(view);
-check('거절을 받으면 my_role로 역할을 다시 받아 화면이 외주로 바뀜(가져오기·내보내기 숨김, 삭제 없음, 메모 입력은 그대로, 머리글 "· 외주")',
-  v.body.includes('role-contractor') && !v.import && !v.export && v.memoInput && !v.memoReadonly && v.memoValue === '낡은 화면에서 고친 메모' && !v.deleteBtn && v.header === '김직원 · 외주', v);
+check('거절을 받으면 my_role로 역할을 다시 받아 화면이 외주로 바뀜(가져오기·내보내기 숨김, 삭제 없음, 메모 입력은 그대로, 머리글은 이름만)',
+  v.body.includes('role-contractor') && !v.import && !v.export && v.memoInput && !v.memoReadonly && v.memoValue === '낡은 화면에서 고친 메모' && !v.deleteBtn && v.header === '김직원', v);
 
 // 예전 서버 문구('미션 기록만')로 거절해도(배포하는 사이 화면만 새것) 외주 거절로 알아보고 역할을 다시 받는다.
 await staleSetup();
@@ -360,14 +360,14 @@ await comeBackLater();
 await b.waitFor(`__fake.calls.filter((c) => c.name === 'my_role').length > ${roleCalls}`, 4000);
 await sleep(400);
 v = await ev(view);
-check('외주 화면에서 my_role이 null이면 직원으로 풀리지 않고 외주 그대로(가져오기·삭제 없음)', v.body.includes('role-contractor') && !v.import && !v.deleteBtn && v.header === '김직원 · 외주', v);
+check('외주 화면에서 my_role이 null이면 직원으로 풀리지 않고 외주 그대로(가져오기·삭제 없음)', v.body.includes('role-contractor') && !v.import && !v.deleteBtn && v.header === '김직원', v);
 
 // ── 3) 관리자: 계정 관리 ──
 await prepare(b, { places, email: ADMIN, admins: [ADMIN], accounts: accountsSeed });
 await b.setViewport(1280, 800, false);
 await sleep(300);
 v = await ev(view);
-check('관리자: 가져오기·내보내기·계정 관리 보임, 머리글 "· 관리자", 메모·삭제는 그대로(직원과 같음)', v.import && v.export && v.accounts && v.header === `${ADMIN} · 관리자` && v.dataRole === 'admin', v);
+check('관리자: 가져오기·내보내기·계정 관리 보임, 머리글은 이름만, 메모·삭제는 그대로(직원과 같음)', v.import && v.export && v.accounts && v.header === `${ADMIN}` && v.dataRole === 'admin', v);
 await ev(`document.querySelector('#accounts-button').click()`);
 await b.waitFor(`document.querySelectorAll('#accounts-panel .accounts-row').length === 3`, 4000);
 const acct = `(() => {
@@ -479,7 +479,7 @@ await login('이외주');
 await waitApp();
 await sleep(300);
 v = await ev(view);
-check('관리자가 외주로 만든 계정(이외주)으로 로그인하면 외주 화면(단추 숨김, "이외주 · 외주")', v.body.includes('role-contractor') && !v.import && !v.export && !v.accounts && v.header === '이외주 · 외주', v);
+check('관리자가 외주로 만든 계정(이외주)으로 로그인하면 외주 화면(단추 숨김, "이외주")', v.body.includes('role-contractor') && !v.import && !v.export && !v.accounts && v.header === '이외주', v);
 
 check('콘솔 예외 0건', b.errors.length === 0, b.errors);
 await finish(b);

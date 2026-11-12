@@ -1751,17 +1751,11 @@ body.dragging .drop-overlay {
   white-space: nowrap;
 }
 
-/* 아이디는 길면 …으로 줄고, 옆의 " · 외주"(역할)는 늘 보인다. */
+/* 아이디는 길면 …으로 줄인다. */
 .name-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.role-tag {
-  flex-shrink: 0;
-  font-weight: 600;
-  white-space: pre;
 }
 
 

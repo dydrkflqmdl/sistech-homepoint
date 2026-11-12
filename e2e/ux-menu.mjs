@@ -6,7 +6,7 @@ import { launch, prepare, reporter, sleep } from './lib.mjs';
 const { check, finish } = reporter('ux-menu');
 const ADMIN = 'admin@sistech.test';
 // 머리글 아이디 옆에 역할이 붙는다(관리자·외주만, 직원은 없음).
-const ADMIN_SHOWN = `${ADMIN} · 관리자`;
+const ADMIN_SHOWN = `${ADMIN}`;
 const places = [
   { name: 'SW_01', district: '태안', address: '가람면 하늘리', lat: 37.277767, lng: 126.717126, mission: 'M_01 ~ _34' },
   { name: 'SW_02', district: '태안', address: '가람면 바람리', lat: 37.167923, lng: 126.815733, mission: 'N_01 ~ _02' },

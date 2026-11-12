@@ -85,15 +85,6 @@ export const displayName = (user) =>
   String(user.user_metadata?.login_id ?? '').trim() ||
   loginId.emailToLoginId(user.email ?? '');
 
-// 머리글 아이디 옆의 역할 글자: 관리자·외주만 적는다(직원은 기본이라 적지 않는다). 예: "홍길동 · 외주".
-const ROLE_TAGS = { admin: '관리자', contractor: '외주' };
-export const roleTag = (role) => ROLE_TAGS[role] ?? '';
-
-// 아이디 칸을 "아이디"(줄어들면 …) + " · 외주"(늘 보임)로 채운다. 글자를 이어 붙이면 "홍길동 · 외주"다.
-function fillNameWithRole(el, name, tag) {
-  fill(el, h('span', { class: 'name-text' }, name), tag && h('span', { class: 'role-tag' }, ` · ${tag}`));
-}
-
 // 역할에 따라 화면 전체를 맞춘다: <body>의 role-contractor 클래스(CSS가 숨김)와 data-role, 머리글 버튼.
 // 숨겨도 초점이 갈 수 있는 곳이 없도록 hidden도 함께 건다. 실제 막기는 각 기능의 JS 검사가 한다.
 // 로그인·로그아웃·다른 계정으로 바꿀 때, 역할을 서버에서 새로 받았을 때마다 부른다.
@@ -111,16 +102,15 @@ export function applyRole() {
 
 export function showUserName() {
   const name = currentUser?.name ?? '';
-  const tag = name ? roleTag(currentUser?.role) : '';
-  const full = tag ? `${name} · ${tag}` : name;
+  // 이름만 보인다(역할 글자 없음). 길면 .name-text가 …으로 줄인다.
   const el = $('#user-name');
-  fillNameWithRole(el, name, tag);
-  el.title = full;
+  fill(el, h('span', { class: 'name-text' }, name));
+  el.title = name;
   // 휴대폰 머리글의 아이디(☰ 왼쪽)도 같은 글로 맞춘다. 비면 숨긴다.
   const bar = $('#topbar-user');
-  fillNameWithRole($('#topbar-user-name'), name, tag);
-  bar.title = full;
-  bar.setAttribute('aria-label', `로그인: ${full}`);
+  fill($('#topbar-user-name'), h('span', { class: 'name-text' }, name));
+  bar.title = name;
+  bar.setAttribute('aria-label', `로그인: ${name}`);
   bar.hidden = !name;
   applyRole();
 }
