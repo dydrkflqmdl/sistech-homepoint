@@ -1744,12 +1744,24 @@ body.dragging .drop-overlay {
 }
 
 .user-name {
+  display: flex;
   max-width: 200px;
-  overflow: hidden;
   color: var(--muted);
   font-size: 13px;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 아이디는 길면 …으로 줄고, 옆의 " · 외주"(역할)는 늘 보인다. */
+.name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.role-tag {
+  flex-shrink: 0;
+  font-weight: 600;
+  white-space: pre;
 }
 
 
@@ -1834,9 +1846,8 @@ body.dragging .drop-overlay {
   }
 
   .topbar-user-name {
+    display: flex;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -1894,6 +1905,40 @@ body.dragging .drop-overlay {
   .topbar .user-name {
     display: none;
   }
+}
+
+/* ── 외주 계정(body.role-contractor, session.js applyRole) ─────
+   보기·검색·길찾기·미션 기록만 쓴다. 가져오기·내보내기·장소 삭제는 숨기고(JS도 막는다), 메모는 읽기만 한다. */
+.role-contractor #import-button,
+.role-contractor #csv-input,
+.role-contractor #export-button,
+.role-contractor #export-menu,
+.role-contractor #import-panel,
+.role-contractor #accounts-panel,
+.role-contractor .delete-place,
+.role-contractor .drop-overlay {
+  display: none !important;
+}
+
+/* 빈 화면 안내: 가져오기 방법은 외주에게 쓸모없으니 숨기고 한 줄만 보인다. */
+.contractor-only {
+  display: none;
+}
+
+.role-contractor #empty .contractor-only {
+  display: block;
+}
+
+.role-contractor #empty > :not(h2, .contractor-only) {
+  display: none;
+}
+
+/* 읽기 전용 메모: 칸 모양 없이 글만 보인다(길면 줄바꿈). */
+.memo-readonly .memo-text {
+  margin: 0;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* ── 계정 관리(관리자만) ───────────────────────────────── */
@@ -2084,6 +2129,11 @@ body.dragging .drop-overlay {
   .accounts-create-fields {
     grid-template-columns: 1fr 1fr;
   }
+
+  /* 권한 칸은 한 줄을 다 쓴다. */
+  .accounts-create-fields .field-role {
+    grid-column: 1 / -1;
+  }
 }
 
 .accounts .field {
@@ -2111,6 +2161,31 @@ body.dragging .drop-overlay {
   color: var(--text);
   font: inherit;
   font-size: 16px;
+}
+
+.accounts .field select,
+.accounts-role-select {
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+}
+
+.accounts .field select {
+  width: 100%;
+  min-width: 0;
+}
+
+.accounts-role-select:disabled {
+  opacity: 0.6;
+}
+
+.accounts-role-text {
+  font-weight: 500;
 }
 
 .accounts .field input[aria-invalid='true'] {

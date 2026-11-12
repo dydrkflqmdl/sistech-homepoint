@@ -1,7 +1,7 @@
 // CSV 가져오기 창(파일 고르기·끌어다 놓기, 가져오기 전 확인 C7, 파일별 결과)과 내보내기 메뉴(장소/미션 기록).
 import { $, fill, h, refocus, toast } from './dom.js';
 import { hooks, state, visiblePlaces } from './state.js';
-import { authEpoch, authFailed, signedIn } from './session.js';
+import { authEpoch, authFailed, isContractor, signedIn } from './session.js';
 import { fitToPlaces } from './map-ui.js';
 import { flushRemote, reloadPlaces, remoteChangedWhileImporting, setRemoteChangedWhileImporting } from './sync.js';
 import { confirmDiscardDraft, draftDirty } from './missions-ui.js';
@@ -214,8 +214,16 @@ export function renderImport() {
 const isCsvFile = (f) => /\.(csv|tsv|txt)$/i.test(f.name) || f.type === 'text/csv';
 
 // 고르거나 끌어다 놓은 파일들로 가져오기 창을 연다. CSV가 아닌 파일은 건너뛴 것으로 보여 준다.
+// 외주 계정은 가져오기·내보내기를 쓸 수 없다. 단추는 숨겨 두지만, 끌어다 놓기 같은 다른 길도 여기서 막는다.
+function contractorBlocked() {
+  if (!isContractor()) return false;
+  toast(api.CONTRACTOR_MESSAGE);
+  return true;
+}
+
 function startImport(fileList) {
   if (!signedIn()) return;
+  if (contractorBlocked()) return;
   // 가져오는 중에 새 파일이 오면 앞 결과와 섞이지 않게 받지 않는다.
   if (state.importing) {
     toast('가져오는 중입니다. 끝난 뒤 다시 시도해 주세요.');
@@ -306,7 +314,7 @@ function importReview(parsedFiles) {
 // 파일을 하나씩 읽고, 확인할 것이 있으면 멈춰 묻고, 없으면 바로 보낸다.
 async function runImport() {
   const files = state.importFiles;
-  if (!files?.length || state.importing) return;
+  if (!files?.length || state.importing || isContractor()) return;
   const epoch = authEpoch;
   state.importing = true;
   state.importProgress = 0;
@@ -350,7 +358,7 @@ async function runImport() {
 // 확인 화면의 [계속]
 function continueImport() {
   const review = state.importReview;
-  if (!review || state.importing) return;
+  if (!review || state.importing || isContractor()) return;
   state.importReview = null;
   sendImport(review.parsed, authEpoch);
 }
@@ -366,7 +374,7 @@ function cancelImportReview() {
 // 읽은 파일을 차례로 보낸다. 한 파일이 실패해도 나머지는 계속하고, 끝나면 장소를 한 번만 새로 받는다.
 async function sendImport(parsedFiles, epoch) {
   const files = state.importFiles;
-  if (!files || epoch !== authEpoch) return;
+  if (!files || epoch !== authEpoch || isContractor()) return;
   state.importing = true;
   setRemoteChangedWhileImporting(false);
   const wasEmpty = state.places.length === 0;
@@ -410,7 +418,10 @@ async function sendImport(parsedFiles, epoch) {
   }
 }
 
-$('#import-button').addEventListener('click', () => $('#csv-input').click());
+$('#import-button').addEventListener('click', () => {
+  if (isContractor()) return;
+  $('#csv-input').click();
+});
 
 // 파일명에 넣을 오늘 날짜(YYYY-MM-DD). UTC가 아니라 기기 시간대 기준이라 한국에서 아침에 내보내도 전날 날짜가 되지 않는다.
 function localDateStamp(d = new Date()) {
@@ -432,12 +443,13 @@ function downloadCsv(text, filename) {
 
 // 장소 내보내기: 저장된 장소 전부를 다시 가져올 수 있는 형식으로.
 function exportPlaces() {
+  if (isContractor()) return;
   downloadCsv(csv.toCsv(state.places), `places-${localDateStamp()}.csv`);
 }
 
 // 미션 기록 내보내기(계약 C11): 저장된 장소 전부를 csv.toMissionCsv로. csv.js에 함수가 없으면 메뉴 자체를 띄우지 않는다.
 function exportMissions() {
-  if (typeof csv.toMissionCsv !== 'function') return;
+  if (isContractor() || typeof csv.toMissionCsv !== 'function') return;
   downloadCsv(csv.toMissionCsv(state.places), `missions-${localDateStamp()}.csv`);
 }
 
@@ -461,6 +473,7 @@ export function closeExportMenu({ focus = false } = {}) {
 }
 
 function openExportMenu() {
+  if (isContractor()) return;
   const item = (id, label, run) =>
     h(
       'button',
@@ -492,7 +505,7 @@ function placeExportMenu() {
 }
 
 exportButton.addEventListener('click', () => {
-  if (!signedIn()) return;
+  if (!signedIn() || isContractor()) return;
   if (!hasMissionExport()) {
     exportPlaces();
     return;
@@ -531,7 +544,7 @@ $('#csv-input').addEventListener('change', (e) => {
 let dragDepth = 0;
 const hasFiles = (e) => e.dataTransfer?.types.includes('Files');
 window.addEventListener('dragenter', (e) => {
-  if (!hasFiles(e) || !signedIn()) return;
+  if (!hasFiles(e) || !signedIn() || isContractor()) return;
   dragDepth++;
   document.body.classList.add('dragging');
 });

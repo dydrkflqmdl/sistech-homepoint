@@ -30,6 +30,8 @@ const scripts = [
   'ux-sheet', 'ux-names',
   // 현위치 버튼
   'ux-locate',
+  // 계정 권한 3단계(관리자·직원·외주)
+  'ux-roles',
 ];
 for (const f of fs.readdirSync(RESULTS)) if (f.startsWith('rpc-')) fs.rmSync(path.join(RESULTS, f));
 const rows = [];

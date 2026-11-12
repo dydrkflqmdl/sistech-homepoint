@@ -273,10 +273,10 @@ const pc = await b.ev(`(() => {
   const t = document.querySelector('.accounts-table'); const card = document.querySelector('#accounts-panel').getBoundingClientRect(); const tr = t.getBoundingClientRect();
   const inside = (el) => { const r = el.getBoundingClientRect(); return r.right <= card.right + 0.5 && r.left >= card.left - 0.5; };
   return { cols: t.querySelectorAll('thead th').length, headHidden: t.querySelector('thead').getBoundingClientRect().width <= 1,
-    tableFits: tr.right <= card.right + 0.5 && t.scrollWidth <= t.clientWidth, buttonsInside: [...t.querySelectorAll('button, input')].every(inside),
+    tableFits: tr.right <= card.right + 0.5 && t.scrollWidth <= t.clientWidth, buttonsInside: [...t.querySelectorAll('button, input, select')].every(inside),
     overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth };
 })()`);
-check('1280px: 표(머리 줄 4칸은 화면 읽기용)가 카드 안에 들어가고(버튼·입력 칸 포함), 가로 넘침 없음', pc.cols === 4 && pc.headHidden && pc.tableFits && pc.buttonsInside && !pc.overflow, pc);
+check('1280px: 표(머리 줄 5칸은 화면 읽기용)가 카드 안에 들어가고(버튼·입력 칸 포함), 가로 넘침 없음', pc.cols === 5 && pc.headHidden && pc.tableFits && pc.buttonsInside && !pc.overflow, pc);
 
 check('콘솔 오류·예외 0건', b.errors.length === 0, b.errors);
 await finish(b);

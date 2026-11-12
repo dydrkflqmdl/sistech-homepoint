@@ -3,14 +3,16 @@
 // 사용법: npm run users -- 손두병 황병용 오성민          (비밀번호는 대화형으로 묻는다)
 //        USERS_PASSWORD=... npm run users -- 손두병     (비대화형)
 //        npm run users -- --admin 김용문                (이미 있는 계정을 관리자로 지정)
+//        npm run users -- --role 외주 홍길동            (새 계정을 외주로 만들기. 직원|외주|staff|contractor)
 // 비밀번호는 명령줄 인자로 받지 않는다(셸 기록·프로세스 목록에 남기 때문). --password 를 주면 거부한다.
 // 관리자 표시는 app_metadata.role = 'admin'. app_metadata는 사용자가 스스로 못 바꾸고 service_role만 쓸 수 있다.
+// 권한은 app_metadata.role에 둔다: admin(관리자), staff(직원), contractor(외주). 값이 없으면 직원이다.
 // 필요한 환경변수(.env): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  (service_role 키는 출력하지 않는다)
 import { PASSWORD_RULE, isValidPassword, loginIdToEmail } from '../public/login-id.js';
 
 const HELP = `한글 아이디 계정을 Supabase에 만듭니다(비상용. 평소에는 화면의 "계정 관리"를 쓰세요).
 
-사용법: npm run users -- [--reset-password] [--admin] <아이디> [<아이디> ...]
+사용법: npm run users -- [--reset-password] [--admin | --role 직원|외주] <아이디> [<아이디> ...]
         npm run users -- --admin <아이디> [<아이디> ...]
 
 비밀번호
@@ -23,6 +25,11 @@ const HELP = `한글 아이디 계정을 Supabase에 만듭니다(비상용. 평
   --admin                 적은 아이디들을 관리자로 지정합니다(app_metadata.role = admin).
                           USERS_PASSWORD 없이 --admin만 쓰면 비밀번호를 묻지 않고 이미 있는 계정만 지정합니다.
                           USERS_PASSWORD를 주거나 --reset-password와 함께 쓰면 만들거나 비밀번호를 바꾼 뒤 지정합니다.
+  --role 직원|외주        새로 만드는 계정의 권한(app_metadata.role). staff|contractor로 적어도 됩니다.
+                          주지 않으면 role 없이 만들고, role이 없으면 직원입니다.
+                          외주는 장소 보기와 미션 기록만 할 수 있습니다(CSV 가져오기·메모·지우기 불가).
+                          이미 있는 계정의 권한은 바꾸지 않습니다. 화면의 "계정 관리"에서 바꾸세요.
+                          --admin과 함께 쓸 수 없습니다.
   --help                  이 도움말
 
 환경변수(.env에 넣으세요. 깃에는 올라가지 않습니다)
@@ -34,19 +41,32 @@ const HELP = `한글 아이디 계정을 Supabase에 만듭니다(비상용. 평
   npm run users -- 손두병 황병용 오성민
   npm run users -- --reset-password 손두병
   npm run users -- --admin 김용문
+  npm run users -- --role 외주 홍길동
   USERS_PASSWORD='새비밀번호' npm run users -- --admin 김용문`;
 
 const PASSWORD_ARG_REFUSED = `--password 옵션은 더 이상 쓰지 않습니다. 비밀번호가 셸 기록과 프로세스 목록에 남기 때문입니다.
 방금 입력한 비밀번호는 노출됐다고 보고 다른 값을 쓰세요.
 비밀번호는 실행 중에 묻는 화면에 입력하거나, 환경변수 USERS_PASSWORD로 넘기세요.`;
 
+// --role 값 → app_metadata.role. 한글(직원·외주)과 영문(staff·contractor)을 받는다. 관리자는 --admin으로만 지정한다.
+const ROLE_NAMES = { 직원: 'staff', 외주: 'contractor', staff: 'staff', contractor: 'contractor' };
+const ROLE_LABELS = { staff: '직원', contractor: '외주' };
+
+function parseRole(value) {
+  const role = Object.hasOwn(ROLE_NAMES, value ?? '') ? ROLE_NAMES[value] : null;
+  if (!role) throw new Error(`--role 값은 직원, 외주(또는 staff, contractor)만 쓸 수 있습니다: ${value ?? '(없음)'}`);
+  return role;
+}
+
 function parseArgs(argv) {
-  const opts = { reset: false, admin: false, help: false, passwordArg: false, ids: [] };
+  const opts = { reset: false, admin: false, role: null, help: false, passwordArg: false, ids: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') opts.help = true;
     else if (a === '--reset-password') opts.reset = true;
     else if (a === '--admin') opts.admin = true;
+    else if (a === '--role') opts.role = parseRole(argv[++i]?.normalize('NFC').trim());
+    else if (a.startsWith('--role=')) opts.role = parseRole(a.slice('--role='.length).normalize('NFC').trim());
     else if (a === '--password' || a.startsWith('--password=')) {
       opts.passwordArg = true;
       if (a === '--password') i++; // 값은 읽지도 않고 건너뛴다
@@ -122,6 +142,7 @@ if (opts.help) {
 }
 if (opts.passwordArg) usageError(PASSWORD_ARG_REFUSED);
 if (opts.ids.length === 0) usageError('아이디를 하나 이상 적어 주세요.');
+if (opts.admin && opts.role) usageError('--admin과 --role은 함께 쓸 수 없습니다.');
 
 // --admin만 쓰고 USERS_PASSWORD도 --reset-password도 없으면 비밀번호 없이 관리자 지정만 한다.
 const adminOnly = opts.admin && !opts.reset && !process.env.USERS_PASSWORD;
@@ -219,25 +240,27 @@ async function createOne(rawId) {
   const loginId = rawId.includes('@') ? rawId.trim() : rawId.normalize('NFC').trim();
   // 아이디는 본인이 못 바꾸는 app_metadata에도 넣는다(계정 목록 표시 기준, 계약 C4). 이메일 계정은 넣지 않는다.
   const meta = rawId.includes('@') ? {} : { user_metadata: { login_id: loginId }, app_metadata: { login_id: loginId } };
+  // 권한(--role)은 새로 만들 때만 넣는다. 이미 있는 계정(관리자일 수도 있음)의 권한은 덮지 않는다.
+  const createMeta = opts.role ? { ...meta, app_metadata: { ...meta.app_metadata, role: opts.role } } : meta;
   const steps = [];
   const fail = (msg) => ({ id: loginId, email, result: [...steps, `실패: ${msg}`].join(', '), ok: false });
   try {
     let userId = null; // 알게 되면 채운다(관리자 지정에 쓴다)
     if (password !== null) {
-      const r = await admin('POST', '', { email, password, email_confirm: true, ...meta });
+      const r = await admin('POST', '', { email, password, email_confirm: true, ...createMeta });
       if (r.ok) {
-        steps.push('만듦');
+        steps.push(opts.role ? `만듦(${ROLE_LABELS[opts.role]})` : '만듦');
         userId = r.data?.id ?? null;
       } else if (!isDuplicate(r)) {
         return fail(explain(r));
       } else if (!opts.reset) {
-        steps.push('이미 있음');
+        steps.push(opts.role ? '이미 있음(권한은 그대로)' : '이미 있음');
       } else {
         userId = await findUserId(email);
         if (!userId) return fail('이미 있다고 하는데 목록에서 찾지 못했습니다.');
         const u = await admin('PUT', `/${userId}`, { password, ...meta });
         if (!u.ok) return fail(explain(u));
-        steps.push('비밀번호 변경');
+        steps.push(opts.role ? '비밀번호 변경(권한은 그대로)' : '비밀번호 변경');
       }
     }
     if (opts.admin) {

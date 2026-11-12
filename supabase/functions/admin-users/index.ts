@@ -24,14 +24,18 @@ interface CreateUserAttrs {
   password: string;
   email_confirm: boolean;
   user_metadata: { login_id: string };
-  app_metadata: { login_id: string };
+  app_metadata: { login_id: string; role: 'staff' | 'contractor' };
 }
+
+// app_metadata 는 GoTrue 가 기존 값에 병합한다(role 만 보내도 login_id 는 남는다).
+type UpdateUserAttrs = { password: string } | { app_metadata: { role: 'staff' | 'contractor' } };
 
 interface AdminDeps {
   getUser(token: string): Promise<User | null>;
   listUsers(): Promise<User[]>;
   createUser(attrs: CreateUserAttrs): Promise<User>;
-  updateUserById(id: string, attrs: { password: string }): Promise<User>;
+  getUserById(id: string): Promise<User>;
+  updateUserById(id: string, attrs: UpdateUserAttrs): Promise<User>;
 }
 
 const deps: AdminDeps = {
@@ -58,6 +62,13 @@ const deps: AdminDeps = {
   async createUser(attrs) {
     const { data, error } = await admin.auth.admin.createUser(attrs);
     if (error) throw error; // AuthApiError: code 'email_exists' 등은 handler 가 상태 코드로 옮긴다
+    return data.user;
+  },
+
+  // 권한 바꾸기 전에 대상이 관리자인지 본다.
+  async getUserById(id) {
+    const { data, error } = await admin.auth.admin.getUserById(id);
+    if (error) throw error; // code 'user_not_found' → 404
     return data.user;
   },
 

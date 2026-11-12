@@ -1,7 +1,7 @@
 // 상세 카드: 그리기(길찾기·메모·미션 목록·삭제), 한글 조합 중 다시 그리기 미루기, 장소 고르기·닫기·삭제, Esc 처리.
 import { $, fill, h, refocus, toast } from './dom.js';
 import { hooks, isPlaceGone, state, touchPlace } from './state.js';
-import { authEpoch, authFailed } from './session.js';
+import { authEpoch, authFailed, isContractor } from './session.js';
 import { panToPlace } from './map-ui.js';
 import { discardMemo, flushMemo, memoDrafts, memoStatusView, memoText, onMemoInput } from './memo-ui.js';
 import { districtOf, groupHeadSelector, listItemSelector, missionBadge, placeDot } from './list-ui.js';
@@ -42,6 +42,19 @@ export function renderDetail() {
   );
   const missions = missionNames(p.mission);
   const progress = missionProgress(p.mission, p.missions);
+  const contractor = isContractor();
+  // 외주 계정: 메모는 읽기만 한다(비어 있으면 칸 자체를 두지 않는다). 장소 삭제도 없다.
+  const memoBlock = contractor
+    ? p.memo.trim() !== '' &&
+      h('div', { class: 'memo memo-readonly' }, h('span', { id: 'memo-label', class: 'memo-label' }, '메모'), h('p', { id: 'memo-text', class: 'memo-text', 'aria-labelledby': 'memo-label' }, p.memo))
+    : h(
+        'div',
+        { class: 'memo' },
+        h('label', { for: 'memo-input' }, '메모'),
+        memo,
+        // 저장 상태는 메모 아래에 고정해 보여 준다(알림처럼 사라지지 않는다).
+        h('div', { id: 'memo-status', class: 'memo-status', role: 'status' }, memoStatusView(p.id)),
+      );
 
   fill(
     box,
@@ -68,14 +81,7 @@ export function renderDetail() {
       h('button', { type: 'button', class: 'btn primary', onclick: () => openKakaoMapRoute(p) }, '카카오맵 길찾기'),
       h('a', { class: 'btn', href: kakaoMapViewUrl(p), target: '_blank', rel: 'noopener' }, '카카오맵에서 보기'),
     ),
-    h(
-      'div',
-      { class: 'memo' },
-      h('label', { for: 'memo-input' }, '메모'),
-      memo,
-      // 저장 상태는 메모 아래에 고정해 보여 준다(알림처럼 사라지지 않는다).
-      h('div', { id: 'memo-status', class: 'memo-status', role: 'status' }, memoStatusView(p.id)),
-    ),
+    memoBlock,
     missions.length > 0 &&
       h(
         'section',
@@ -115,7 +121,7 @@ export function renderDetail() {
         ),
       ),
     // 실수로 누르지 않게 다른 버튼과 떨어뜨려 맨 아래에 둔다(styles.css .delete-place).
-    h('div', { class: 'delete-place' }, h('button', { type: 'button', class: 'link danger', onclick: () => removePlace(p) }, '이 장소 삭제')),
+    !contractor && h('div', { class: 'delete-place' }, h('button', { type: 'button', class: 'link danger', onclick: () => removePlace(p) }, '이 장소 삭제')),
   );
   // 미션 기록 창은 다시 그릴 때마다 새로 만들어지므로 그때마다 모달로 띄운다(맨 위 층, 뒤쪽은 누를 수 없음).
   // 초점은 창 안의 autofocus 칸으로 가고, 쓰던 칸이 있었으면 renderKeepingInput(app.js)이 그 칸으로 돌려놓는다.
@@ -220,6 +226,7 @@ export function dropGonePlace(id) {
 }
 
 async function removePlace(place) {
+  if (isContractor()) return;
   if (!confirmDiscardDraft()) return;
   // 미션 기록도 함께 지워지므로 몇 건인지 같이 알린다.
   const records = place.missions?.length ?? 0;

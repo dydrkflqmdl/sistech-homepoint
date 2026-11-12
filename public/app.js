@@ -9,6 +9,7 @@ import { $, refocus, toast } from './dom.js';
 import { collapseAllGroups, config, hooks, placeColor, state, visiblePlaces } from './state.js';
 import {
   LOGIN_ENDED_MESSAGE,
+  authEpoch,
   bumpAuthEpoch,
   currentUser,
   displayName,
@@ -98,7 +99,11 @@ document.addEventListener('visibilitychange', () => {
     flushAllMemos();
     return;
   }
-  if (hiddenAt !== null && Date.now() - hiddenAt >= STALE_AFTER_HIDDEN_MS) refreshPlaces();
+  if (hiddenAt !== null && Date.now() - hiddenAt >= STALE_AFTER_HIDDEN_MS) {
+    refreshPlaces();
+    // 그사이 관리자가 역할을 바꿨을 수 있다.
+    if (signedIn()) refreshRole();
+  }
   hiddenAt = null;
   checkVersion();
 });
@@ -143,24 +148,69 @@ $('#home-link').addEventListener('click', (e) => {
 
 // ── 로그인 ──────────────────────────────────────────────
 
+// 역할(관리자·직원·외주)을 바꾼다. 화면에 남은 것(가져오기 창·내보내기 메뉴·계정 관리 창·고치던 메모)도 정리한다.
+// 역할은 로그인할 때 토큰(jwtRole)에서 먼저 읽고, my_role()로 DB의 현재 값을 받아 바로잡는다(refreshRole).
+// 토큰 값은 처음 열 때(enterApp)만 쓴다. 그 뒤로는 my_role()로 받은 값만 따른다.
+function changeRole(role) {
+  if (!currentUser || currentUser.role === role) return;
+  currentUser.role = role;
+  currentUser.admin = role === 'admin';
+  if (role === 'contractor') {
+    closeExportMenu();
+    // 외주는 메모를 고칠 수 없다. 저장하지 못한 글은 버린다(저장 중이어도 서버가 거절한다).
+    for (const id of [...memoDrafts.keys()]) discardMemo(id);
+    if (!state.importing) {
+      state.importFiles = null;
+      state.importSkipped = [];
+      state.importResults = null;
+      state.importReview = null;
+    }
+  }
+  // 관리자 권한이 빠졌으면 열려 있던 계정 관리 창도 닫는다.
+  if (!currentUser.admin && accounts.open) accountsReset();
+  showUserName();
+  renderImport();
+  renderAccounts();
+  render();
+}
+
+// DB의 현재 역할을 받아 반영한다(my_role). 받는 사이 로그아웃·다른 계정 로그인이 있었으면 버린다.
+// 받지 못하면(실패·null·모르는 값) 지금 역할을 그대로 둔다. 토큰의 역할로 바꾸지 않는다.
+// 묵은 토큰이 외주라고 해도 직원 화면이 외주로 바뀌어 고치던 메모를 버리면 안 된다. 쓰기는 어차피 서버가 검사한다.
+async function refreshRole() {
+  const epoch = authEpoch;
+  if (!currentUser) return;
+  const role = await api.myRole();
+  if (role && epoch === authEpoch && currentUser) changeRole(role);
+}
+
+// 서버가 "외주 계정은 미션 기록만 할 수 있습니다."로 거절하면(직원으로 알던 화면이 낡은 것) 문구를 알리고 역할을 다시 받는다.
+api.onRoleRejected(() => {
+  if (!signedIn()) return;
+  toast(api.CONTRACTOR_MESSAGE);
+  refreshRole();
+});
+
 function enterApp(session) {
   const user = session.user;
+  const jwtRole = api.sessionRole(user);
   if (currentUser?.id === user.id) {
     // 토큰을 새로 받은 것 등. 화면은 그대로 둔다.
     currentUser.email = user.email ?? '';
     currentUser.name = displayName(user);
-    currentUser.admin = api.isAdmin(user);
-    showUserName();
-    // 관리자 권한이 빠진 토큰을 받았으면 열려 있던 계정 관리 창도 닫는다.
-    if (!currentUser.admin && accounts.open) {
-      accountsReset();
-      renderAccounts();
+    if (jwtRole !== currentUser.jwtRole) {
+      // 토큰의 역할이 바뀌었으면(관리자 권한이 빠짐 등) DB 값을 다시 받아 그것을 따른다.
+      // 토큰 값은 처음 열 때만 쓴다. 받지 못하면 지금 역할을 그대로 둔다.
+      currentUser.jwtRole = jwtRole;
+      refreshRole();
     }
+    showUserName();
     return;
   }
   if (currentUser) leaveApp(null);
   bumpAuthEpoch();
-  setCurrentUser({ id: user.id, email: user.email ?? '', name: displayName(user), admin: api.isAdmin(user) });
+  // 역할은 토큰 값으로 먼저 열고, 아래에서 my_role()로 DB의 현재 값을 받아 바로잡는다.
+  setCurrentUser({ id: user.id, email: user.email ?? '', name: displayName(user), role: jwtRole, jwtRole, admin: jwtRole === 'admin' });
   showUserName();
   // 로그인 폼에서 왔으면 초점이 숨는 칸에 남지 않게 제목으로 옮긴다(저장된 세션으로 바로 열 때는 건드리지 않는다).
   const fromLogin = $('#login').contains(document.activeElement);
@@ -180,6 +230,7 @@ function enterApp(session) {
   startMap();
   unsubscribeChanges = api.subscribeChanges(onRemoteChange);
   loadPlaces({ fit: true });
+  refreshRole();
 }
 
 // 로그인 화면으로 돌아간다. 다음 사람에게 앞 사람의 화면(목록·고르던 장소·적던 기록)이 남지 않게 모두 비운다.

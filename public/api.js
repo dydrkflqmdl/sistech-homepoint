@@ -227,6 +227,8 @@ async function call(name, params, { signOutOn = ['expired', 'forbidden'], signal
   err.status = status;
   err.code = code;
   err.auth = auth;
+  // 화면은 직원으로 알고 있는데 서버가 외주로 보고 거절한 것(역할이 바뀐 뒤 옛 화면). 화면이 역할을 다시 받게 알린다.
+  if (message === CONTRACTOR_MESSAGE) roleRejectedHandler?.();
   // 화면 문구로 바꿔 버리는 실패(연결·서버 오류)는 원인을 콘솔에 남긴다. 한국어 검증 문구는 그대로 보여 주므로 남기지 않는다.
   if (!hasHangul(res.error.message)) logCause(`${name} 실패 (${status}${code ? ` ${code}` : ''})`, err);
   if (auth) {
@@ -236,6 +238,24 @@ async function call(name, params, { signOutOn = ['expired', 'forbidden'], signal
   }
   throw err;
 }
+
+// ── 역할(관리자·직원·외주) ───────────────────────────────
+
+// 서버가 외주 계정의 가져오기·메모 고치기·장소 삭제를 거절할 때 주는 문구(Postgres P0001).
+export const CONTRACTOR_MESSAGE = '외주 계정은 미션 기록만 할 수 있습니다.';
+
+// 역할 값. 없거나 모르는 값은 직원이다.
+export const ROLES = ['admin', 'staff', 'contractor'];
+export const normalizeRole = (v) => (ROLES.includes(v) ? v : 'staff');
+
+// 세션(JWT)의 역할. 서버가 정한 app_metadata만 본다(user_metadata는 사용자가 바꿀 수 있다).
+export const sessionRole = (user) => normalizeRole(user?.app_metadata?.role);
+
+// 서버가 외주 거절을 돌려주면 app.js가 역할을 다시 받도록 부를 함수를 등록한다.
+let roleRejectedHandler = null;
+export const onRoleRejected = (fn) => {
+  roleRejectedHandler = fn;
+};
 
 // 함수가 DB에 없을 때(아직 배포 전인 새 RPC)의 오류인지. PostgREST는 PGRST202, Postgres는 42883을 준다.
 const isMissingFunction = (err) => err?.code === 'PGRST202' || err?.code === '42883';
@@ -292,6 +312,24 @@ export async function updateMemo(placeId, memo, baseMemo, opts) {
 
 // 장소 삭제 → 지웠으면 true, 이미 없으면 false.
 export const deletePlace = async (placeId) => Boolean(await call('delete_place', { p_place_id: placeId }));
+
+// 지금 계정의 역할을 DB에서 바로 읽는다(my_role() → 'admin' | 'staff' | 'contractor'). 토큰은 최대 1시간 묵을 수 있어서 따로 읽는다.
+// 받지 못하면(실패, null, 모르는 값) null을 돌려준다. 그때 역할을 어떻게 할지는 부른 쪽이 정한다.
+// 토큰의 역할로 대신하지 않는다. 묵은 토큰 때문에 직원 화면이 외주로 바뀌어 고치던 메모를 버리면 안 된다.
+// 실패해도 로그아웃시키지 않는다(signOutOn: []).
+// null은 서버가 계정을 찾지 못한 경우다(지운 계정). 그래도 쓰기는 서버가 거절한다.
+export async function myRole() {
+  let value;
+  try {
+    value = await call('my_role', undefined, { signOutOn: [] });
+  } catch (err) {
+    logCause('my_role 실패 — 지금 역할을 그대로 둡니다.', err);
+    return null;
+  }
+  if (ROLES.includes(value)) return value;
+  logCause('my_role 값이 없거나 모르는 값 — 지금 역할을 그대로 둡니다.', value);
+  return null;
+}
 
 // ── 계정 관리(Edge Function admin-users) ───────────────
 
@@ -351,12 +389,17 @@ async function callAdmin(body) {
   throw err;
 }
 
-// 계정 목록 → [{ id, login_id, email, created_at, last_sign_in_at, is_admin }]. login_id는 null일 수 있다(화면에서 이메일로 되살린다).
+// 계정 목록 → [{ id, login_id, email, created_at, last_sign_in_at, is_admin, role }]. login_id는 null일 수 있다(화면에서 이메일로 되살린다).
+// role은 'admin' | 'staff' | 'contractor'(옛 서버는 안 줄 수 있어 화면에서 is_admin·직원으로 채운다).
 export const listAccounts = async () => (await callAdmin({ action: 'list' })).users ?? [];
 
-// 새 계정을 만든다 → 만든 계정. 아이디·비밀번호 규칙은 화면에서 먼저 검사하고, 서버가 다시 검사한다.
-export const createAccount = async (loginId, password) =>
-  (await callAdmin({ action: 'create', login_id: loginId, password })).user ?? null;
+// 새 계정을 만든다 → 만든 계정. role은 'staff'(기본) 또는 'contractor'. 아이디·비밀번호 규칙은 화면에서 먼저 검사하고, 서버가 다시 검사한다.
+export const createAccount = async (loginId, password, role = 'staff') =>
+  (await callAdmin({ action: 'create', login_id: loginId, password, role })).user ?? null;
+
+// 직원 ↔ 외주를 바꾼다 → 바뀐 계정. 관리자 계정은 서버가 거절한다(오류 문구가 그대로 온다).
+export const setAccountRole = async (userId, role) =>
+  (await callAdmin({ action: 'set_role', user_id: userId, role })).user ?? null;
 
 // 계정의 비밀번호를 바꾼다. 그 계정은 모든 기기에서 로그아웃된다(본인 것도 마찬가지).
 export const resetAccountPassword = async (userId, password) => {

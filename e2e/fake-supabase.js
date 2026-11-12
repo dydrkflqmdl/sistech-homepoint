@@ -17,7 +17,15 @@
 //   echo                    true면 앱의 쓰기 RPC도 실시간 알림을 보낸다(실제 Supabase처럼). 기본 true
 //   delay                   rpc 응답 지연(ms). 기본 20
 //   setAdmins(emails)       이 이메일들의 세션에 app_metadata.role = 'admin'을 넣는다(다음 setSession·로그인부터). localStorage에 둔다
-//   seedAccounts(users)     가짜 admin-users 함수의 계정 목록([{ id, login_id, email, created_at, last_sign_in_at, is_admin }])
+//   seedAccounts(users)     가짜 admin-users 함수의 계정 목록([{ id, login_id, email, created_at, last_sign_in_at, is_admin, role? }]). role이 없으면 is_admin이면 'admin', 아니면 'staff'
+//   setRoles(map)           이메일 → 'staff' | 'contractor'. my_role()과 거절 판정은 이 값(DB의 현재 역할)을 따르고, 세션(JWT) app_metadata.role은 다음 setSession·로그인부터 반영된다
+//                           (세션을 만든 뒤 setRoles로 바꾸면 "토큰은 직원, DB는 외주"인 낡은 화면을 만들 수 있다)
+//   외주(contractor) 계정: import_places·update_memo·delete_place는 '외주 계정은 미션 기록만 할 수 있습니다.'(P0001)로 거절한다. save_mission은 허용한다
+//   my_role() RPC: 'admin' | 'staff' | 'contractor'. failNext({ name: 'my_role', status: 500 })로 실패시키면 앱은 지금 역할을 그대로 둔다
+//                           (처음 열 때는 세션(JWT)의 역할, 그 뒤로는 마지막으로 받은 역할)
+//   myRoleValue             undefined가 아니면 my_role()이 이 값을 그대로 돌려준다(null: auth.users에 행이 없는 지운 계정 흉내). 페이지를 새로 열면 지워진다
+//   admin-users reset_password: 다른 관리자 계정은 400 '관리자 계정은 본인만 비밀번호를 바꿀 수 있습니다.'(본인 것은 됨)
+//   admin-users: list(role 포함)·create(role 선택)·set_role({ user_id, role: 'staff' | 'contractor' }, 관리자 계정·잘못된 값은 거절)
 //   accounts()              지금 계정 목록 복사본
 //   fnFailNext({ status, error })  다음 functions.invoke를 이 상태·문구로 실패시킨다(기본 500)
 //   fnCalls                 functions.invoke 호출 기록 [{ name, body, at }]
@@ -232,10 +240,16 @@
       const ids = new Set(p_ids);
       return { result: listJson(db).filter((p) => ids.has(p.id)), wrote: false };
     },
-    import_places: (db, params) => ({ result: importRows(db, params?.rows), wrote: true, table: 'places' }),
+    // 지금 계정의 역할을 DB에서 읽는다(토큰이 아니라 현재 값).
+    my_role: (_db, _p, session) => ({ result: fake.myRoleValue !== undefined ? fake.myRoleValue : liveRole(session.user.email), wrote: false }),
+    import_places: (db, params, session) => {
+      denyContractor(session);
+      return { result: importRows(db, params?.rows), wrote: true, table: 'places' };
+    },
     save_mission: (db, params) => ({ ...saveMission(db, params ?? {}), table: 'missions' }),
     // 계약 C1: update_memo(p_place_id, p_memo, p_base_memo) → { status: 'ok' | 'conflict', place }
-    update_memo: (db, params = {}) => {
+    update_memo: (db, params = {}, session) => {
+      denyContractor(session);
       const { p_place_id, p_memo, p_base_memo } = params;
       if (fake.legacyMemo && 'p_base_memo' in params) {
         throw new RpcError('Could not find the function public.update_memo(p_base_memo, p_memo, p_place_id) in the schema cache', { code: 'PGRST202', status: 404 });
@@ -250,7 +264,8 @@
       p.updatedAt = now();
       return { result: fake.legacyMemo ? placeJson(db, p) : { status: 'ok', place: placeJson(db, p) }, wrote: true, table: 'places' };
     },
-    delete_place: (db, { p_place_id } = {}) => {
+    delete_place: (db, { p_place_id } = {}, session) => {
+      denyContractor(session);
       const p = findLive(db, p_place_id);
       if (!p) return { result: false, wrote: false };
       if (fake.softDelete) {
@@ -315,12 +330,28 @@
   };
   const ADMINS_KEY = '__fake_admins';
   const ACCOUNTS_KEY = '__fake_accounts';
+  const ROLES_KEY = '__fake_roles';
   const APP_IDS_KEY = '__fake_app_login_ids';
+  // DB의 현재 역할(my_role): 관리자 목록 → setRoles → 계정 목록의 role → 직원.
+  const liveRole = (email) => {
+    const lower = String(email).toLowerCase();
+    if (load(ADMINS_KEY, []).map((e) => String(e).toLowerCase()).includes(lower)) return 'admin';
+    const roles = load(ROLES_KEY, {});
+    const key = Object.keys(roles).find((k) => k.toLowerCase() === lower);
+    if (key) return roles[key] === 'contractor' ? 'contractor' : 'staff';
+    const account = load(ACCOUNTS_KEY, []).find((u) => String(u.email).toLowerCase() === lower);
+    return account?.role === 'contractor' ? 'contractor' : 'staff';
+  };
+  const CONTRACTOR_MESSAGE = '외주 계정은 미션 기록만 할 수 있습니다.';
+  // 외주 계정이면 서버처럼 거절한다(import_places·update_memo·delete_place).
+  const denyContractor = (session) => {
+    if (liveRole(session.user.email) === 'contractor') throw new RpcError(CONTRACTOR_MESSAGE);
+  };
   const makeSession = (email) => {
     const loginId = load(USERS_KEY, {})[email];
     const appLoginId = load(APP_IDS_KEY, {})[email];
-    const admin = load(ADMINS_KEY, []).map((e) => String(e).toLowerCase()).includes(email.toLowerCase());
-    const app = admin ? { provider: 'email', role: 'admin' } : { provider: 'email' };
+    const role = liveRole(email);
+    const app = role === 'admin' || role === 'contractor' ? { provider: 'email', role } : { provider: 'email' };
     if (appLoginId) app.login_id = appLoginId;
     return {
       access_token: 'fake-access-token', refresh_token: 'fake-refresh', token_type: 'bearer', expires_in: 3600,
@@ -352,6 +383,7 @@
   const passwordOk = (pw) =>
     typeof isValidPassword === 'function' ? isValidPassword(pw) : typeof pw === 'string' && pw.length >= 6 && new TextEncoder().encode(pw).length <= 72;
   const passwordRule = () => (typeof PASSWORD_RULE === 'string' ? PASSWORD_RULE : '비밀번호는 6자 이상 72자 이하여야 합니다.');
+  const ROLE_RULE = '권한은 직원 또는 외주만 고를 수 있습니다.';
   function adminUsers(body, session) {
     if (!session) throw new FnError(401, '로그인이 필요합니다.');
     if (session.user.app_metadata?.role !== 'admin') throw new FnError(403, '관리자만 쓸 수 있는 기능입니다.');
@@ -359,25 +391,42 @@
     const accounts = getAccounts();
     switch (body.action) {
       case 'list':
-        return { ok: true, users: clone(accounts) };
+        return { ok: true, users: clone(accounts).map((u) => ({ ...u, role: u.is_admin ? 'admin' : liveRole(u.email) })) };
       case 'create': {
         const loginId = normalizeLoginId(body.login_id);
         if (loginId === null) throw new FnError(400, LOGIN_ID_RULE);
         if (!passwordOk(body.password)) throw new FnError(400, passwordRule());
+        if (body.role !== undefined && !['staff', 'contractor'].includes(body.role)) throw new FnError(400, ROLE_RULE);
+        const role = body.role ?? 'staff';
         const email = loginIdToEmail(loginId);
         if (accounts.some((u) => u.email.toLowerCase() === email)) throw new FnError(409, `이미 있는 아이디입니다: ${loginId}`);
-        const user = { id: 'user-' + email, login_id: loginId, email, created_at: now(), last_sign_in_at: null, is_admin: false };
+        const user = { id: 'user-' + email, login_id: loginId, email, created_at: now(), last_sign_in_at: null, is_admin: false, role };
         accounts.push(user);
         putAccounts(accounts);
+        save(ROLES_KEY, { ...load(ROLES_KEY, {}), [email]: role });
         const users = load(USERS_KEY, {});
         users[email] = loginId;
         save(USERS_KEY, users);
+        return { ok: true, user: clone(user) };
+      }
+      case 'set_role': {
+        const user = accounts.find((u) => u.id === body.user_id);
+        if (!user) throw new FnError(404, '계정을 찾을 수 없습니다.');
+        if (user.is_admin || liveRole(user.email) === 'admin') throw new FnError(403, '관리자 계정의 권한은 여기서 바꿀 수 없습니다.');
+        if (!['staff', 'contractor'].includes(body.role)) throw new FnError(400, ROLE_RULE);
+        user.role = body.role;
+        putAccounts(accounts);
+        save(ROLES_KEY, { ...load(ROLES_KEY, {}), [user.email]: body.role });
         return { ok: true, user: clone(user) };
       }
       case 'reset_password': {
         const user = accounts.find((u) => u.id === body.user_id);
         if (!user) throw new FnError(404, '계정을 찾을 수 없습니다.');
         if (!passwordOk(body.password)) throw new FnError(400, passwordRule());
+        // 서버와 같다: 다른 관리자 계정의 비밀번호는 바꾸지 않는다(본인 것은 된다).
+        if (user.id !== session.user.id && (user.is_admin || liveRole(user.email) === 'admin')) {
+          throw new FnError(400, '관리자 계정은 본인만 비밀번호를 바꿀 수 있습니다.');
+        }
         fake.resetPasswords.push({ user_id: user.id, password: body.password });
         return { ok: true };
       }
@@ -447,11 +496,13 @@
     conflictNext(record = null) { conflictQueue.push(record); },
     // [계정 관리] 관리자 이메일 목록·가짜 계정 목록·함수 호출 기록
     setAdmins(emails) { save(ADMINS_KEY, emails); },
+    setRoles(map) { save(ROLES_KEY, map); },
     seedAccounts(users) { putAccounts(users); },
     accounts() { return clone(getAccounts()); },
     fnCalls: [],
     fnDelay: null,
     resetPasswords: [],
+    myRoleValue: undefined,
     fnFailNext({ status = 500, error = '계정 서버 오류' } = {}) { fnFailQueue.push({ status, error }); },
     setSession(email = 'admin@sistech.test') { save(SESSION_KEY, makeSession(email)); },
     clearSession() { save(SESSION_KEY, null); },

@@ -21,7 +21,7 @@ const metrics = (W) => `(() => {
   const out = {
     narrow, topbar, h1Lines: Math.round(h1r.height / lh), actionRows: rowsTop.length,
     sideBySide: h1r.right <= ar.left + 1, overlap: !(h1r.right <= ar.left + 1 || h1r.bottom <= ar.top + 1 || ar.bottom <= h1r.top + 1),
-    emailClipped: email.scrollWidth > email.clientWidth, emailTitle: narrow ? tu.title : email.title,
+    emailClipped: (email.querySelector('.name-text') ?? email).scrollWidth > (email.querySelector('.name-text') ?? email).clientWidth, emailTitle: narrow ? tu.title : email.title,
     topUserShown: tu.offsetParent !== null || tur.width > 0, topUserLeftOfMenu: tur.right <= mbr.left + 0.5, topUserInside: tur.left >= 0 && tur.right <= ${W}, topUserH1Gap: Math.round(tur.left - h1r.right), emailWidth: Math.round(r(email).width),
     overflowX: innerWidth !== ${W} || document.documentElement.scrollWidth > ${W} || r(top).right > ${W} + 0.5 || r(actions).right > ${W} + 0.5 || r(document.querySelector('#logout-button')).right > ${W}, mapH: Math.round(r(document.querySelector('#map')).height),
     logoutVisible: (() => { const b = r(document.querySelector('#logout-button')); return b.width > 0 && b.right <= ${W} && b.left >= 0; })(),

@@ -188,7 +188,8 @@ export async function launch(name, { confirm = true, fakeSupabase = true, fakeKa
 // 로그인된 상태 + 데이터로 시작한다. rows는 readPlaces().places(import_places 규칙으로 넣음), after는 DB를 더 손보는 함수 문자열.
 // admins는 app_metadata.role = 'admin'을 받을 이메일 목록, accounts는 가짜 admin-users 함수의 계정 목록(계정 관리 시나리오용).
 // users는 이메일 → user_metadata.login_id, appLoginIds는 이메일 → app_metadata.login_id(계약 C4).
-export async function prepare(b, { rows = null, places = null, after = null, email = 'admin@sistech.test', signedIn = true, admins = null, accounts = null, users = null, appLoginIds = null } = {}) {
+// roles는 이메일 → 'staff' | 'contractor'(DB의 현재 역할. 세션을 만들기 전에 넣으면 토큰에도 반영된다).
+export async function prepare(b, { rows = null, places = null, after = null, email = 'admin@sistech.test', signedIn = true, admins = null, accounts = null, users = null, appLoginIds = null, roles = null } = {}) {
   await b.navigate(URL_BASE, 300);
   await b.ev(`(() => {
     localStorage.clear();
@@ -197,6 +198,7 @@ export async function prepare(b, { rows = null, places = null, after = null, ema
     ${rows ? `__fake.importRows(${JSON.stringify(rows)});` : ''}
     ${after ? `__fake.remoteChange(${after}, { notify: false });` : ''}
     ${admins ? `__fake.setAdmins(${JSON.stringify(admins)});` : ''}
+    ${roles ? `__fake.setRoles(${JSON.stringify(roles)});` : ''}
     ${accounts ? `__fake.seedAccounts(${JSON.stringify(accounts)});` : ''}
     ${users ? `__fake.setUsers(${JSON.stringify(users)});` : ''}
     ${appLoginIds ? `__fake.setAppLoginIds(${JSON.stringify(appLoginIds)});` : ''}

@@ -8,6 +8,12 @@ import { confirmDiscardDraft } from './missions-ui.js';
 import * as loginId from './login-id.js';
 import * as api from './api.js';
 
+// 권한 이름과 "~로 바꿨습니다" 문구. 관리자는 여기서 바꿀 수 없다(직원 ↔ 외주만).
+const ROLE_LABELS = { admin: '관리자', staff: '직원', contractor: '외주' };
+const ROLE_TO = { staff: '직원으로', contractor: '외주로' };
+// 계정의 권한. 서버가 role을 안 주는 옛 판에서는 is_admin으로, 그것도 아니면 직원으로 본다.
+const roleOf = (u) => (u.is_admin || u.role === 'admin' ? 'admin' : u.role === 'contractor' ? 'contractor' : 'staff');
+
 // 로그인 화면으로 보내기는 app.js에 있어 hooks로 부른다.
 const leaveApp = (...args) => hooks.leaveApp(...args);
 
@@ -37,8 +43,9 @@ export const accounts = {
   resetPassword: '',
   resetInvalid: false,
   resetShown: false, // 재설정 비밀번호 칸 [보기]
+  rolePending: null, // 권한을 바꾸는 요청 중이면 { id, role }(그동안 그 칸에 새 값을 보여 준다)
   // 새 계정 폼. 다시 그려도 적던 글자가 남게 여기에 둔다.
-  create: { loginId: '', password: '', invalid: null, shown: false },
+  create: { loginId: '', password: '', role: 'staff', invalid: null, shown: false },
 };
 
 export const accountsReset = () =>
@@ -53,7 +60,8 @@ export const accountsReset = () =>
     resetPassword: '',
     resetInvalid: false,
     resetShown: false,
-    create: { loginId: '', password: '', invalid: null, shown: false },
+    rolePending: null,
+    create: { loginId: '', password: '', role: 'staff', invalid: null, shown: false },
   });
 
 // 계정 목록에 보여 줄 아이디. 서버가 login_id를 못 주면(대시보드에서 만든 계정 등) 이메일에서 되살린다.
@@ -171,11 +179,12 @@ async function submitCreate() {
   setAccountsMessage();
   renderAccounts();
   try {
-    await api.createAccount(id, accounts.create.password);
+    const role = accounts.create.role === 'contractor' ? 'contractor' : 'staff';
+    await api.createAccount(id, accounts.create.password, role);
     if (epoch !== authEpoch || !accounts.open) return;
-    accounts.create = { loginId: '', password: '', invalid: null, shown: false };
+    accounts.create = { loginId: '', password: '', role: 'staff', invalid: null, shown: false };
     accounts.busy = false;
-    setAccountsMessage({ notice: `${id} 계정을 만들었습니다.` });
+    setAccountsMessage({ notice: role === 'contractor' ? `${id} 계정을 외주로 만들었습니다.` : `${id} 계정을 만들었습니다.` });
     await loadAccounts();
     if (epoch === authEpoch && accounts.open) refocus('#accounts-new-id');
   } catch (err) {
@@ -184,6 +193,36 @@ async function submitCreate() {
     setAccountsMessage({ error: err.message });
     renderAccounts();
     refocus('#accounts-new-id');
+  }
+}
+
+// 직원 ↔ 외주. 요청하는 동안 표의 단추를 모두 잠그고, 실패하면 서버 문구를 보여 주고 이전 값으로 되돌린다(다시 그리면 목록 값이 그대로다).
+async function submitRole(user, role) {
+  if (accounts.busy || accounts.loading) return;
+  // 관리자 계정(본인 포함)은 바꿀 수 없다. 화면에는 단추를 두지 않지만 한 번 더 막는다.
+  if (roleOf(user) === 'admin' || user.id === currentUser?.id || roleOf(user) === role) return;
+  const epoch = authEpoch;
+  accounts.busy = true;
+  accounts.rolePending = { id: user.id, role };
+  setAccountsMessage();
+  renderAccounts();
+  const selector = `#accounts-panel select[data-role-user="${CSS.escape(String(user.id))}"]`;
+  try {
+    const changed = await api.setAccountRole(user.id, role);
+    if (epoch !== authEpoch || !accounts.open) return;
+    accounts.users = accounts.users.map((x) => (x.id === user.id ? { ...x, ...(changed ?? {}), role: changed?.role ?? role } : x));
+    accounts.busy = false;
+    accounts.rolePending = null;
+    setAccountsMessage({ notice: `${accountName(user)} 계정의 권한을 ${ROLE_TO[role]} 바꿨습니다.` });
+    renderAccounts();
+    refocus(selector);
+  } catch (err) {
+    if (authFailed(err) || epoch !== authEpoch || !accounts.open) return;
+    accounts.busy = false;
+    accounts.rolePending = null;
+    setAccountsMessage({ error: err.message });
+    renderAccounts();
+    refocus(selector);
   }
 }
 
@@ -286,7 +325,7 @@ function accountResetRow(u, self) {
     'tr',
     { class: 'accounts-row resetting', 'data-user-id': u.id, role: 'row' },
     cell(
-      { colspan: 4 },
+      { colspan: 5 },
       h(
         'form',
         {
@@ -336,6 +375,24 @@ function accountResetRow(u, self) {
   );
 }
 
+// 권한 칸: 관리자는 글자만, 나머지는 직원/외주 고르는 칸. 요청 중에는 모두 잠근다.
+function roleCell(u, self) {
+  const role = roleOf(u);
+  if (role === 'admin' || self) return h('span', { class: 'accounts-role-text' }, ROLE_LABELS[role]);
+  const shown = accounts.rolePending?.id === u.id ? accounts.rolePending.role : role;
+  return h(
+    'select',
+    {
+      class: 'accounts-role-select',
+      'data-role-user': u.id,
+      'aria-label': `${accountName(u)} 권한`,
+      disabled: accounts.busy || accounts.loading,
+      onchange: (e) => submitRole(u, e.target.value),
+    },
+    ['staff', 'contractor'].map((r) => h('option', { value: r, selected: r === shown }, ROLE_LABELS[r])),
+  );
+}
+
 function accountRow(u) {
   const self = u.id === currentUser?.id;
   if (accounts.resetId === u.id) return accountResetRow(u, self);
@@ -348,6 +405,7 @@ function accountRow(u) {
       u.is_admin && h('span', { class: 'badge accounts-admin' }, '관리자'),
       self && h('span', { class: 'accounts-self' }, '(본인)'),
     ),
+    cell({ class: 'accounts-role', 'data-label': '권한' }, roleCell(u, self)),
     cell({ class: 'accounts-when', 'data-label': '만든 날' }, formatWhen(u.created_at)),
     cell({ class: 'accounts-when', 'data-label': '마지막 로그인' }, formatWhen(u.last_sign_in_at, { withTime: true })),
     cell(
@@ -368,7 +426,7 @@ function accountsTable() {
     h(
       'thead',
       { role: 'rowgroup' },
-      h('tr', { role: 'row' }, head('아이디'), head('만든 날'), head('마지막 로그인'), head(h('span', { class: 'sr-only' }, '동작'))),
+      h('tr', { role: 'row' }, head('아이디'), head('권한'), head('만든 날'), head('마지막 로그인'), head(h('span', { class: 'sr-only' }, '동작'))),
     ),
     h('tbody', { role: 'rowgroup' }, users.map(accountRow)),
   );
@@ -441,6 +499,25 @@ function accountsCreateForm() {
             renderAccounts();
           },
         }),
+      ),
+      // 새 계정의 권한: 직원(기본) 또는 외주.
+      h(
+        'label',
+        { class: 'field field-role' },
+        h('span', {}, '권한'),
+        h(
+          'select',
+          {
+            id: 'accounts-new-role',
+            name: 'new-role',
+            disabled,
+            onchange: (e) => {
+              create.role = e.target.value === 'contractor' ? 'contractor' : 'staff';
+            },
+          },
+          h('option', { value: 'staff', selected: create.role !== 'contractor' }, '직원'),
+          h('option', { value: 'contractor', selected: create.role === 'contractor' }, '외주'),
+        ),
       ),
     ),
     h('div', { class: 'button-row' }, h('button', { id: 'accounts-create-button', type: 'submit', class: 'btn primary', disabled }, disabled ? '만드는 중…' : '만들기')),

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { domainToASCII } from 'node:url';
 import {
+  ADMIN_PASSWORD_LOCKED_MESSAGE,
+  ADMIN_ROLE_LOCKED_MESSAGE,
   BODY_LIMIT_BYTES,
   BODY_TOO_LARGE_MESSAGE,
   LOGIN_ID_RULE,
@@ -10,9 +12,11 @@ import {
   PASSWORD_RULE,
   RATE_LIMIT,
   RATE_LIMIT_MESSAGE,
+  ROLE_RULE,
   createHandler,
   parseAllowedOrigins,
   resolveLoginId,
+  roleOf,
 } from '../supabase/functions/admin-users/handler.js';
 import { loginIdToEmail as browserLoginIdToEmail, normalizeLoginId as browserNormalize } from '../public/login-id.js';
 
@@ -59,11 +63,20 @@ function makeFakeDeps(seed = []) {
       users.push(user);
       return { ...user };
     },
+    async getUserById(id) {
+      calls.push(['getUserById', id]);
+      const user = users.find((u) => u.id === id);
+      if (!user) throw Object.assign(new Error('User not found'), { code: 'user_not_found', status: 404 });
+      return { ...user };
+    },
     async updateUserById(id, attrs) {
       calls.push(['updateUserById', id, attrs]);
       const user = users.find((u) => u.id === id);
       if (!user) throw Object.assign(new Error('User not found'), { code: 'user_not_found', status: 404 });
-      Object.assign(user, attrs);
+      // GoTrue 처럼 app_metadata 는 기존 값에 병합한다
+      const { app_metadata, ...rest } = attrs;
+      Object.assign(user, rest);
+      if (app_metadata) user.app_metadata = { ...(user.app_metadata ?? {}), ...app_metadata };
       return { ...user };
     },
   };
@@ -151,10 +164,14 @@ test('list: 형태와 정렬(아이디 가나다순, 아이디 없는 계정은 
     created_at: '2026-01-01T00:00:00Z',
     last_sign_in_at: '2026-02-01T00:00:00Z',
     is_admin: true,
+    role: 'admin',
   });
   for (const u of res.body.users) {
-    assert.deepEqual(Object.keys(u).sort(), ['created_at', 'email', 'id', 'is_admin', 'last_sign_in_at', 'login_id']);
-    if (u.id !== 'u-1') assert.equal(u.is_admin, false);
+    assert.deepEqual(Object.keys(u).sort(), ['created_at', 'email', 'id', 'is_admin', 'last_sign_in_at', 'login_id', 'role']);
+    if (u.id !== 'u-1') {
+      assert.equal(u.is_admin, false);
+      assert.equal(u.role, 'staff', 'role 이 없으면 직원');
+    }
   }
   const noMeta = res.body.users.find((u) => u.id === 'u-5');
   assert.equal(noMeta.login_id, null);
@@ -205,7 +222,7 @@ test('create: 성공하면 email_confirm, user_metadata·app_metadata 의 login_
     password: PW,
     email_confirm: true,
     user_metadata: { login_id: '손두병' },
-    app_metadata: { login_id: '손두병' },
+    app_metadata: { login_id: '손두병', role: 'staff' },
   });
   assert.deepEqual(res.body.user, {
     id: 'u-100',
@@ -214,6 +231,7 @@ test('create: 성공하면 email_confirm, user_metadata·app_metadata 의 login_
     created_at: '2026-11-06T00:00:00Z',
     last_sign_in_at: null,
     is_admin: false,
+    role: 'staff',
   });
   assert.equal(deps.users[0].app_metadata.provider, 'email', 'app_metadata 는 기존 키와 병합된다');
 });
@@ -331,6 +349,201 @@ test('reset_password: 성공 / 없는 user_id 는 404 / user_id 누락은 400 / 
 
   const noId = await call(deps, { action: 'reset_password', password: 'newpass123' });
   assert.equal(noId.status, 400);
+});
+
+test('reset_password: 직원은 됨 / 본인(관리자)은 됨 / 다른 관리자는 400, 바꾸지 않는다', async () => {
+  assert.equal(ADMIN_PASSWORD_LOCKED_MESSAGE, '관리자 계정은 본인만 비밀번호를 바꿀 수 있습니다.');
+  const deps = makeFakeDeps([...SEED, { id: 'admin-1', email: 'me@sistech.local', app_metadata: { role: 'admin' } }]);
+
+  const staff = await call(deps, { action: 'reset_password', user_id: 'u-2', password: 'staffpass1' });
+  assert.equal(staff.status, 200);
+  assert.deepEqual(staff.body, { ok: true });
+  assert.equal(deps.users.find((u) => u.id === 'u-2').password, 'staffpass1');
+
+  const self = await call(deps, { action: 'reset_password', user_id: 'admin-1', password: 'selfpass1' });
+  assert.equal(self.status, 200);
+  assert.deepEqual(self.body, { ok: true });
+  assert.equal(deps.users.find((u) => u.id === 'admin-1').password, 'selfpass1');
+
+  const before = deps.calls.length;
+  const other = await call(deps, { action: 'reset_password', user_id: 'u-1', password: 'otherpass1' });
+  assert.equal(other.status, 400);
+  assert.deepEqual(other.body, { ok: false, error: ADMIN_PASSWORD_LOCKED_MESSAGE });
+  assert.ok(!deps.calls.slice(before).some(([name]) => name === 'updateUserById'));
+  assert.equal(deps.users.find((u) => u.id === 'u-1').password, undefined);
+
+  // 앞뒤 공백이 있어도 같은 계정으로 본다
+  const spaced = await call(deps, { action: 'reset_password', user_id: ' u-1 ', password: 'otherpass1' });
+  assert.equal(spaced.status, 400);
+  assert.equal(spaced.body.error, ADMIN_PASSWORD_LOCKED_MESSAGE);
+});
+
+// ---- 계정 권한(role) ----
+
+test('roleOf: admin·contractor 만 그대로, 없거나 모르는 값은 staff', () => {
+  assert.equal(roleOf({ role: 'admin' }), 'admin');
+  assert.equal(roleOf({ role: 'contractor' }), 'contractor');
+  assert.equal(roleOf({ role: 'staff' }), 'staff');
+  for (const meta of [{}, null, undefined, { role: '' }, { role: 'Contractor' }, { role: 'ADMIN' }, { role: 1 }, { role: ['admin'] }, { role: '외주' }]) {
+    assert.equal(roleOf(meta), 'staff', JSON.stringify(meta));
+  }
+});
+
+test('list: role 값(admin·staff·contractor, 모르는 값과 null 은 staff), is_admin 은 그대로', async () => {
+  const seed = [
+    ...SEED,
+    { id: 'u-6', email: 'con@sistech.local', app_metadata: { role: 'contractor', login_id: 'con' } },
+    { id: 'u-7', email: 'odd@sistech.local', app_metadata: { role: 'superuser', login_id: 'odd' } },
+    { id: 'u-8', email: 'stf@sistech.local', app_metadata: { role: 'staff', login_id: 'stf' } },
+  ];
+  const res = await call(makeFakeDeps(seed), { action: 'list' });
+  assert.equal(res.status, 200);
+  const byId = Object.fromEntries(res.body.users.map((u) => [u.id, [u.role, u.is_admin]]));
+  assert.deepEqual(byId, {
+    'u-1': ['admin', true],
+    'u-2': ['staff', false],
+    'u-3': ['staff', false],
+    'u-4': ['staff', false],
+    'u-5': ['staff', false],
+    'u-6': ['contractor', false],
+    'u-7': ['staff', false],
+    'u-8': ['staff', false],
+  });
+});
+
+test('create: role 을 주면 app_metadata.role 에 넣는다(직원·외주), 없거나 null 이면 직원', async () => {
+  const deps = makeFakeDeps();
+  const cases = [
+    ['외주1', 'contractor', 'contractor'],
+    ['직원1', 'staff', 'staff'],
+    ['기본1', undefined, 'staff'],
+    ['기본2', null, 'staff'],
+  ];
+  for (const [login_id, role, want] of cases) {
+    const res = await call(deps, { action: 'create', login_id, password: PW, role });
+    assert.equal(res.status, 200, `${login_id}: ${res.body.error}`);
+    assert.deepEqual(deps.calls.at(-1)[1].app_metadata, { login_id, role: want });
+    assert.equal(res.body.user.role, want);
+    assert.equal(res.body.user.is_admin, false);
+  }
+});
+
+test('create: 직원·외주가 아닌 role 은 400(관리자도 만들 수 없음), 계정은 만들지 않는다', async () => {
+  assert.equal(ROLE_RULE, '권한은 직원 또는 외주만 고를 수 있습니다.');
+  const deps = makeFakeDeps();
+  for (const bad of ['admin', 'Contractor', 'STAFF', '', '외주', '직원', 1, true, {}, ['staff']]) {
+    const res = await call(deps, { action: 'create', login_id: '손두병', password: PW, role: bad });
+    assert.equal(res.status, 400, JSON.stringify(bad));
+    assert.deepEqual(res.body, { ok: false, error: ROLE_RULE }, JSON.stringify(bad));
+  }
+  assert.ok(!deps.calls.some(([name]) => name === 'createUser'));
+  assert.equal(deps.users.length, 0);
+});
+
+test('set_role: 직원 → 외주 → 직원, app_metadata 의 login_id·provider 는 남는다', async () => {
+  const seed = [
+    ...SEED,
+    { id: 'u-6', email: `${domainToASCII('오성민')}@sistech.local`, created_at: '2026-01-06T00:00:00Z', last_sign_in_at: null, user_metadata: { login_id: '오성민' }, app_metadata: { provider: 'email', login_id: '오성민' } },
+  ];
+  const deps = makeFakeDeps(seed);
+  const toContractor = await call(deps, { action: 'set_role', user_id: 'u-6', role: 'contractor' });
+  assert.equal(toContractor.status, 200, toContractor.body.error);
+  assert.deepEqual(toContractor.body, {
+    ok: true,
+    user: {
+      id: 'u-6',
+      login_id: '오성민',
+      email: `${domainToASCII('오성민')}@sistech.local`,
+      created_at: '2026-01-06T00:00:00Z',
+      last_sign_in_at: null,
+      is_admin: false,
+      role: 'contractor',
+    },
+  });
+  assert.deepEqual(deps.calls.at(-1), ['updateUserById', 'u-6', { app_metadata: { role: 'contractor' } }], 'role 만 보낸다');
+  assert.deepEqual(deps.users.find((u) => u.id === 'u-6').app_metadata, { provider: 'email', login_id: '오성민', role: 'contractor' });
+
+  const toStaff = await call(deps, { action: 'set_role', user_id: ' u-6 ', role: 'staff' });
+  assert.equal(toStaff.status, 200);
+  assert.equal(toStaff.body.user.role, 'staff');
+  assert.deepEqual(deps.users.find((u) => u.id === 'u-6').app_metadata, { provider: 'email', login_id: '오성민', role: 'staff' });
+
+  // app_metadata 가 null 인 계정(대시보드에서 만든 계정)도 바꿀 수 있다
+  const fromNull = await call(deps, { action: 'set_role', user_id: 'u-5', role: 'contractor' });
+  assert.equal(fromNull.status, 200);
+  assert.equal(fromNull.body.user.role, 'contractor');
+});
+
+test('set_role: 관리자 계정·자기 자신은 400, 바꾸지 않는다', async () => {
+  assert.equal(ADMIN_ROLE_LOCKED_MESSAGE, '관리자 계정의 권한은 여기서 바꿀 수 없습니다.');
+  const deps = makeFakeDeps([...SEED, { id: 'admin-1', email: 'me@sistech.local', app_metadata: { role: 'admin' } }]);
+  const other = await call(deps, { action: 'set_role', user_id: 'u-1', role: 'contractor' });
+  assert.equal(other.status, 400);
+  assert.deepEqual(other.body, { ok: false, error: ADMIN_ROLE_LOCKED_MESSAGE });
+  const self = await call(deps, { action: 'set_role', user_id: 'admin-1', role: 'staff' });
+  assert.equal(self.status, 400);
+  assert.deepEqual(self.body, { ok: false, error: ADMIN_ROLE_LOCKED_MESSAGE });
+  assert.ok(!deps.calls.some(([name]) => name === 'updateUserById'));
+  assert.equal(deps.users.find((u) => u.id === 'u-1').app_metadata.role, 'admin');
+  assert.equal(deps.users.find((u) => u.id === 'admin-1').app_metadata.role, 'admin');
+});
+
+test('set_role: 잘못된 role·빠진 role 은 400, 빠진 user_id 는 400, 없는 계정은 404', async () => {
+  const deps = makeFakeDeps(SEED);
+  for (const bad of [undefined, null, 'admin', 'Contractor', '', '외주', 1, {}]) {
+    const res = await call(deps, { action: 'set_role', user_id: 'u-2', role: bad });
+    assert.equal(res.status, 400, JSON.stringify(bad));
+    assert.deepEqual(res.body, { ok: false, error: ROLE_RULE }, JSON.stringify(bad));
+  }
+  for (const bad of [undefined, '', '   ', 5, null]) {
+    const res = await call(deps, { action: 'set_role', user_id: bad, role: 'contractor' });
+    assert.equal(res.status, 400, JSON.stringify(bad));
+    assert.equal(res.body.error, '대상 계정이 지정되지 않았습니다.');
+  }
+  assert.ok(!deps.calls.some(([name]) => name === 'updateUserById'));
+
+  const missing = await call(deps, { action: 'set_role', user_id: 'nope', role: 'contractor' });
+  assert.equal(missing.status, 404);
+  assert.deepEqual(missing.body, { ok: false, error: '계정을 찾을 수 없습니다.' });
+
+  // 확인과 저장 사이에 계정이 지워져도 404
+  deps.updateUserById = async () => {
+    throw Object.assign(new Error('User not found'), { code: 'user_not_found', status: 404 });
+  };
+  assert.equal((await call(deps, { action: 'set_role', user_id: 'u-2', role: 'contractor' })).status, 404);
+});
+
+test('set_role: 관리자 아님 403·토큰 없음 401·허용 밖 출처 403, 모두 아무것도 바꾸지 않는다', async () => {
+  const deps = makeFakeDeps(SEED);
+  const notAdmin = await call(deps, { action: 'set_role', user_id: 'u-2', role: 'contractor' }, { token: USER_TOKEN });
+  assert.equal(notAdmin.status, 403);
+  assert.equal(notAdmin.body.error, '관리자만 사용할 수 있습니다.');
+  assert.equal((await call(deps, { action: 'set_role', user_id: 'u-2', role: 'contractor' }, { token: null })).status, 401);
+  const handler = createHandler(deps, { allowedOrigins: 'https://sistech.dpdns.org' });
+  const evil = await call(deps, { action: 'set_role', user_id: 'u-2', role: 'contractor' }, { handler, origin: 'https://evil.example' });
+  assert.equal(evil.status, 403);
+  assert.equal(evil.body.error, ORIGIN_DENIED_MESSAGE);
+  assert.ok(!deps.calls.some(([name]) => name === 'getUserById' || name === 'updateUserById'));
+  assert.deepEqual(deps.users.find((u) => u.id === 'u-2').app_metadata, {});
+});
+
+test('set_role: 횟수 제한(429)과 본문 크기 제한(413)도 같이 받는다', async () => {
+  const deps = makeFakeDeps(SEED);
+  const handler = createHandler(deps, { now: () => 0 });
+  for (let i = 0; i < RATE_LIMIT; i++) {
+    const role = i % 2 ? 'staff' : 'contractor';
+    assert.equal((await call(deps, { action: 'set_role', user_id: 'u-2', role }, { handler })).status, 200);
+  }
+  const over = await call(deps, { action: 'set_role', user_id: 'u-2', role: 'contractor' }, { handler });
+  assert.equal(over.status, 429);
+  assert.equal(over.body.error, RATE_LIMIT_MESSAGE);
+  assert.equal(deps.users.find((u) => u.id === 'u-2').app_metadata.role, 'staff', '429 면 바꾸지 않는다');
+
+  const deps2 = makeFakeDeps(SEED);
+  const big = JSON.stringify({ action: 'set_role', user_id: 'u-2', role: 'contractor', pad: 'x'.repeat(BODY_LIMIT_BYTES) });
+  const res = await call(deps2, null, { raw: big });
+  assert.equal(res.status, 413);
+  assert.ok(!deps2.calls.some(([name]) => name === 'updateUserById'));
 });
 
 test('잘못된 JSON·본문·action 은 400', async () => {

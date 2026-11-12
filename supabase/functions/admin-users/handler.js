@@ -1,7 +1,7 @@
 // admin-users Edge Function의 핵심 로직. Deno API나 supabase-js에 직접 기대지 않는 순수 ESM이라
 // Node의 node:test 로도 가짜 deps를 넣어 검증할 수 있다. 진입점은 index.ts.
 //
-// 요청: POST JSON { action: 'list' | 'create' | 'reset_password', login_id?, password?, user_id? }
+// 요청: POST JSON { action: 'list' | 'create' | 'reset_password' | 'set_role', login_id?, password?, user_id?, role? }
 //       헤더 Authorization: Bearer <로그인 사용자의 access token>
 // 관리자(app_metadata.role === 'admin')만 허용하며, 토큰 검증은 서비스 롤 클라이언트의 getUser 로 서버에서 한다.
 // 제한: 본문 16KB(초과 413), 관리자별 1분 20회(초과 429), ALLOWED_ORIGINS 가 있으면 그 출처만 허용.
@@ -27,6 +27,34 @@ export const RATE_WINDOW_MS = 60_000;
 export const RATE_LIMIT_MESSAGE = '요청이 너무 많습니다. 1분 뒤에 다시 시도해 주세요.';
 export const BODY_TOO_LARGE_MESSAGE = '요청 본문이 너무 큽니다.';
 export const ORIGIN_DENIED_MESSAGE = '허용되지 않은 출처에서 온 요청입니다.';
+
+// ---- 계정 권한(app_metadata.role) ----
+// 'admin' 관리자, 'staff' 직원, 'contractor' 외주. 값이 없거나 모르는 값이면 직원이다(DB의 public.app_role()과 같은 규칙).
+// 이 함수로 고를 수 있는 것은 직원·외주뿐이다. 관리자는 여기서 만들거나 바꾸지 않는다.
+export const ROLE_ADMIN = 'admin';
+export const ROLE_STAFF = 'staff';
+export const ROLE_CONTRACTOR = 'contractor';
+export const ASSIGNABLE_ROLES = Object.freeze([ROLE_STAFF, ROLE_CONTRACTOR]);
+export const ROLE_RULE = '권한은 직원 또는 외주만 고를 수 있습니다.';
+export const ADMIN_ROLE_LOCKED_MESSAGE = '관리자 계정의 권한은 여기서 바꿀 수 없습니다.';
+export const ADMIN_PASSWORD_LOCKED_MESSAGE = '관리자 계정은 본인만 비밀번호를 바꿀 수 있습니다.';
+
+// app_metadata → 'admin' | 'staff' | 'contractor'
+/** @param {Record<string, any> | null | undefined} appMetadata @returns {'admin' | 'staff' | 'contractor'} */
+export function roleOf(appMetadata) {
+  const role = appMetadata?.role;
+  if (role === ROLE_ADMIN) return ROLE_ADMIN;
+  if (role === ROLE_CONTRACTOR) return ROLE_CONTRACTOR;
+  return ROLE_STAFF;
+}
+
+// 요청의 role 값 검사. 없으면(undefined·null) fallback, 직원·외주가 아니면 400.
+/** @param {unknown} raw @param {'staff' | 'contractor' | null} fallback @returns {'staff' | 'contractor'} */
+function validateRole(raw, fallback) {
+  if ((raw === undefined || raw === null) && fallback !== null) return fallback;
+  if (raw === ROLE_STAFF || raw === ROLE_CONTRACTOR) return raw;
+  throw new HttpError(400, ROLE_RULE);
+}
 
 // 앞뒤 공백을 떼고 한글 조합 형태를 통일한다. 규칙에 어긋나면 null.
 /** @param {unknown} raw @returns {string | null} */
@@ -211,9 +239,9 @@ function metaId(value) {
  */
 
 /**
- * 프런트에 보여 줄 사용자.
+ * 프런트에 보여 줄 사용자. is_admin 은 예전 화면을 위해 남겨 둔다(role === 'admin' 과 같다).
  * @typedef {{ id: string, login_id: string | null, email: string | null, created_at: string | null,
- *             last_sign_in_at: string | null, is_admin: boolean }} UserInfo
+ *             last_sign_in_at: string | null, is_admin: boolean, role: 'admin' | 'staff' | 'contractor' }} UserInfo
  */
 
 // 목록·생성 응답에 보여 줄 아이디(계약 C4). 순서:
@@ -240,6 +268,7 @@ export function toUserInfo(user) {
     created_at: user.created_at ?? null,
     last_sign_in_at: user.last_sign_in_at ?? null,
     is_admin: user.app_metadata?.role === 'admin',
+    role: roleOf(user.app_metadata),
   };
 }
 
@@ -339,12 +368,16 @@ function isUserNotFound(err) {
  * @property {(token: string) => Promise<AuthUser | null>} getUser  토큰이 무효하면 null
  * @property {() => Promise<AuthUser[]>} listUsers  전체 사용자(페이지를 끝까지)
  * @property {(attrs: CreateUserAttrs) => Promise<AuthUser>} createUser  중복이면 code 'email_exists' 오류를 던진다
- * @property {(id: string, attrs: { password: string }) => Promise<unknown>} updateUserById  없으면 code 'user_not_found' 오류
+ * @property {(id: string) => Promise<AuthUser>} getUserById  없으면 code 'user_not_found' 오류
+ * @property {(id: string, attrs: UpdateUserAttrs) => Promise<AuthUser>} updateUserById  없으면 code 'user_not_found' 오류.
+ *   app_metadata 는 기존 값에 병합된다(GoTrue 동작). 그래서 role 만 보내도 login_id 는 남는다.
  */
 
 /**
  * @typedef {{ email: string, password: string, email_confirm: boolean,
- *             user_metadata: { login_id: string }, app_metadata: { login_id: string } }} CreateUserAttrs
+ *             user_metadata: { login_id: string },
+ *             app_metadata: { login_id: string, role: 'staff' | 'contractor' } }} CreateUserAttrs
+ * @typedef {{ password: string } | { app_metadata: { role: 'staff' | 'contractor' } }} UpdateUserAttrs
  */
 
 /**
@@ -370,7 +403,7 @@ export function createHandler(deps, options = {}) {
     now: options.now ?? (() => Date.now()),
   });
 
-  /** @type {Record<string, (body: Record<string, any>, cors: Record<string, string>) => Promise<Response>>} */
+  /** @type {Record<string, (body: Record<string, any>, cors: Record<string, string>, caller: AuthUser) => Promise<Response>>} */
   const actions = {
     async list(_body, cors) {
       const users = await deps.listUsers();
@@ -382,15 +415,17 @@ export function createHandler(deps, options = {}) {
       if (login_id === null) throw new HttpError(400, LOGIN_ID_RULE);
       const email = loginIdToEmail(login_id);
       const password = validatePassword(body.password);
+      const role = validateRole(body.role, ROLE_STAFF);
       let user;
       try {
         // app_metadata.login_id 는 본인이 바꿀 수 없어 목록 표시의 기준이 된다(계약 C4).
+        // 권한(role)도 본인이 못 바꾸는 app_metadata 에 둔다. 관리자는 여기서 만들 수 없다.
         user = await deps.createUser({
           email,
           password,
           email_confirm: true,
           user_metadata: { login_id },
-          app_metadata: { login_id },
+          app_metadata: { login_id, role },
         });
       } catch (err) {
         if (isEmailExists(err)) throw new HttpError(409, '이미 있는 아이디입니다.');
@@ -399,17 +434,41 @@ export function createHandler(deps, options = {}) {
       return json(200, { ok: true, user: toUserInfo(user) }, cors);
     },
 
-    async reset_password(body, cors) {
+    // 비밀번호 바꾸기. 다른 관리자 계정의 비밀번호는 바꾸지 않는다(본인 것은 된다). 대상 검사는 set_role과 같다.
+    async reset_password(body, cors, caller) {
       const user_id = typeof body.user_id === 'string' ? body.user_id.trim() : '';
       if (!user_id) throw new HttpError(400, '대상 계정이 지정되지 않았습니다.');
       const password = validatePassword(body.password);
       try {
+        if (user_id !== caller.id) {
+          const target = await deps.getUserById(user_id);
+          if (roleOf(target.app_metadata) === ROLE_ADMIN) throw new HttpError(400, ADMIN_PASSWORD_LOCKED_MESSAGE);
+        }
         await deps.updateUserById(user_id, { password });
       } catch (err) {
         if (isUserNotFound(err)) throw new HttpError(404, '계정을 찾을 수 없습니다.');
         throw err;
       }
       return json(200, { ok: true }, cors);
+    },
+
+    // 직원 ↔ 외주 바꾸기. 관리자 계정(자기 자신 포함)은 바꾸지 않는다.
+    async set_role(body, cors, caller) {
+      const user_id = typeof body.user_id === 'string' ? body.user_id.trim() : '';
+      if (!user_id) throw new HttpError(400, '대상 계정이 지정되지 않았습니다.');
+      const role = validateRole(body.role, null);
+      if (user_id === caller.id) throw new HttpError(400, ADMIN_ROLE_LOCKED_MESSAGE);
+      let user;
+      try {
+        const target = await deps.getUserById(user_id);
+        if (roleOf(target.app_metadata) === ROLE_ADMIN) throw new HttpError(400, ADMIN_ROLE_LOCKED_MESSAGE);
+        // app_metadata 는 병합되므로 login_id 등 다른 키는 그대로 남는다.
+        user = await deps.updateUserById(user_id, { app_metadata: { role } });
+      } catch (err) {
+        if (isUserNotFound(err)) throw new HttpError(404, '계정을 찾을 수 없습니다.');
+        throw err;
+      }
+      return json(200, { ok: true, user: toUserInfo(user) }, cors);
     },
   };
 
@@ -445,7 +504,7 @@ export function createHandler(deps, options = {}) {
       if (typeof body.action !== 'string' || !Object.hasOwn(actions, body.action)) {
         throw new HttpError(400, '알 수 없는 작업입니다.');
       }
-      return await actions[body.action](body, cors);
+      return await actions[body.action](body, cors, caller);
     } catch (err) {
       if (err instanceof HttpError) return json(err.status, { ok: false, error: err.message }, cors, err.headers);
       console.error('admin-users 처리 중 예외:', err);
