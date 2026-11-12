@@ -5,5 +5,5 @@
     <color name="surface">#FFFFFF</color>
     <color name="ink">#1C1C1E</color>
     <color name="muted">#6B6B72</color>
-    <color name="ic_launcher_background">#1C1C1E</color>
+    <color name="ic_launcher_background">#FFFFFF</color>
 </resources>

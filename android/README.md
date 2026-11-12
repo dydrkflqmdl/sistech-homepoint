@@ -12,7 +12,7 @@ HOME POINT NAVI(https://sistech.dpdns.org)를 여는 안드로이드 앱입니�
 | 패키지 이름 | `org.dpdns.sistech.homepoint` (나중에 바꿀 수 없습니다). 점검용은 끝에 `.debug`가 붙습니다. |
 | 버전 | versionCode 1, versionName 1.0.0 (`app/build.gradle.kts`) |
 | 지원 | 안드로이드 8.0 이상(minSdk 26), targetSdk·compileSdk 35 |
-| 아이콘 | 집이 들어간 지도 핀(적응형 아이콘, 벡터) |
+| 아이콘 | 사이트 지도 핀과 같은 빨간 핀, 흰 바탕(적응형 아이콘, 벡터, 테마 아이콘용 한 색 핀 포함) |
 | 빌드 도구 | AGP 8.13.2, Kotlin 2.2.21, Gradle 래퍼 8.14.3, JDK 17 |
 
 `local.properties`에 안드로이드 SDK 위치(`sdk.dir`)가 들어 있고, 깃에는 올리지 않습니다.
