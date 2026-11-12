@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 사이트 styles.css 색과 맞춘다(bg, surface, text, muted 변수). -->
+    <color name="page_bg">#F5F5F3</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="ink">#1C1C1E</color>
+    <color name="muted">#6B6B72</color>
+    <color name="ic_launcher_background">#1C1C1E</color>
+</resources>

@@ -129,6 +129,7 @@ supabase/
 test/                    자동 테스트(CSV 읽기, 미션명, 좌표, 색상표, 빌드 스탬프, 아이디 변환, 계정 관리 함수, config 생성)
 e2e/                     헤드리스 브라우저 E2E(run-all.mjs, 가짜 supabase·카카오, 시나리오, fixtures)
 samples/                 예시 CSV
+android/                 안드로이드 앱(웹뷰로 사이트를 여는 앱, android/README.md). android/e2e는 에뮬레이터 점검
 .github/workflows/       deploy.yml(자동 배포), weekly.yml(주간 휴면 방지·암호화 백업)
 .github/dependabot.yml   워크플로 액션 주간 갱신
 eslint.config.js         ESLint 최소 규칙(npm run lint)
@@ -159,6 +160,12 @@ npm start
 - 포트가 이미 쓰이고 있으면 "N번 포트를 이미 다른 프로그램이 쓰고 있습니다"를 출력하고 종료합니다.
 
 ## 테스트
+## 안드로이드 앱
+
+`android/`에 사이트를 그대로 여는 안드로이드 앱(홈포인트 네비)이 있습니다. 웹 화면(`public/`)은 그대로이고 웹 버전도 전과 같이 동작합니다. 앱은 실제 사이트를 열기 때문에 사이트를 배포하면 앱에도 바로 반영됩니다. 앱 자체가 바뀔 때만 새 APK를 만듭니다.
+
+만드는 법, 서명 열쇠 보관, 휴대폰 설치·업데이트, 에뮬레이터 점검은 [android/README.md](android/README.md)를 보세요.
+
 
 ```bash
 npm test          # CSV 읽기, 미션명 풀이, 상태 색상표, 빌드(캐시 스탬프·APP_BUILD·version.json), supabase-js 번들, 아이디 변환, 계정 관리 함수 처리 로직
@@ -587,6 +594,7 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 �
 - 2026-11-06 계정: 한글 아이디 로그인, 로그인 기록(DB에만), 관리자 전용 계정 관리(Edge Function `admin-users`, 관리자 표시는 `app_metadata.role`). 사이트 주소를 `https://sistech.dpdns.org`로 변경.
 - 2026-11-06 이름: 서비스 이름을 "SISTECH 관리 페이지(홈포인트 지도)"에서 **HOME POINT NAVI(홈포인트 네비)**로 변경. 브라우저 탭 제목은 "HOME POINT NAVI | 시스테크", 머리글과 로그인 카드의 제목 아래에 작게 "by SISTECH". 사이트 주소, 로그인 이메일 도메인(`sistech.local`), 저장소 이름 같은 내부 식별자는 그대로.
 - 2026-11-10 미션명: 빗금으로 나뉜 여러 범위(`Q1ASSBS1701 ~ 09 / Q1ASSBS1801 ~ 05`)를 조각마다 펼치도록 화면(`mission.js`)과 DB 함수(`mission_names` → 감싸개, 기존 본문은 `mission_names_one`)를 함께 수정.
+- 2026-11-11 안드로이드 앱: `android/`에 사이트를 웹뷰로 여는 앱 추가(CSV 가져오기·내보내기, 뒤로 가기, 외부 링크 처리). 웹 화면은 변경 없음.
 - 2026-11-10 휴대폰 화면: 머리글 버튼을 ☰ 메뉴로 접음(제목은 한 줄). 미션 기록 입력을 목록 안 펼침에서 모달 창으로 바꾸고, 비행시간을 분·초 두 칸으로 나눔(저장 값은 `12분 30초` 글자, DB 변경 없음). 상세 정보를 목록 맨 위가 아니라 고른 장소 줄 바로 아래에 펼침. 휴대폰에서 지도·목록 사이 높이 조절 바 추가(끄는 동안 덮고 놓으면 지도 칸을 한 번 맞춤).
 - 2026-11-09 미션명: 포인트 번호와 미션 번호가 붙은 `Q1DGHGS0101 ~ 10` 표기를 10개 미션으로 풀도록 화면(`mission.js`)과 DB 함수(`mission_names`)를 함께 수정. 전에는 범위가 거꾸로라고 보고 미션 하나로 처리했음.
 - 2026-11-09 운영: 워크플로 액션을 커밋 SHA로 고정하고 Supabase CLI를 3.0.0으로 고정, Dependabot 주간 갱신. CI에 lint·SQL 테스트·Deno 타입 검사·E2E(있을 때)·supabase-js 번들 확인 추가. 마이그레이션·함수는 바뀐 경우에만 적용하고(마지막 성공 배포와 비교), 가입 차단 확인·배포 후 `version.json` 확인·실패 시 이슈 알림 추가. 주간 점검 워크플로(휴면 방지, 암호화 백업 90일). 빌드에 `APP_BUILD`·`version.json`, `config.js` 내용 해시 스탬프, 스탬프 누락 검사 추가. supabase-js를 `public/vendor/`에 자체 호스팅용으로 번들. README에 실패·되돌리기 절차, 장애 대응, 모니터링, 비용 표 추가.

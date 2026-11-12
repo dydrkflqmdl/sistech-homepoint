@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 배포용: https만. 점검용(debug)은 src/debug/res/xml의 같은 이름 파일이 대신한다. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

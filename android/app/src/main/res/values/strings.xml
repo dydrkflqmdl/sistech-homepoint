@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">홈포인트 네비</string>
+    <string name="error_title">연결할 수 없습니다</string>
+    <string name="error_body">인터넷 연결을 확인한 뒤 다시 시도해 주세요.</string>
+    <string name="retry">다시 시도</string>
+    <string name="ok">확인</string>
+    <string name="cancel">취소</string>
+    <string name="share">공유</string>
+    <string name="saved_message">다운로드 폴더에 저장했습니다.\n%1$s</string>
+    <!-- 안드로이드 9 이하: 저장할 곳을 사용자가 고르므로 폴더 이름을 말하지 않는다. -->
+    <string name="saved_message_picked">저장했습니다.\n%1$s</string>
+    <string name="save_failed">파일을 저장하지 못했습니다.</string>
+    <string name="save_unsupported">이 기기의 WebView가 오래되어 파일을 저장할 수 없습니다. Play 스토어에서 Android System WebView를 업데이트해 주세요.</string>
+    <string name="no_app">열 수 있는 앱이 없습니다.</string>
+    <string name="no_file_app">파일을 고를 수 있는 앱이 없습니다.</string>
+</resources>

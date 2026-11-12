@@ -14,3 +14,15 @@ sistech-db-*
 /roles.sql
 /schema.sql
 /data.sql
+# 안드로이드 앱: 빌드 결과·로컬 설정·서명 키(공개 저장소라 서명 키와 비밀번호는 절대 올리지 않음)
+android/.gradle/
+android/.kotlin/
+android/.idea/
+android/build/
+android/app/build/
+android/local.properties
+android/keystore.properties
+android/*.jks
+android/*.keystore
+android/release/
+android/e2e/shots/

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 사이트에 어두운 화면이 없으므로 늘 밝은 테마. 상태 표시줄·내비게이션 바 색은 MainActivity(enableEdgeToEdge)가 정한다. -->
+    <style name="Theme.HomePoint" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/surface</item>
+        <item name="android:colorAccent">@color/ink</item>
+    </style>
+</resources>

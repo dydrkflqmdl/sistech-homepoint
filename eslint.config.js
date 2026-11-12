@@ -16,7 +16,10 @@ const rules = {
 
 export default [
   {
-    ignores: ['node_modules/**', 'dist/**', 'public/vendor/**', 'public/config.js', 'supabase/.temp/**', 'e2e/shots/**', '**/*.ts'],
+    ignores: [
+      'node_modules/**', 'dist/**', 'public/vendor/**', 'public/config.js', 'supabase/.temp/**', 'e2e/shots/**', '**/*.ts',
+      'android/**/build/**', 'android/.gradle/**', 'android/e2e/shots/**',
+    ],
   },
   {
     // 브라우저에서 도는 화면 코드
@@ -39,6 +42,16 @@ export default [
     rules,
   },
   {
+    // 안드로이드 앱이 사이트 페이지에 심는 스크립트(모듈이 아닌 일반 스크립트)
+    files: ['android/app/src/main/assets/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2024,
+      sourceType: 'script',
+      globals: { ...globals.browser },
+    },
+    rules,
+  },
+  {
     // Node 스크립트·테스트·설정
     files: ['scripts/**/*.{js,mjs}', 'test/**/*.js', 'supabase/tests/**/*.{js,mjs}', 'eslint.config.js'],
     languageOptions: {
@@ -49,8 +62,8 @@ export default [
     rules,
   },
   {
-    // 헤드리스 E2E: Node 에서 돌고, 페이지 안에서 실행할 함수도 함께 들어 있다.
-    files: ['e2e/**/*.{js,mjs}'],
+    // 헤드리스 E2E·안드로이드 에뮬레이터 점검: Node 에서 돌고, 페이지 안에서 실행할 함수도 함께 들어 있다.
+    files: ['e2e/**/*.{js,mjs}', 'android/e2e/**/*.mjs'],
     languageOptions: {
       ecmaVersion: 2024,
       sourceType: 'module',
