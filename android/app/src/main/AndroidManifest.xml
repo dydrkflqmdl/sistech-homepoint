@@ -3,6 +3,14 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 현위치: 사이트의 [현위치]를 눌렀을 때만 묻는다(시작할 때 묻지 않음). 안드로이드 12+는 정확한 위치를 요청하려면 둘 다 선언해야 하고,
+         사용자가 대략적인 위치만 허용해도 된다. 백그라운드 위치는 쓰지 않는다. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 위치 장치가 없는 기기에도 설치되게 한다(현위치는 덤 기능). -->
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+
     <!-- 로그인 정보(WebView 저장소)가 클라우드 백업·기기 이전으로 옮겨지지 않게 백업을 끈다. -->
     <application
         android:allowBackup="false"

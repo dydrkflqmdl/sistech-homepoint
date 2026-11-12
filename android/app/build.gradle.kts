@@ -21,8 +21,8 @@ android {
         applicationId = "org.dpdns.sistech.homepoint"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.0.2"
         // 앱이 여는 사이트. 사이트를 배포하면 앱도 바로 최신이 된다.
         buildConfigField("String", "START_URL", "\"https://sistech.dpdns.org/\"")
     }

@@ -28,6 +28,13 @@ http
     let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
     if (p === '/config.js') return send(200, CONFIG, MIME['.js']);
     if (p === '/__blank') return send(200, '<!doctype html><title>blank</title>', MIME['.html']);
+    // 현위치 점검용: 이 틀 안에서 위치를 요청하고 결과를 부모 페이지로 알린다(틀이 사이트 주소가 아닐 때 거절되는지 본다).
+    if (p === '/__geoframe') {
+      return send(200, `<!doctype html><title>geoframe</title><script>
+        const out = (r) => parent.postMessage({ geoframe: r, origin: location.origin }, '*');
+        navigator.geolocation.getCurrentPosition((p) => out({ lat: p.coords.latitude, lng: p.coords.longitude }), (e) => out({ code: e.code }), { timeout: 8000, maximumAge: 0, enableHighAccuracy: true });
+      </script>`, MIME['.html']);
+    }
     if (p.endsWith('/')) p += 'index.html';
     const file = path.join(root, path.normalize(p));
     if (!file.startsWith(root + path.sep)) return send(403, 'forbidden');

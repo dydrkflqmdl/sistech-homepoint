@@ -4,7 +4,7 @@
 //
 // 사용: 에뮬레이터(또는 개발자 모드 휴대폰)를 하나 켜 둔 뒤
 //   (cd android && ./gradlew assembleDebug) && node android/e2e/check.mjs [apk 경로]
-//   ONLY=back,export node android/e2e/check.mjs   # 일부만(back, export, import, external, beforeunload, keyboard, rotate, offline)
+//   ONLY=back,export node android/e2e/check.mjs   # 일부만(back, export, import, external, beforeunload, keyboard, rotate, location, offline)
 // 주의: 설치된 앱을 지우고 다시 깐다(앱 데이터 초기화). 다운로드 폴더의 places-*·missions-* 파일을 지운다.
 // 스크린샷은 android/e2e/shots/에 남는다(git에 올리지 않음).
 import { execFileSync, spawn } from 'node:child_process';
@@ -388,6 +388,164 @@ try {
   check('앱이 죽은 기록 없음(logcat crash)', !crashes.includes(PKG));
   check('페이지 오류 없음', c.errors.length === 0, c.errors);
   c.close();
+
+  if (want('location')) {
+    // 현위치: 페이지가 navigator.geolocation을 부르면 이 사이트 주소에만, 안드로이드 권한을 받은 뒤 허용한다.
+    // 웹의 [현위치] 버튼과 같은 API를 직접 부른다. 권한 창이 뜨는 동안 JS를 기다리면 안 되므로 요청만 걸어 두고 결과를 따로 본다.
+    const FINE = 'android.permission.ACCESS_FINE_LOCATION';
+    const COARSE = 'android.permission.ACCESS_COARSE_LOCATION';
+    const SEOUL = { lng: 126.978, lat: 37.5665 };
+    const permitted = (perm) => new RegExp(`${perm}: granted=true`).test(adb('shell', 'dumpsys', 'package', PKG));
+    // enableHighAccuracy: 에뮬레이터는 GPS(adb emu geo fix)만 좌표를 주고, 대략적 위치(fused)는 좌표를 주지 않아 시간이 다 된다.
+    const geoStart = (cc, name) => cc.ev(`(() => {
+      window.${name} = null; const t0 = Date.now();
+      const done = (r) => { window.${name} = { ...r, ms: Date.now() - t0 }; };
+      const timer = setTimeout(() => done({ hang: true }), 25000);
+      navigator.geolocation.getCurrentPosition(
+        (p) => { clearTimeout(timer); done({ lat: p.coords.latitude, lng: p.coords.longitude }); },
+        (e) => { clearTimeout(timer); done({ code: e.code }); },
+        { timeout: 20000, maximumAge: 0, enableHighAccuracy: true });
+    })()`);
+    // 에뮬레이터 GPS는 켜진 뒤에 들어온 좌표만 넘기므로, 기다리는 동안 좌표를 다시 보낸다.
+    const geoResult = async (cc, name, timeout = 25000) => {
+      for (const end = Date.now() + timeout; Date.now() < end;) {
+        if ((await cc.ev(`window.${name} !== null`)) === true) break;
+        adbQuiet('emu', 'geo', 'fix', String(SEOUL.lng), String(SEOUL.lat));
+        await sleep(1000);
+      }
+      return cc.ev(`window.${name}`);
+    };
+    const near = (r) => r && Math.abs(r.lat - SEOUL.lat) < 0.05 && Math.abs(r.lng - SEOUL.lng) < 0.05;
+    // [허용 안 함]은 안드로이드 버전에 따라 id가 permission_deny_button 또는 permission_deny_and_dont_ask_again_button이다.
+    const permButton = (id, timeout = 8000) => waitUi((n) => {
+      const rid = n['resource-id'] ?? '';
+      return id === 'deny' ? /:id\/permission_deny(_and_dont_ask_again)?_button$/.test(rid) : rid.endsWith(`:id/${id}`);
+    }, timeout);
+    // 권한을 거두고 "다시 묻지 않음" 표시도 지운다(두 번 거절하면 시스템이 창 없이 바로 거절하므로).
+    const resetPerms = () => {
+      for (const perm of [FINE, COARSE]) {
+        adb('shell', 'pm', 'revoke', PKG, perm);
+        adb('shell', 'pm', 'clear-permission-flags', PKG, perm, 'user-fixed', 'user-set');
+      }
+    };
+    // 앱을 새로 띄워 WebView에 붙는다(권한을 거두면 앱이 죽을 수 있다).
+    const geoApp = async () => {
+      await start(`${BASE}__blank`);
+      const cc = await connect();
+      await sleep(500);
+      return cc;
+    };
+    adbQuiet('shell', 'settings', 'put', 'secure', 'location_mode', '3');
+    adb('emu', 'geo', 'fix', String(SEOUL.lng), String(SEOUL.lat));
+
+    // 1. 새로 설치한 뒤 첫 요청 → 권한 창 → "앱 사용 중에만 허용"
+    check('설치 직후에는 위치 권한이 없다(시작할 때 묻지 않음)', !permitted(FINE) && !permitted(COARSE));
+    let g = await geoApp();
+    await geoStart(g, '__geo');
+    const allow = await permButton('permission_allow_foreground_only_button');
+    check('현위치 요청 → 안드로이드 위치 권한 창이 뜬다', Boolean(allow), allow?.text);
+    shot('a14-location-dialog');
+    tapNode(allow);
+    let r = await geoResult(g, '__geo');
+    check('[앱 사용 중에만 허용] → 페이지가 좌표를 받는다(설정한 위치 근처)', near(r), r);
+    check('허용 뒤 권한이 허용 상태', permitted(FINE) || permitted(COARSE));
+    g.close();
+
+    // 2. 이미 허용된 상태(앞 단계 결과 유지): 창 없이 좌표
+    g = await geoApp();
+    await geoStart(g, '__geo');
+    r = await geoResult(g, '__geo');
+    check('이미 허용했으면 권한 창 없이 좌표를 받는다', near(r) && !(await permButton('deny', 500)), r);
+    g.close();
+
+    // 3. 권한을 거둔 뒤 요청 → "허용 안 함" → 바로 오류 1(PERMISSION_DENIED), 멈춤·꺼짐 없음
+    resetPerms();
+    check('pm revoke 뒤 권한이 없다', !permitted(FINE) && !permitted(COARSE));
+    g = await geoApp();
+    await geoStart(g, '__geo');
+    const deny = await permButton('deny');
+    check('권한을 거둔 뒤 요청하면 권한 창이 다시 뜬다', Boolean(deny));
+    const tDeny = Date.now();
+    tapNode(deny);
+    r = await geoResult(g, '__geo', 8000);
+    check('[허용 안 함] → 페이지가 바로 오류 1을 받는다(멈추지 않음)', r?.code === 1 && Date.now() - tDeny < 6000, { r, ms: Date.now() - tDeny });
+    check('거절한 뒤에도 앱이 살아 있다', ours(topActivity()));
+    g.close();
+
+    // 4. 권한 창이 떠 있는 동안 온 두 번째 요청은 창을 또 띄우지 않고 같은 답을 받는다(둘 다 좌표)
+    g = await geoApp();
+    await geoStart(g, '__geo');
+    const allow2 = await permButton('permission_allow_foreground_only_button');
+    await geoStart(g, '__geo2');
+    await sleep(500);
+    check('두 번째 요청이 와도 권한 창은 그대로 하나, 아직 답 없음(멈춘 것이 아니라 대기)', (await g.ev(`window.__geo === null && window.__geo2 === null`)) && Boolean(await permButton('permission_allow_foreground_only_button', 1000)));
+    tapNode(allow2);
+    r = await geoResult(g, '__geo');
+    const r2 = await geoResult(g, '__geo2');
+    check('[허용] → 대기하던 두 요청 모두 좌표를 받는다', near(r) && near(r2), { r, r2 });
+    g.close();
+
+    // 5. pm grant로 미리 허용: 창 없이 좌표. 그 상태에서 사이트 주소가 아닌 틀(127.0.0.1)은 거절, 사이트 주소 틀은 허용
+    resetPerms();
+    adb('shell', 'pm', 'grant', PKG, FINE);
+    adb('shell', 'pm', 'grant', PKG, COARSE);
+    g = await geoApp();
+    await geoStart(g, '__geo');
+    r = await geoResult(g, '__geo');
+    check('pm grant로 허용한 상태: 권한 창 없이 좌표', near(r) && !(await permButton('deny', 500)), r);
+    const frameGeo = async (src) => {
+      await g.ev(`(() => { window.__fr = null;
+        addEventListener('message', (e) => { if (e.data?.geoframe) window.__fr = { ...e.data.geoframe, from: e.data.origin }; });
+        const f = document.createElement('iframe'); f.allow = 'geolocation'; f.src = ${JSON.stringify(src)}; document.body.append(f); })()`);
+      await g.waitFor(`window.__fr !== null`, 15000);
+      return g.ev(`window.__fr`);
+    };
+    r = await frameGeo(`http://127.0.0.1:${PORT}/__geoframe`);
+    check('권한이 있어도 사이트 주소가 아닌 틀(127.0.0.1)의 위치 요청은 거절된다', r?.code === 1 && r.from === `http://127.0.0.1:${PORT}`, r);
+    r = await frameGeo(`${BASE}__geoframe`);
+    check('(대조) 사이트 주소의 틀은 같은 조건에서 좌표를 받는다', near(r), r);
+    g.close();
+
+    // 6. 앱의 권한 요청 중에 앱이 내려갔다 오거나 닫혀도 안 죽는다
+    resetPerms();
+    g = await geoApp();
+    await geoStart(g, '__geo');
+    await permButton('deny');
+    adb('shell', 'am', 'force-stop', PKG); // 권한 창이 떠 있는 채로 앱 종료
+    await sleep(800);
+    g.close();
+    g = await geoApp();
+    await geoStart(g, '__geo');
+    const again = await permButton('deny');
+    check('권한 창이 떠 있는 채 앱이 끝나도 다시 요청하면 정상으로 뜬다', Boolean(again));
+    tapNode(again);
+    r = await geoResult(g, '__geo', 8000);
+    check('다시 요청한 것도 거절하면 오류 1', r?.code === 1, r);
+    g.close();
+
+    // 7. 사이트의 [현위치] 버튼을 앱에서 실제로 누른다: 권한 창 → 허용 → 지도에 파란 점, 오류 안내 없음
+    resetPerms();
+    g = await geoApp();
+    await prepare(g);
+    await g.waitFor(`Boolean(document.querySelector('#locate-btn'))`, 10000); // 버튼은 지도(가짜 카카오)가 준비된 뒤 생긴다
+    await g.ev(`document.querySelector('#locate-btn').click()`);
+    const allow3 = await permButton('permission_allow_foreground_only_button');
+    check('앱에서 [현위치]를 누르면 안드로이드 위치 권한 창', Boolean(allow3));
+    if (allow3) tapNode(allow3);
+    let dot = false;
+    for (const end = Date.now() + 25000; Date.now() < end && !dot;) {
+      adbQuiet('emu', 'geo', 'fix', String(SEOUL.lng), String(SEOUL.lat));
+      await sleep(1000);
+      dot = await g.ev(`Boolean(document.querySelector('.my-location'))`);
+    }
+    const after = await g.ev(`({ busy: document.querySelector('#locate-btn').getAttribute('aria-busy'), toast: document.querySelector('#toast')?.textContent ?? '' })`);
+    check('[허용] → 지도에 내 위치(파란 점)가 그려지고 위치 오류 안내 없음', dot && after.busy === 'false' && !/위치/.test(after.toast), after);
+    shot('a15-locate-button');
+    g.close();
+
+    const crashes2 = adb('logcat', '-d', '-b', 'crash');
+    check('현위치 점검 내내 앱이 죽은 기록 없음(logcat crash)', !crashes2.includes(PKG), crashes2.slice(-300));
+  }
 
   if (want('offline')) {
     // 처음 불러오기 실패 → [다시 시도] 화면. 서버가 살아나면 [다시 시도]로 열린다.

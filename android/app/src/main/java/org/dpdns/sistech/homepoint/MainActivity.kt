@@ -1,9 +1,11 @@
 package org.dpdns.sistech.homepoint
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.ContentValues
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
@@ -20,6 +22,7 @@ import android.util.Base64
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.GeolocationPermissions
 import android.webkit.JsResult
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.ValueCallback
@@ -38,6 +41,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewCompat
@@ -55,6 +59,7 @@ import java.util.concurrent.RejectedExecutionException
  *  - 확인 창(confirm/alert): 기기 기본 모양의 대화상자로 띄운다.
  *  - 다른 주소(카카오맵 웹, kakaomap:// 앱 길찾기, 새 창 링크): 사이트 밖이면 바깥 앱·브라우저로 연다.
  *  - [뒤로]: assets/back.js로 열린 창·메뉴·상세 정보를 하나씩 닫고, 닫을 것이 없으면 앱을 내린다.
+ *  - 현위치: 페이지가 위치를 요청하면(navigator.geolocation) 이 사이트 주소에만, 안드로이드 권한을 받은 뒤에 허용한다.
  *  - 처음 불러오기 실패: 기본 오류 화면 대신 [다시 시도] 화면.
  */
 class MainActivity : ComponentActivity() {
@@ -74,6 +79,12 @@ class MainActivity : ComponentActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val popups = mutableSetOf<WebView>()
 
+    // 위치 요청 대기. 권한 창은 하나만 띄우고, 그동안 온 같은 주소의 요청은 같은 답을 받게 함께 대기시킨다
+    // (WebView는 같은 주소의 요청을 한 번에 답하므로 하나만 거절하면 먼저 온 것도 같이 거절된다).
+    private var geoOrigin: String? = null
+    private val geoCallbacks = mutableListOf<GeolocationPermissions.Callback>()
+    private var geoAsking = false
+
     private class PendingFile(val name: String, val mime: String, val bytes: ByteArray)
 
     // 파일 고르기 결과를 페이지의 <input type=file>로 돌려준다. 취소해도 반드시 한 번 불러야 다음에 다시 열린다.
@@ -88,6 +99,14 @@ class MainActivity : ComponentActivity() {
             emptyList()
         }
         callback.onReceiveValue(if (uris.isEmpty()) null else uris.toTypedArray())
+    }
+
+    // 위치 권한 창 결과. 정확한 위치나 대략적인 위치 중 하나만 허용돼도 페이지에 허용한다.
+    // 그사이 요청이 사라졌으면(창 닫힘·페이지 이동) 결과만 버린다.
+    private val askLocation = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        geoAsking = false
+        val granted = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true || grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        answerLocation(granted)
     }
 
     // Android 9 이하: 저장할 자리를 사용자가 고른 뒤 쓴다(다운로드 폴더에 바로 쓰려면 저장소 권한이 필요해서).
@@ -161,6 +180,27 @@ class MainActivity : ComponentActivity() {
 
     private val appOrigin get() = "${appUri.scheme}://${appUri.authority}"
 
+    // 위치를 줘도 되는 주소인지: 지금 열린 페이지가 이 사이트이고, 요청한 주소도 정확히 이 사이트여야 한다.
+    private fun mayUseLocation(origin: String?): Boolean {
+        val current = webView.url?.let(Uri::parse)
+        return isAppOrigin(origin, appOrigin) && current != null && isAppUrl(current)
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            .any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+
+    // 대기 중인 요청에 모두 답하고 비운다. 이미 지나간 요청이라 WebView가 던져도 앱이 꺼지지 않게 막는다.
+    private fun answerLocation(granted: Boolean) {
+        val origin = geoOrigin
+        val callbacks = geoCallbacks.toList()
+        geoOrigin = null
+        geoCallbacks.clear()
+        if (origin == null) return
+        // retain=false: 설정에서 권한을 끄면 바로 반영된다.
+        callbacks.forEach { runCatching { it.invoke(origin, granted, false) } }
+    }
+
     private fun isAppUrl(uri: Uri): Boolean =
         uri.scheme.equals(appUri.scheme, ignoreCase = true) && uri.authority.equals(appUri.authority, ignoreCase = true)
 
@@ -173,6 +213,7 @@ class MainActivity : ComponentActivity() {
             domStorageEnabled = true // 로그인 유지(supabase 세션)·화면 설정이 localStorage에 있다.
             allowFileAccess = false
             allowContentAccess = false
+            setGeolocationEnabled(true) // 현위치. 실제 허용은 onGeolocationPermissionsShowPrompt에서 가린다.
             javaScriptCanOpenWindowsAutomatically = true
             setSupportMultipleWindows(true) // 새 창(target=_blank, window.open)은 onCreateWindow에서 바깥으로 연다.
             mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
@@ -421,6 +462,7 @@ class MainActivity : ComponentActivity() {
         // 화면 엔진(렌더러)이 죽으면 앱까지 꺼지지 않게 WebView를 버리고 화면을 다시 만든다.
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
             webViewGone = true
+            answerLocation(false)
             (view.parent as? ViewGroup)?.removeView(view)
             view.destroy()
             recreate()
@@ -451,6 +493,40 @@ class MainActivity : ComponentActivity() {
                 toast(R.string.no_file_app)
                 false
             }
+        }
+
+        // 현위치 요청. 이 사이트 말고는 묻지도 않고 거절한다. 허용해도 기억하지 않아(retain=false) 매번 여기로 온다.
+        override fun onGeolocationPermissionsShowPrompt(origin: String?, callback: GeolocationPermissions.Callback) {
+            if (origin == null || isFinishing || isDestroyed || webViewGone || !mayUseLocation(origin)) {
+                runCatching { callback.invoke(origin.orEmpty(), false, false) }
+                return
+            }
+            if (hasLocationPermission()) {
+                runCatching { callback.invoke(origin, true, false) }
+                return
+            }
+            // 권한 창이 이미 떠 있으면(대기 중이면) 그 답을 같이 받는다. 새 창은 띄우지 않는다.
+            if (geoAsking || geoOrigin != null) {
+                if (geoOrigin.equals(origin, ignoreCase = true)) geoCallbacks += callback
+                else runCatching { callback.invoke(origin, false, false) }
+                return
+            }
+            geoOrigin = origin
+            geoCallbacks += callback
+            geoAsking = true
+            try {
+                askLocation.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            } catch (e: RuntimeException) {
+                // 화면이 닫히는 중 등으로 권한 창을 못 띄운 경우.
+                geoAsking = false
+                answerLocation(false)
+            }
+        }
+
+        // 페이지가 요청을 거두면(이동·취소) 대기 중인 것도 버린다. 권한 창이 아직 떠 있으면 그 결과는 무시된다.
+        override fun onGeolocationPermissionsHidePrompt() {
+            geoOrigin = null
+            geoCallbacks.clear()
         }
 
         // 새 창은 앱 안에 띄우지 않는다: 잠깐 만든 WebView로 열려던 주소만 알아내 바깥(또는 같은 사이트면 지금 화면)으로 연다.
@@ -526,7 +602,9 @@ class MainActivity : ComponentActivity() {
 
     // 앱이 뒤로 내려가면 페이지가 "숨김" 상태가 되어 사이트가 쓰던 메모를 바로 저장하고, 카카오맵 앱으로 넘어간 것도 알아챈다.
     override fun onPause() {
-        if (!webViewGone) webView.onPause()
+        // 위치 권한 창이 떠 있는 동안은 WebView를 멈추지 않는다. 멈추면 WebView가 답을 못 받은 위치 요청을 다시 보내
+        // 권한 창이 거절할 때마다 다시 뜬다.
+        if (!webViewGone && !geoAsking) webView.onPause()
         CookieManager.getInstance().flush()
         super.onPause()
     }
@@ -537,6 +615,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        answerLocation(false)
         fileCallback?.onReceiveValue(null)
         fileCallback = null
         mainHandler.removeCallbacksAndMessages(null)
@@ -552,6 +631,11 @@ class MainActivity : ComponentActivity() {
     companion object {
         private val DIALOG_THEME = android.R.style.Theme_DeviceDefault_Light_Dialog_Alert
         private const val POPUP_TIMEOUT_MS = 5000L
+
+        // 위치를 요청한 주소(origin)가 앱 사이트 주소와 정확히 같은지. 끝의 "/" 하나와 대소문자만 무시한다.
+        // 하위 도메인·다른 포트·http/https 차이·주소 뒤에 덧붙인 것(user@host 등)은 모두 다른 주소다.
+        fun isAppOrigin(origin: String?, appOrigin: String): Boolean =
+            origin != null && origin.removeSuffix("/").equals(appOrigin, ignoreCase = true)
 
         // 파일 이름에 쓸 수 없는 글자를 바꾼다. 비면 "download".
         fun safeFileName(raw: String): String =
