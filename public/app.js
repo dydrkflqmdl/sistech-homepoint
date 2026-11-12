@@ -148,7 +148,7 @@ $('#home-link').addEventListener('click', (e) => {
 
 // ── 로그인 ──────────────────────────────────────────────
 
-// 역할(관리자·직원·외주)을 바꾼다. 화면에 남은 것(가져오기 창·내보내기 메뉴·계정 관리 창·고치던 메모)도 정리한다.
+// 역할(관리자·직원·외주)을 바꾼다. 화면에 남은 것(가져오기 창·내보내기 메뉴·계정 관리 창)도 정리한다. 고치던 메모는 외주도 쓰므로 그대로 둔다.
 // 역할은 로그인할 때 토큰(jwtRole)에서 먼저 읽고, my_role()로 DB의 현재 값을 받아 바로잡는다(refreshRole).
 // 토큰 값은 처음 열 때(enterApp)만 쓴다. 그 뒤로는 my_role()로 받은 값만 따른다.
 function changeRole(role) {
@@ -157,8 +157,6 @@ function changeRole(role) {
   currentUser.admin = role === 'admin';
   if (role === 'contractor') {
     closeExportMenu();
-    // 외주는 메모를 고칠 수 없다. 저장하지 못한 글은 버린다(저장 중이어도 서버가 거절한다).
-    for (const id of [...memoDrafts.keys()]) discardMemo(id);
     if (!state.importing) {
       state.importFiles = null;
       state.importSkipped = [];
@@ -176,7 +174,7 @@ function changeRole(role) {
 
 // DB의 현재 역할을 받아 반영한다(my_role). 받는 사이 로그아웃·다른 계정 로그인이 있었으면 버린다.
 // 받지 못하면(실패·null·모르는 값) 지금 역할을 그대로 둔다. 토큰의 역할로 바꾸지 않는다.
-// 묵은 토큰이 외주라고 해도 직원 화면이 외주로 바뀌어 고치던 메모를 버리면 안 된다. 쓰기는 어차피 서버가 검사한다.
+// 쓰기는 어차피 서버가 검사한다.
 async function refreshRole() {
   const epoch = authEpoch;
   if (!currentUser) return;
@@ -184,7 +182,7 @@ async function refreshRole() {
   if (role && epoch === authEpoch && currentUser) changeRole(role);
 }
 
-// 서버가 "외주 계정은 미션 기록만 할 수 있습니다."로 거절하면(직원으로 알던 화면이 낡은 것) 문구를 알리고 역할을 다시 받는다.
+// 서버가 "외주 계정은 미션 기록과 메모만 할 수 있습니다."(예전 서버는 "미션 기록만")로 거절하면(직원으로 알던 화면이 낡은 것) 문구를 알리고 역할을 다시 받는다.
 api.onRoleRejected(() => {
   if (!signedIn()) return;
   toast(api.CONTRACTOR_MESSAGE);

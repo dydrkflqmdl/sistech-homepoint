@@ -1,9 +1,11 @@
 // 계정 권한 3단계(관리자·직원·외주) 화면 확인. 서버는 가짜 supabase(fake-supabase.js: my_role·외주 거절·admin-users set_role).
-// 1) 외주: 가져오기·내보내기·계정 관리·장소 삭제가 없고(390·1280), 끌어다 놓기·숨은 입력·강제 클릭도 아무 일 없음, 메모는 읽기만, 미션 기록은 저장됨, 머리글 "· 외주"
+// 1) 외주: 가져오기·내보내기·계정 관리·장소 삭제가 없고(390·1280), 끌어다 놓기·숨은 입력·강제 클릭도 아무 일 없음, 메모는 직원처럼 쓰고 저장됨(지도 말풍선에도 보임), 미션 기록은 저장됨, 머리글 "· 외주"
 // 2) 직원: 계정 관리만 없고 나머지는 예전 그대로  3) 관리자: 권한 열·외주로 만들기·직원↔외주 바꾸기(요청 중 잠금)·관리자 행은 못 바꿈·서버 오류 문구
-// 4) 낡은 화면(토큰은 직원, DB는 외주): 서버가 거절하면 한국어 문구를 알리고 화면이 외주로 바뀜  5) 외주 → 직원으로 같은 탭에서 바꿔 로그인하면 단추가 돌아옴
+// 4) 낡은 화면(토큰은 직원, DB는 외주): 메모는 저장되고, 삭제·가져오기는 서버가 거절하면 한국어 문구를 알리고 화면이 외주로 바뀜(예전 서버 문구도 알아봄)
+//    5) 외주 → 직원으로 같은 탭에서 바꿔 로그인하면 단추가 돌아옴
 // 6) 처음 열 때 my_role이 실패하면 토큰의 역할로 연 화면을 그대로 둠
 // 7) 다시 받을 때(refreshRole) my_role이 실패하거나 null이면 지금 역할을 그대로 둠(토큰이 외주여도 직원 화면·고치던 메모 유지)
+//    지운 계정(my_role null)의 메모 저장은 서버 문구(계정을 찾을 수 없음)를 그대로 보이고 역할은 바꾸지 않음. 외주로 바뀌어도 고치던 메모는 남음
 import path from 'node:path';
 import { FIXTURES, launch, prepare, PROJECT, Q1_CSV, reporter, sleep, URL_BASE } from './lib.mjs';
 
@@ -13,7 +15,10 @@ const SMALL_CSV = path.join(FIXTURES, 'roles-import.csv');
 const { loginIdToEmail } = await import(PROJECT + '/public/login-id.js');
 const { check, finish } = reporter('ux-roles');
 
-const REJECT = '외주 계정은 미션 기록만 할 수 있습니다.';
+const REJECT = '외주 계정은 미션 기록과 메모만 할 수 있습니다.';
+// 예전 서버의 외주 거절 문구. 배포하는 사이 화면만 새것이어도 외주 거절로 알아봐야 한다.
+const OLD_REJECT = '외주 계정은 미션 기록만 할 수 있습니다.';
+const GONE = '로그인한 계정을 찾을 수 없습니다. 다시 로그인해 주세요.';
 const ADMIN = 'admin@sistech.test';
 const CON = loginIdToEmail('홍외주');
 const STAFF = loginIdToEmail('김직원');
@@ -57,7 +62,7 @@ const view = `(() => {
     tagRight: (() => { const t = q(narrow ? '#topbar-user .role-tag' : '#user-name .role-tag'); return t ? Math.round(t.getBoundingClientRect().right) : null; })(),
     menuLeft: Math.round(menu.getBoundingClientRect().left),
     detail: !q('#detail').hidden,
-    memoInput: !!q('#memo-input'), memoText: q('#memo-text')?.textContent ?? null, memoReadonly: !!q('#detail .memo-readonly'),
+    memoInput: !!q('#memo-input'), memoValue: q('#memo-input')?.value ?? null, memoReadonly: !!q('#detail .memo-readonly, #memo-text'),
     deleteBtn: !!q('#detail .delete-place') || [...document.querySelectorAll('#detail button')].some((x) => /삭제/.test(x.textContent)),
     route: [...document.querySelectorAll('#detail .route-actions .btn')].map((x) => x.textContent),
     missions: document.querySelectorAll('#detail .mission-item').length,
@@ -106,17 +111,45 @@ check('390 외주: ☰ 안에 가져오기·내보내기·계정 관리 없음(�
 await hostile('390 외주');
 await openPlace('SW_01');
 v = await ev(view);
-check('390 외주 상세: 메모는 읽기 전용 글(#memo-text, 입력 칸 없음), 삭제 없음, 길찾기·카카오맵 보기·미션 목록은 있음',
-  v.detail && !v.memoInput && v.memoReadonly && v.memoText === places[0].memo && !v.deleteBtn && v.route.join() === '카카오맵 길찾기,카카오맵에서 보기' && v.missions === 3, v);
-const focusable = await ev(`[...document.querySelectorAll('#detail textarea, #detail input:not([type=hidden]), #detail button, #detail a')].map((e) => e.textContent.trim() || e.className).filter((t) => /삭제|메모를 남겨/.test(t))`);
-check('390 외주 상세: 초점 갈 수 있는 곳에 삭제·메모 입력이 없음', focusable.length === 0, focusable);
+check('390 외주 상세: 메모 입력 칸(지금 메모가 들어 있음, 읽기 전용 글 없음), 삭제 없음, 길찾기·카카오맵 보기·미션 목록은 있음',
+  v.detail && v.memoInput && !v.memoReadonly && v.memoValue === places[0].memo && !v.deleteBtn && v.route.join() === '카카오맵 길찾기,카카오맵에서 보기' && v.missions === 3, v);
+const focusable = await ev(`[...document.querySelectorAll('#detail textarea, #detail input:not([type=hidden]), #detail button, #detail a')].map((e) => e.id || e.textContent.trim() || e.className).filter((t) => /삭제|memo-input/.test(t))`);
+check('390 외주 상세: 초점 갈 수 있는 곳에 메모 입력은 있고 삭제는 없음', focusable.join() === 'memo-input', focusable);
 await ev(`document.querySelector('#toast').textContent = ''`);
 await b.shot('roles-contractor-390');
 
-// 메모 없는 장소: 메모 칸 자체가 없음
+// 외주도 메모를 쓴다: 메모 없는 장소에 적으면 1초 뒤 저장되고(서버 반영), 지도 말풍선에도 보인다.
 await openPlace('SW_02');
 v = await ev(view);
-check('390 외주: 메모가 빈 장소는 메모 칸 자체가 없음(입력 칸도 읽기 글도 없음)', v.detail && !v.memoInput && !v.memoReadonly && v.memoText === null, v);
+check('390 외주: 메모가 빈 장소도 빈 메모 입력 칸이 있음', v.detail && v.memoInput && !v.memoReadonly && v.memoValue === '', v);
+const memoBefore = await calls('update_memo');
+const typeMemo = (text) => ev(`(() => { const t = document.querySelector('#memo-input'); t.focus(); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await typeMemo('외주가 남긴 메모');
+await b.waitFor(`document.querySelector('#memo-status')?.textContent.trim() === '저장됨'`, 4000);
+const conMemo = await ev(`({ memo: __fake.store().find((p) => p.name === 'SW_02').memo, toast: document.querySelector('#toast').textContent,
+  last: __fake.calls.filter((c) => c.name === 'update_memo').at(-1)?.params ?? null })`);
+check('390 외주: 메모를 적으면 저절로 저장됨(update_memo 1번, 서버 메모 반영, "저장됨", 거절 알림 없음)',
+  conMemo.memo === '외주가 남긴 메모' && (await calls('update_memo')) - memoBefore === 1 && conMemo.last?.p_memo === '외주가 남긴 메모' && conMemo.last?.p_base_memo === '' && conMemo.toast !== REJECT,
+  { conMemo, n: (await calls('update_memo')) - memoBefore });
+const label = await ev(`[...document.querySelectorAll('.pin .memo-text')].map((e) => e.textContent)`);
+check('390 외주: 저장한 메모가 지도 핀 말풍선에 보임', label.includes('외주가 남긴 메모'), label);
+// 화면을 떠날 때(pagehide) 기다리던 메모를 바로 저장하는 것도 직원과 같다.
+await typeMemo('외주가 남긴 메모 2');
+await ev(`window.dispatchEvent(new Event('pagehide'))`);
+await b.waitFor(`document.querySelector('#memo-status')?.textContent.trim() === '저장됨'`, 4000);
+check('390 외주: pagehide에서 기다리던 메모를 1초 기다리지 않고 바로 저장',
+  (await ev(`__fake.store().find((p) => p.name === 'SW_02').memo`)) === '외주가 남긴 메모 2' && (await calls('update_memo')) - memoBefore === 2);
+// 다른 기기가 그 사이 메모를 바꿨으면 직원처럼 충돌 안내가 나오고, [내 메모로 저장]으로 덮어쓸 수 있다(C1).
+await typeMemo('외주 충돌 메모');
+await ev(`__fake.remoteChange((db) => { db.places.find((p) => p.name === 'SW_02').memo = '다른 기기 메모'; }, { notify: false })`);
+await b.waitFor(`!!document.querySelector('#memo-status .memo-conflict')`, 4000);
+const conflict = await ev(`({ latest: document.querySelector('#memo-status .memo-latest')?.textContent, value: document.querySelector('#memo-input').value,
+  db: __fake.store().find((p) => p.name === 'SW_02').memo, base: __fake.calls.filter((c) => c.name === 'update_memo').at(-1)?.params?.p_base_memo })`);
+check('390 외주: 다른 기기가 바꾼 메모와 충돌하면 안내가 나오고 내 글은 칸에 그대로, 서버 메모는 그대로',
+  conflict.latest === '최신 메모: 다른 기기 메모' && conflict.value === '외주 충돌 메모' && conflict.db === '다른 기기 메모' && conflict.base === '외주가 남긴 메모 2', conflict);
+await ev(`document.querySelector('#memo-status .memo-keep-mine').click()`);
+await b.waitFor(`document.querySelector('#memo-status')?.textContent.trim() === '저장됨'`, 4000);
+check('390 외주: [내 메모로 저장] → 서버 메모가 내 글로 바뀜', (await ev(`__fake.store().find((p) => p.name === 'SW_02').memo`)) === '외주 충돌 메모');
 
 // 미션 기록은 된다
 await openPlace('SW_01');
@@ -129,7 +162,7 @@ let rec = await ev(`__fake.store().find((p) => p.name === 'SW_01').missions.find
 const dlg = await ev(`({ open: !!document.querySelector('dialog.mission-dialog')?.open, toast: document.querySelector('#toast').textContent })`);
 check('390 외주: 미션 기록 저장됨(완료·5분 10초·배터리 2번 40%·작업자 = 로그인 아이디), 창 닫힘',
   rec?.done === true && rec.flightTime === '5분 10초' && rec.batteryNo === '2' && rec.batteryLeft === '40' && rec.worker === '홍외주' && !dlg.open && /저장했습니다/.test(dlg.toast), { rec, dlg });
-check('390 외주: 장소 목록 검색은 메모까지 찾음(읽기만 막고 검색은 그대로)', await (async () => {
+check('390 외주: 장소 목록 검색은 메모까지 찾음', await (async () => {
   await ev(`document.querySelector('#detail .icon-btn').click()`);
   await sleep(300);
   await ev(`(() => { const s = document.querySelector('#search'); s.value = '정문 열쇠'; s.dispatchEvent(new Event('input', { bubbles: true })); })()`);
@@ -149,7 +182,7 @@ check('1280 외주: 머리글 #user-name "홍외주 · 외주", 가져오기·�
 await hostile('1280 외주');
 await openPlace('SW_01');
 v = await ev(view);
-check('1280 외주 상세: 메모 읽기 전용, 삭제 없음, 미션 목록 있음', v.detail && !v.memoInput && v.memoReadonly && !v.deleteBtn && v.missions === 3, v);
+check('1280 외주 상세: 메모 입력 칸 있음, 삭제 없음, 미션 목록 있음', v.detail && v.memoInput && !v.memoReadonly && v.memoValue === places[0].memo && !v.deleteBtn && v.missions === 3, v);
 await ev(`document.querySelector('#toast').textContent = ''`);
 await b.shot('roles-contractor-1280');
 const tab = await ev(`(() => { document.activeElement?.blur(); const out = []; return [...document.querySelectorAll('.topbar button, .topbar input, .topbar a')].filter((e) => e.offsetParent !== null).map((e) => e.id || e.textContent.trim()); })()`);
@@ -175,12 +208,13 @@ check('같은 탭에서 직원으로 로그인: 가져오기·내보내기가 �
   !v.body.includes('role-contractor') && v.import && v.export && !v.accounts && v.header === '김직원' && v.headerTitle === '김직원' && (await calls('my_role')) >= 2, v);
 await openPlace('SW_01');
 v = await ev(view);
-check('직원 상세: 메모 입력 칸(편집 가능)과 "이 장소 삭제"가 돌아옴, 읽기 전용 메모 없음', v.memoInput && !v.memoReadonly && v.deleteBtn, v);
+check('직원 상세: 메모 입력 칸(편집 가능)과 "이 장소 삭제"가 돌아옴', v.memoInput && !v.memoReadonly && v.deleteBtn, v);
+const staffMemoBefore = await calls('update_memo');
 await b.shot('roles-staff-1280');
 // 직원은 예전처럼 쓴다: 메모 저장, 내보내기 메뉴, 가져오기 창, 미션 저장
 await ev(`(() => { const t = document.querySelector('#memo-input'); t.focus(); t.value = '직원이 고친 메모'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await b.waitFor(`document.querySelector('#memo-status')?.textContent.trim() === '저장됨'`, 3000);
-check('직원: 메모 저장됨(update_memo, DB 반영)', (await ev(`__fake.store().find((p) => p.name === 'SW_01').memo`)) === '직원이 고친 메모' && (await calls('update_memo')) === 1);
+check('직원: 메모 저장됨(update_memo, DB 반영)', (await ev(`__fake.store().find((p) => p.name === 'SW_01').memo`)) === '직원이 고친 메모' && (await calls('update_memo')) - staffMemoBefore === 1);
 await ev(`document.querySelector('#export-button').click()`); await sleep(200);
 check('직원: [내보내기] 메뉴가 열림(장소 / 미션 기록)', (await ev(`[...document.querySelectorAll('#export-menu .menu-item')].map((e) => e.textContent).join()`)) === '장소 내보내기,미션 기록 내보내기');
 await ev(`document.querySelector('#export-menu .menu-item').click()`); await sleep(150);
@@ -212,18 +246,31 @@ const staleSetup = async () => {
 await staleSetup();
 v = await ev(view);
 check('낡은 화면 준비: 토큰은 직원이라 메모 입력·삭제 단추가 보임(DB는 외주)', v.memoInput && v.deleteBtn && v.import && !v.body.includes('role-contractor'), v);
+let roleCallsStale = await calls('my_role');
 await ev(`(() => { const t = document.querySelector('#memo-input'); t.focus(); t.value = '낡은 화면에서 고친 메모'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-await b.waitFor(`document.querySelector('#toast').textContent === ${JSON.stringify(REJECT)}`, 4000);
-check('낡은 화면에서 메모를 저장하면 서버 거절 문구가 알림으로 보임, DB 메모는 그대로', (await toastText()) === REJECT && (await ev(`__fake.store().find((p) => p.name === 'SW_01').memo`)) === places[0].memo, await toastText());
-await b.waitFor(`document.body.classList.contains('role-contractor')`, 4000);
-v = await ev(view);
-check('거절을 받으면 my_role로 역할을 다시 받아 화면이 외주로 바뀜(가져오기·내보내기 숨김, 메모는 읽기 전용, 삭제 없음, 머리글 "· 외주")',
-  v.body.includes('role-contractor') && !v.import && !v.export && !v.memoInput && v.memoReadonly && v.memoText === places[0].memo && !v.deleteBtn && v.header === '김직원 · 외주', v);
-
-await staleSetup();
+await b.waitFor(`document.querySelector('#memo-status')?.textContent.trim() === '저장됨'`, 4000);
+await sleep(300);
+check('낡은 화면에서도 메모는 저장됨(외주도 메모를 쓸 수 있음): DB 반영, 거절 알림 없음, 역할을 다시 받지 않음',
+  (await ev(`__fake.store().find((p) => p.name === 'SW_01').memo`)) === '낡은 화면에서 고친 메모' && (await toastText()) !== REJECT
+  && !(await ev(`document.body.classList.contains('role-contractor')`)) && (await calls('my_role')) === roleCallsStale, await toastText());
 await ev(`window.confirm = () => true; document.querySelector('#detail .delete-place button').click()`);
 await b.waitFor(`document.querySelector('#toast').textContent === ${JSON.stringify(REJECT)}`, 4000);
 check('낡은 화면에서 장소를 삭제하면 거절 문구가 알림으로 보이고 장소는 그대로', (await toastText()) === REJECT && (await ev(`__fake.store().some((p) => p.name === 'SW_01')`)));
+await b.waitFor(`document.body.classList.contains('role-contractor')`, 4000);
+v = await ev(view);
+check('거절을 받으면 my_role로 역할을 다시 받아 화면이 외주로 바뀜(가져오기·내보내기 숨김, 삭제 없음, 메모 입력은 그대로, 머리글 "· 외주")',
+  v.body.includes('role-contractor') && !v.import && !v.export && v.memoInput && !v.memoReadonly && v.memoValue === '낡은 화면에서 고친 메모' && !v.deleteBtn && v.header === '김직원 · 외주', v);
+
+// 예전 서버 문구('미션 기록만')로 거절해도(배포하는 사이 화면만 새것) 외주 거절로 알아보고 역할을 다시 받는다.
+await staleSetup();
+await ev(`__fake.contractorMessage = ${JSON.stringify(OLD_REJECT)}`);
+roleCallsStale = await calls('my_role');
+await ev(`window.confirm = () => true; document.querySelector('#detail .delete-place button').click()`);
+await b.waitFor(`document.body.classList.contains('role-contractor')`, 4000);
+const oldToast = await toastText();
+check('예전 서버 문구로 거절해도 역할을 다시 받아 외주 화면으로 바뀜(my_role 다시 부름, 장소 그대로, 거절 문구 알림)',
+  (await calls('my_role')) > roleCallsStale && (await ev(`__fake.store().some((p) => p.name === 'SW_01')`)) && [REJECT, OLD_REJECT].includes(oldToast), { oldToast });
+await ev(`__fake.contractorMessage = undefined`);
 
 await staleSetup();
 await b.setFiles('#csv-input', [SMALL_CSV]); await sleep(500);
@@ -242,7 +289,7 @@ const refreshSetup = async () => {
   await waitApp();
   await b.waitFor(`!document.body.classList.contains('role-contractor') && !!document.querySelector('#import-button') && !document.querySelector('#import-button').hidden`, 4000);
   await openPlace('SW_01');
-  // 저장에 실패한 메모(저장 안 됨) 하나를 남겨 둔다. 외주로 바뀌면 버려지는 글이다.
+  // 저장에 실패한 메모(저장 안 됨) 하나를 남겨 둔다. 역할이 바뀌어도(외주도 메모를 쓴다) 남아야 하는 글이다.
   await ev(`__fake.failNext({ status: 500, code: 'XX000', message: 'boom', name: 'update_memo' })`);
   await ev(`(() => { const t = document.querySelector('#memo-input'); t.focus(); t.value = '고치던 메모'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await b.waitFor(`/저장 안 됨/.test(document.querySelector('#memo-status')?.textContent ?? '')`, 4000);
@@ -285,19 +332,35 @@ v = await ev(view);
 memo = await ev(memoState);
 check('다시 받기에서 my_role이 null(지운 계정)이면 역할을 바꾸지 않음: 직원 그대로', !v.body.includes('role-contractor') && v.import && v.memoInput && v.deleteBtn && v.header === '김직원', v);
 check('my_role null 뒤에도 고치던 메모가 남음', memo.value === '고치던 메모' && /저장 안 됨/.test(memo.status), memo);
+// 지운 계정(my_role null)에서 [다시 저장]: 서버가 "계정을 찾을 수 없음"으로 거절하고, 그 문구를 그대로 보인다. 외주 거절이 아니므로 역할은 다시 받지 않는다.
+roleCalls = await calls('my_role');
+const memoCallsBefore = await calls('update_memo');
+await ev(`document.querySelector('#memo-status .memo-retry').click()`);
+await b.waitFor(`__fake.calls.filter((c) => c.name === 'update_memo').length > ${memoCallsBefore} && /저장 안 됨/.test(document.querySelector('#memo-status')?.textContent ?? '')`, 4000);
+await sleep(400);
+const gone = await ev(`({ reason: document.querySelector('#memo-status .memo-reason')?.textContent ?? null, value: document.querySelector('#memo-input')?.value ?? null,
+  db: __fake.store().find((p) => p.name === 'SW_01').memo, toast: document.querySelector('#toast').textContent })`);
+v = await ev(view);
+check('지운 계정의 메모 저장: 서버 문구를 그대로 보임("저장 안 됨" 옆), DB 메모 그대로, 글은 칸에 남음',
+  gone.reason === GONE && gone.value === '고치던 메모' && gone.db === places[0].memo, gone);
+check('지운 계정의 메모 거절은 외주 흐름이 아님: 외주 알림 없음, my_role 다시 안 부름, 직원 화면 그대로',
+  gone.toast !== REJECT && (await calls('my_role')) === roleCalls && !v.body.includes('role-contractor') && v.import && v.deleteBtn, { gone, v });
 await ev(`__fake.myRoleValue = 'contractor'`);
 roleCalls = await calls('my_role');
 await comeBackLater();
 await b.waitFor(`document.body.classList.contains('role-contractor')`, 4000);
 v = await ev(view);
-check('my_role이 다시 값(외주)을 주면 그때 외주로 바뀜(다시 받기는 계속 동작)', v.body.includes('role-contractor') && !v.import && !v.memoInput && (await calls('my_role')) - roleCalls === 1, v);
+memo = await ev(memoState);
+check('my_role이 다시 값(외주)을 주면 그때 외주로 바뀜(다시 받기는 계속 동작), 삭제는 사라지고 메모 입력은 남음',
+  v.body.includes('role-contractor') && !v.import && !v.deleteBtn && v.memoInput && (await calls('my_role')) - roleCalls === 1, v);
+check('외주로 바뀌어도 고치던 메모(저장 안 됨)를 버리지 않음', memo.value === '고치던 메모' && /저장 안 됨/.test(memo.status), memo);
 await ev(`__fake.myRoleValue = null`);
 roleCalls = await calls('my_role');
 await comeBackLater();
 await b.waitFor(`__fake.calls.filter((c) => c.name === 'my_role').length > ${roleCalls}`, 4000);
 await sleep(400);
 v = await ev(view);
-check('외주 화면에서 my_role이 null이면 직원으로 풀리지 않고 외주 그대로(가져오기·메모 입력 없음)', v.body.includes('role-contractor') && !v.import && !v.memoInput && v.header === '김직원 · 외주', v);
+check('외주 화면에서 my_role이 null이면 직원으로 풀리지 않고 외주 그대로(가져오기·삭제 없음)', v.body.includes('role-contractor') && !v.import && !v.deleteBtn && v.header === '김직원 · 외주', v);
 
 // ── 3) 관리자: 계정 관리 ──
 await prepare(b, { places, email: ADMIN, admins: [ADMIN], accounts: accountsSeed });

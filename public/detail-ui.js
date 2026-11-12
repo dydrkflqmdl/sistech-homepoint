@@ -42,19 +42,16 @@ export function renderDetail() {
   );
   const missions = missionNames(p.mission);
   const progress = missionProgress(p.mission, p.missions);
+  // 외주 계정은 장소 삭제가 없다(메모는 모두 같이 쓴다).
   const contractor = isContractor();
-  // 외주 계정: 메모는 읽기만 한다(비어 있으면 칸 자체를 두지 않는다). 장소 삭제도 없다.
-  const memoBlock = contractor
-    ? p.memo.trim() !== '' &&
-      h('div', { class: 'memo memo-readonly' }, h('span', { id: 'memo-label', class: 'memo-label' }, '메모'), h('p', { id: 'memo-text', class: 'memo-text', 'aria-labelledby': 'memo-label' }, p.memo))
-    : h(
-        'div',
-        { class: 'memo' },
-        h('label', { for: 'memo-input' }, '메모'),
-        memo,
-        // 저장 상태는 메모 아래에 고정해 보여 준다(알림처럼 사라지지 않는다).
-        h('div', { id: 'memo-status', class: 'memo-status', role: 'status' }, memoStatusView(p.id)),
-      );
+  const memoBlock = h(
+    'div',
+    { class: 'memo' },
+    h('label', { for: 'memo-input' }, '메모'),
+    memo,
+    // 저장 상태는 메모 아래에 고정해 보여 준다(알림처럼 사라지지 않는다).
+    h('div', { id: 'memo-status', class: 'memo-status', role: 'status' }, memoStatusView(p.id)),
+  );
 
   fill(
     box,

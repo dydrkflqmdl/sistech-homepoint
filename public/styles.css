@@ -1908,7 +1908,7 @@ body.dragging .drop-overlay {
 }
 
 /* ── 외주 계정(body.role-contractor, session.js applyRole) ─────
-   보기·검색·길찾기·미션 기록만 쓴다. 가져오기·내보내기·장소 삭제는 숨기고(JS도 막는다), 메모는 읽기만 한다. */
+   보기·검색·길찾기·미션 기록·메모를 쓴다. 가져오기·내보내기·장소 삭제는 숨긴다(JS도 막는다). */
 .role-contractor #import-button,
 .role-contractor #csv-input,
 .role-contractor #export-button,
@@ -1931,14 +1931,6 @@ body.dragging .drop-overlay {
 
 .role-contractor #empty > :not(h2, .contractor-only) {
   display: none;
-}
-
-/* 읽기 전용 메모: 칸 모양 없이 글만 보인다(길면 줄바꿈). */
-.memo-readonly .memo-text {
-  margin: 0;
-  color: var(--text);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 /* ── 계정 관리(관리자만) ───────────────────────────────── */

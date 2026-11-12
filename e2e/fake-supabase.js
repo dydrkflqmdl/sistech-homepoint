@@ -20,10 +20,12 @@
 //   seedAccounts(users)     가짜 admin-users 함수의 계정 목록([{ id, login_id, email, created_at, last_sign_in_at, is_admin, role? }]). role이 없으면 is_admin이면 'admin', 아니면 'staff'
 //   setRoles(map)           이메일 → 'staff' | 'contractor'. my_role()과 거절 판정은 이 값(DB의 현재 역할)을 따르고, 세션(JWT) app_metadata.role은 다음 setSession·로그인부터 반영된다
 //                           (세션을 만든 뒤 setRoles로 바꾸면 "토큰은 직원, DB는 외주"인 낡은 화면을 만들 수 있다)
-//   외주(contractor) 계정: import_places·update_memo·delete_place는 '외주 계정은 미션 기록만 할 수 있습니다.'(P0001)로 거절한다. save_mission은 허용한다
+//   외주(contractor) 계정: import_places·delete_place는 '외주 계정은 미션 기록과 메모만 할 수 있습니다.'(P0001)로 거절한다. update_memo·save_mission은 허용한다
+//   contractorMessage       undefined가 아니면 외주 거절 문구를 이 값으로 바꾼다(예전 서버 문구 '외주 계정은 미션 기록만 할 수 있습니다.' 흉내)
 //   my_role() RPC: 'admin' | 'staff' | 'contractor'. failNext({ name: 'my_role', status: 500 })로 실패시키면 앱은 지금 역할을 그대로 둔다
 //                           (처음 열 때는 세션(JWT)의 역할, 그 뒤로는 마지막으로 받은 역할)
 //   myRoleValue             undefined가 아니면 my_role()이 이 값을 그대로 돌려준다(null: auth.users에 행이 없는 지운 계정 흉내). 페이지를 새로 열면 지워진다
+//                           쓰기 RPC의 거절 판정도 이 값을 따른다. null이면 update_memo는 '로그인한 계정을 찾을 수 없습니다. 다시 로그인해 주세요.', 가져오기·지우기는 외주 문구
 //   admin-users reset_password: 다른 관리자 계정은 400 '관리자 계정은 본인만 비밀번호를 바꿀 수 있습니다.'(본인 것은 됨)
 //   admin-users: list(role 포함)·create(role 선택)·set_role({ user_id, role: 'staff' | 'contractor' }, 관리자 계정·잘못된 값은 거절)
 //   accounts()              지금 계정 목록 복사본
@@ -249,7 +251,7 @@
     save_mission: (db, params) => ({ ...saveMission(db, params ?? {}), table: 'missions' }),
     // 계약 C1: update_memo(p_place_id, p_memo, p_base_memo) → { status: 'ok' | 'conflict', place }
     update_memo: (db, params = {}, session) => {
-      denyContractor(session);
+      denyGone(session);
       const { p_place_id, p_memo, p_base_memo } = params;
       if (fake.legacyMemo && 'p_base_memo' in params) {
         throw new RpcError('Could not find the function public.update_memo(p_base_memo, p_memo, p_place_id) in the schema cache', { code: 'PGRST202', status: 404 });
@@ -342,10 +344,17 @@
     const account = load(ACCOUNTS_KEY, []).find((u) => String(u.email).toLowerCase() === lower);
     return account?.role === 'contractor' ? 'contractor' : 'staff';
   };
-  const CONTRACTOR_MESSAGE = '외주 계정은 미션 기록만 할 수 있습니다.';
-  // 외주 계정이면 서버처럼 거절한다(import_places·update_memo·delete_place).
+  const CONTRACTOR_MESSAGE = '외주 계정은 미션 기록과 메모만 할 수 있습니다.';
+  const GONE_MESSAGE = '로그인한 계정을 찾을 수 없습니다. 다시 로그인해 주세요.';
+  // 쓰기 RPC가 보는 지금 역할. my_role과 같은 값이다(myRoleValue = null이면 auth.users에 없는 지운 계정).
+  const writeRole = (session) => (fake.myRoleValue !== undefined ? fake.myRoleValue : liveRole(session.user.email));
+  // 가져오기·지우기는 관리자·직원만 통과한다(외주와 지운 계정은 외주 문구로 거절).
   const denyContractor = (session) => {
-    if (liveRole(session.user.email) === 'contractor') throw new RpcError(CONTRACTOR_MESSAGE);
+    if (!['admin', 'staff'].includes(writeRole(session))) throw new RpcError(fake.contractorMessage ?? CONTRACTOR_MESSAGE);
+  };
+  // 메모는 관리자·직원·외주가 통과한다(지운 계정만 거절).
+  const denyGone = (session) => {
+    if (!['admin', 'staff', 'contractor'].includes(writeRole(session))) throw new RpcError(GONE_MESSAGE);
   };
   const makeSession = (email) => {
     const loginId = load(USERS_KEY, {})[email];
@@ -503,6 +512,7 @@
     fnDelay: null,
     resetPasswords: [],
     myRoleValue: undefined,
+    contractorMessage: undefined,
     fnFailNext({ status = 500, error = '계정 서버 오류' } = {}) { fnFailQueue.push({ status, error }); },
     setSession(email = 'admin@sistech.test') { save(SESSION_KEY, makeSession(email)); },
     clearSession() { save(SESSION_KEY, null); },

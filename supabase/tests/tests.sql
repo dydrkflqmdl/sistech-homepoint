@@ -1146,9 +1146,10 @@ select t.ok('auth.users 권한 없는 롤로 표시 아이디 복사 재실행 �
   not exists (select id, raw_user_meta_data, raw_app_meta_data from auth.users except select * from t_users_c4));
 
 -- ===================================================================
--- 계정 권한(supabase/migrations/20261112100000_roles.sql)
+-- 계정 권한(supabase/migrations/20261112100000_roles.sql, 20261112120000_contractor_memo.sql)
 -- 관리자(admin)·직원(staff, role 없음이나 모르는 값)·외주(contractor). 권한은 JWT가 아니라 auth.users에서 그때그때 읽는다.
--- 외주는 장소 보기·미션 기록·로그인 기록만 하고, 가져오기·메모·지우기는 정해진 문구로 거절된다.
+-- 외주는 장소 보기·미션 기록·메모·로그인 기록을 하고, 가져오기·지우기는 정해진 문구로 거절된다.
+-- 지운 계정(auth.users에 없음)은 세 쓰기 RPC 모두 거절된다(메모는 따로 "계정을 찾을 수 없다" 문구).
 -- ===================================================================
 \set r_admin f0000000-0000-0000-0000-000000000001
 \set r_staff f0000000-0000-0000-0000-000000000002
@@ -1156,7 +1157,9 @@ select t.ok('auth.users 권한 없는 롤로 표시 아이디 복사 재실행 �
 \set r_odd f0000000-0000-0000-0000-000000000004
 \set r_null f0000000-0000-0000-0000-000000000005
 \set r_jwt f0000000-0000-0000-0000-000000000006
-\set con_msg '외주 계정은 미션 기록만 할 수 있습니다.'
+\set con_msg '외주 계정은 미션 기록과 메모만 할 수 있습니다.'
+\set old_con_msg '외주 계정은 미션 기록만 할 수 있습니다.'
+\set gone_msg '로그인한 계정을 찾을 수 없습니다. 다시 로그인해 주세요.'
 reset role;
 insert into auth.users (id, email, raw_app_meta_data) values
   (:'r_admin', 'role-admin@sistech.local', '{"provider":"email","role":"admin","login_id":"역할관리"}'),
@@ -1189,12 +1192,23 @@ select t.ok('외주 검사는 import_places·update_memo·delete_place에만 있
   (select jsonb_agg(proname::text order by proname) from pg_proc
    where pronamespace = 'public'::regnamespace and prosrc like '%app_role()%' and proname <> 'my_role')
   = '["delete_place", "import_places", "update_memo"]');
-select t.ok('권한 검사는 허용 목록(admin·staff)이고 로그인 검사 바로 뒤',
+select t.ok('가져오기·지우기의 권한 검사는 허용 목록(admin·staff)이고 로그인 검사 바로 뒤, 새 외주 문구',
   (select bool_and(position('auth.uid() is null' in prosrc) > 0
-                   and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'')' in prosrc) > position('auth.uid() is null' in prosrc)
-                   and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'')' in prosrc) < position('auth.uid() is null' in prosrc) + 200
+                   and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'') then' in prosrc) > position('auth.uid() is null' in prosrc)
+                   and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'') then' in prosrc) < position('auth.uid() is null' in prosrc) + 200
+                   and position(:'con_msg' in prosrc) > 0
                    and position('= ''contractor''' in prosrc) = 0)
-   from pg_proc where pronamespace = 'public'::regnamespace and proname in ('import_places', 'update_memo', 'delete_place')));
+   from pg_proc where pronamespace = 'public'::regnamespace and proname in ('import_places', 'delete_place'))
+  and (select count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname in ('import_places', 'delete_place')) = 2);
+select t.ok('메모의 권한 검사는 허용 목록(admin·staff·contractor)이고 로그인 검사 바로 뒤, 계정 없음 문구',
+  (select position('auth.uid() is null' in prosrc) > 0
+          and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'', ''contractor'') then' in prosrc) > position('auth.uid() is null' in prosrc)
+          and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'', ''contractor'') then' in prosrc) < position('auth.uid() is null' in prosrc) + 200
+          and position(:'gone_msg' in prosrc) > 0
+          and position(:'con_msg' in prosrc) = 0
+   from pg_proc where oid = 'public.update_memo(bigint, text, text)'::regprocedure));
+select t.ok('옛 외주 문구("미션 기록만")는 어느 함수에도 남지 않음',
+  not exists (select from pg_proc where pronamespace = 'public'::regnamespace and position(:'old_con_msg' in prosrc) > 0));
 set role anon;
 select t.ok('anon: my_role 거부', t.err('select public.my_role()') like '42501:%');
 select t.ok('anon: app_role 거부', t.err('select public.app_role()') like '42501:%');
@@ -1258,15 +1272,24 @@ select t.ok('관리자: list_places·get_places',
   exists (select from jsonb_array_elements(public.list_places()) e where e ->> 'name' = '역할점')
   and public.get_places(array[t.pid('역할점')]) -> 0 ->> 'name' = '역할점');
 
--- ---------- 외주: 가져오기·메모·지우기 거절, 보기·미션 기록·로그인 기록은 됨 ----------
+-- ---------- 외주: 가져오기·지우기 거절, 보기·미션 기록·메모·로그인 기록은 됨 ----------
 select t.login(:'r_con', '{"email":"role-con@sistech.local","app_metadata":{"role":"contractor","login_id":"역할외주"}}');
 select t.raises('외주: import_places 거절',
   $q$select public.import_places('[{"name":"외주점","lat":34.1,"lng":126.1}]')$q$, :'con_msg');
 select t.raises('외주: import_places 빈 배열도 거절', $q$select public.import_places('[]')$q$, :'con_msg');
 select t.raises('외주: import_places 잘못된 목록도 같은 문구(외주 검사가 입력 검사보다 먼저)', $q$select public.import_places('{}')$q$, :'con_msg');
-select t.raises('외주: update_memo 거절', $q$select public.update_memo(t.pid('역할점'), '외주메모')$q$, :'con_msg');
-select t.raises('외주: update_memo 3인자도 거절', $q$select public.update_memo(t.pid('역할점'), '외주메모', '관리자메모')$q$, :'con_msg');
-select t.raises('외주: 없는 장소 update_memo도 같은 문구', 'select public.update_memo(-1, $$x$$)', :'con_msg');
+select t.eq('외주: update_memo 3인자(기준 메모가 지금 값과 같음) 됨',
+  (select jsonb_build_array(r -> 'status', r #> '{place,memo}')
+   from (select public.update_memo(t.pid('역할점'), '외주메모', '관리자메모') r) x),
+  '["ok", "외주메모"]');
+select t.eq('외주: update_memo 충돌(기준 메모가 옛 값) → 서버 값을 돌려주고 저장 안 함',
+  (select jsonb_build_array(r -> 'status', r #> '{place,memo}')
+   from (select public.update_memo(t.pid('역할점'), '외주덮어쓰기', '관리자메모') r) x),
+  '["conflict", "외주메모"]');
+select t.eq('외주: update_memo 충돌 아님(서버 값이 이미 보낸 값과 같음)',
+  public.update_memo(t.pid('역할점'), '외주메모', '관리자메모') -> 'status', '"ok"');
+select t.raises('외주: 없는 장소 update_memo는 장소 없음 문구', 'select public.update_memo(-1, $$x$$)', '장소를 찾을 수 없습니다.');
+select t.raises('외주: 지운 장소 update_memo도 장소 없음 문구', $q$select public.update_memo(t.pid('역할지움1'), 'x')$q$, '장소를 찾을 수 없습니다.');
 select t.raises('외주: delete_place 거절', $q$select public.delete_place(t.pid('역할지움3'))$q$, :'con_msg');
 select t.raises('외주: 없는 장소 delete_place도 같은 문구', 'select public.delete_place(-1)', :'con_msg');
 select t.eq('외주: save_mission(직원이 만든 기록 고침)',
@@ -1276,13 +1299,13 @@ select t.eq('외주: save_mission(관리자가 만든 기록 고침)',
   t.sm('역할점', 'R_02', '{"done":false}', (select version from public.missions where place_id = t.pid('역할점') and mission = 'R_02')) -> 'status',
   '"ok"');
 select t.ok('외주: list_places', exists (select from jsonb_array_elements(public.list_places()) e where e ->> 'name' = '역할점'));
-select t.eq('외주: get_places', public.get_places(array[t.pid('역할점')]) -> 0 -> 'memo', '"관리자메모"');
+select t.eq('외주: get_places(외주가 쓴 메모)', public.get_places(array[t.pid('역할점')]) -> 0 -> 'memo', '"외주메모"');
 select t.ok('외주: log_login·log_logout 오류 없음',
   t.err($q$select public.log_login('외주UA')$q$) is null and t.err('select public.log_logout()') is null);
 reset role;
-select t.ok('외주 거절 뒤 데이터 그대로(외주점 없음, 메모·지움 상태 그대로)',
+select t.ok('외주 거절 뒤 데이터 그대로(외주점 없음, 지움 상태 그대로), 메모는 외주가 쓴 값이고 updated_by는 외주',
   t.pid('외주점') is null
-  and (select memo from public.places where name = '역할점') = '관리자메모'
+  and (select memo = '외주메모' and updated_by = :'r_con'::uuid from public.places where name = '역할점')
   and (select deleted_at is null from public.places where name = '역할지움3'));
 select t.eq('외주 미션 기록이 저장됨',
   (select jsonb_agg(jsonb_build_array(mission, done) order by mission) from public.missions where place_id = t.pid('역할점'))
@@ -1304,7 +1327,9 @@ update auth.users set raw_app_meta_data = raw_app_meta_data || '{"role":"contrac
 select t.eq('직원 → 외주로 바꾼 직후 app_role(같은 JWT)', to_jsonb(public.app_role()), '"contractor"');
 set role authenticated;
 select t.eq('직원 → 외주로 바꾼 직후 my_role', to_jsonb(public.my_role()), '"contractor"');
-select t.raises('직원 → 외주로 바꾼 직후 update_memo 거절', $q$select public.update_memo(t.pid('역할점'), '바꾼뒤')$q$, :'con_msg');
+select t.eq('직원 → 외주로 바꾼 직후 update_memo 됨', public.update_memo(t.pid('역할점'), '바꾼뒤') #> '{place,memo}', '"바꾼뒤"');
+select t.raises('직원 → 외주로 바꾼 직후 delete_place 거절', $q$select public.delete_place(t.pid('역할지움3'))$q$, :'con_msg');
+select t.raises('직원 → 외주로 바꾼 직후 import_places 거절', $q$select public.import_places('[{"name":"바꾼뒤점","lat":34.4,"lng":126.4}]')$q$, :'con_msg');
 reset role;
 update auth.users set raw_app_meta_data = raw_app_meta_data - 'role' where id = :'r_con';
 select t.login(:'r_con', '{"app_metadata":{"role":"contractor","login_id":"역할외주"}}');
@@ -1337,16 +1362,19 @@ set role authenticated;
 select t.login(:'r_gone_con', '{"email":"role-gone-con@sistech.local","app_metadata":{"role":"contractor","login_id":"지운외주"}}');
 select t.eq('지운 외주(같은 JWT): my_role → null', to_jsonb(public.my_role()), null);
 select t.raises('지운 외주: import_places 거절', $q$select public.import_places('[{"name":"지운외주점","lat":34.2,"lng":126.2}]')$q$, :'con_msg');
-select t.raises('지운 외주: update_memo 거절', $q$select public.update_memo(t.pid('역할점'), '지운외주메모')$q$, :'con_msg');
+select t.raises('지운 외주: update_memo 거절(계정 없음 문구)', $q$select public.update_memo(t.pid('역할점'), '지운외주메모')$q$, :'gone_msg');
 select t.raises('지운 외주: delete_place 거절', $q$select public.delete_place(t.pid('외주점'))$q$, :'con_msg');
 select t.login(:'r_gone_staff', '{"email":"role-gone-staff@sistech.local","app_metadata":{"login_id":"지운직원"}}');
 select t.eq('지운 직원(같은 JWT): my_role → null', to_jsonb(public.my_role()), null);
 select t.raises('지운 직원: import_places 거절', $q$select public.import_places('[{"name":"지운직원점","lat":34.3,"lng":126.3}]')$q$, :'con_msg');
-select t.raises('지운 직원: update_memo 거절', $q$select public.update_memo(t.pid('역할점'), '지운직원메모')$q$, :'con_msg');
-select t.raises('지운 직원: update_memo 3인자도 거절', $q$select public.update_memo(t.pid('역할점'), '지운직원메모', '지우기전')$q$, :'con_msg');
+select t.raises('지운 직원: update_memo 거절(계정 없음 문구)', $q$select public.update_memo(t.pid('역할점'), '지운직원메모')$q$, :'gone_msg');
+select t.raises('지운 직원: update_memo 3인자도 거절', $q$select public.update_memo(t.pid('역할점'), '지운직원메모', '지우기전')$q$, :'gone_msg');
+select t.raises('지운 직원: 없는 장소 update_memo도 계정 검사가 먼저', 'select public.update_memo(-1, $$x$$)', :'gone_msg');
 select t.raises('지운 직원: delete_place 거절', $q$select public.delete_place(t.pid('외주점'))$q$, :'con_msg');
 select t.login(:'r_gone_staff', '{"app_metadata":{"role":"admin"}}');
-select t.raises('지운 계정(JWT에 admin): update_memo 거절', $q$select public.update_memo(t.pid('역할점'), 'JWT관리자')$q$, :'con_msg');
+select t.raises('지운 계정(JWT에 admin): update_memo 거절', $q$select public.update_memo(t.pid('역할점'), 'JWT관리자')$q$, :'gone_msg');
+select t.login(:'r_gone_con', '{"app_metadata":{"role":"contractor"}}');
+select t.raises('지운 외주(JWT에 contractor): update_memo 거절', $q$select public.update_memo(t.pid('역할점'), 'JWT외주')$q$, :'gone_msg');
 reset role;
 select t.ok('지운 계정 거절 뒤 데이터 그대로(새 장소 없음, 메모·지움 상태 그대로)',
   t.pid('지운외주점') is null and t.pid('지운직원점') is null
@@ -1377,8 +1405,20 @@ select t.ok('app_role 소유자 되돌림', (select pg_get_userbyid(proowner) = 
 create temp table t_roles_acl as
   select proname, proacl::text as acl, prosrc from pg_proc
   where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place');
+\ir ../migrations/20261112120000_contractor_memo.sql
+select t.ok('외주 메모 마이그레이션만 재실행 → 함수 본문·권한 그대로',
+  not exists (
+    (select proname, proacl::text, prosrc from pg_proc
+     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place')
+     except select * from t_roles_acl)
+    union all
+    (select * from t_roles_acl
+     except select proname, proacl::text, prosrc from pg_proc
+     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place'))));
+-- 두 파일을 순서대로 다시 실행해도(db push가 처음부터 다시 도는 경우) 결과가 같아야 한다.
 \ir ../migrations/20261112100000_roles.sql
-select t.ok('권한 마이그레이션 재실행 → 함수 본문·권한 그대로',
+\ir ../migrations/20261112120000_contractor_memo.sql
+select t.ok('권한 마이그레이션 둘을 순서대로 재실행 → 함수 본문·권한 그대로',
   not exists (
     (select proname, proacl::text, prosrc from pg_proc
      where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place')

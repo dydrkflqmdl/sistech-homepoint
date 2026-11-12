@@ -1,7 +1,7 @@
 // 상세 정보의 메모: 입력 후 1초 뒤 자동 저장, 바로 저장(칸 떠남·화면 숨김·떠나기 전), 상태 줄, 실패·충돌(C1) 처리.
 import { $, fill, h, refocus, toast } from './dom.js';
 import { findPlace, hooks, isPlaceGone, mergePlace, rememberOwnWrite, state } from './state.js';
-import { authEpoch, authFailed, isContractor } from './session.js';
+import { authEpoch, authFailed } from './session.js';
 import * as api from './api.js';
 
 // 위쪽 모듈(app.js·detail-ui.js)의 함수는 hooks로 부른다.
@@ -81,8 +81,6 @@ function syncMemoStatus(id) {
 
 // 글자를 칠 때마다: 초안에 적고 1초 뒤 저장을 예약한다.
 export function onMemoInput(id, text) {
-  // 외주 계정은 메모를 고칠 수 없다(칸은 읽기 전용이라 오지 않지만, 낡은 화면에서 올 수 있다).
-  if (isContractor()) return;
   const d = memoDraftFor(id);
   // 저장이 끝난 초안이면 칸에는 지금 서버 메모가 보이고 있었다. 그것을 바탕으로 고치기 시작한 것이다.
   if (d.status === 'saved') d.base = findPlace(id)?.memo ?? d.base;
@@ -102,7 +100,7 @@ export function onMemoInput(id, text) {
 // 기다리던 메모를 지금 바로 저장한다(칸을 떠날 때·화면을 벗어날 때·장소를 떠날 때). text를 주면 그 글로 맞춘다.
 // 저장에 실패했거나(error) 충돌 중(conflict)인 메모는 여기서 다시 보내지 않는다. 떠나기 전에 버릴지 묻고([다시 저장]은 사람이 누른다).
 export function flushMemo(id, text) {
-  if (id == null || isContractor()) return;
+  if (id == null) return;
   if (text !== undefined) {
     const d0 = memoDraftFor(id);
     if (d0.status === 'saved') d0.base = findPlace(id)?.memo ?? d0.base;
@@ -139,7 +137,7 @@ export const anyUnsavedMemo = () => [...memoDrafts.values()].some((d) => d.statu
 
 function saveMemoNow(id) {
   const d = memoDrafts.get(id);
-  if (!d || isContractor()) return Promise.resolve();
+  if (!d) return Promise.resolve();
   clearTimeout(d.timer);
   d.timer = null;
   if (d.status === 'saving') {

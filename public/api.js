@@ -228,7 +228,8 @@ async function call(name, params, { signOutOn = ['expired', 'forbidden'], signal
   err.code = code;
   err.auth = auth;
   // 화면은 직원으로 알고 있는데 서버가 외주로 보고 거절한 것(역할이 바뀐 뒤 옛 화면). 화면이 역할을 다시 받게 알린다.
-  if (message === CONTRACTOR_MESSAGE) roleRejectedHandler?.();
+  // 지운 계정의 메모 거절(계정을 찾을 수 없음)은 문구만 그대로 보여 준다.
+  if (CONTRACTOR_MESSAGES.includes(message)) roleRejectedHandler?.();
   // 화면 문구로 바꿔 버리는 실패(연결·서버 오류)는 원인을 콘솔에 남긴다. 한국어 검증 문구는 그대로 보여 주므로 남기지 않는다.
   if (!hasHangul(res.error.message)) logCause(`${name} 실패 (${status}${code ? ` ${code}` : ''})`, err);
   if (auth) {
@@ -241,8 +242,10 @@ async function call(name, params, { signOutOn = ['expired', 'forbidden'], signal
 
 // ── 역할(관리자·직원·외주) ───────────────────────────────
 
-// 서버가 외주 계정의 가져오기·메모 고치기·장소 삭제를 거절할 때 주는 문구(Postgres P0001).
-export const CONTRACTOR_MESSAGE = '외주 계정은 미션 기록만 할 수 있습니다.';
+// 서버가 외주 계정의 가져오기·장소 삭제를 거절할 때 주는 문구(Postgres P0001).
+export const CONTRACTOR_MESSAGE = '외주 계정은 미션 기록과 메모만 할 수 있습니다.';
+// 외주 거절로 알아볼 문구. 앞의 것은 예전 서버(메모도 거절하던 때)의 문구다. 배포하는 사이 화면과 서버가 어긋나도 알아보게 둘 다 둔다.
+const CONTRACTOR_MESSAGES = ['외주 계정은 미션 기록만 할 수 있습니다.', CONTRACTOR_MESSAGE];
 
 // 역할 값. 없거나 모르는 값은 직원이다.
 export const ROLES = ['admin', 'staff', 'contractor'];

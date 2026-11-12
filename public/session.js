@@ -10,7 +10,7 @@ export let authEpoch = 0;
 export let currentUser = null; // { id, email, name, role, jwtRole, admin } — name은 머리글에 보여 줄 아이디, role은 'admin'|'staff'|'contractor', jwtRole은 토큰에 들어 있던 역할, admin은 계정 관리 버튼을 보일지
 export let loggingOut = false;
 export const signedIn = () => currentUser !== null;
-// 외주 계정이면 가져오기·내보내기·메모 고치기·장소 삭제를 막는다(서버도 같은 이유로 거절한다).
+// 외주 계정이면 가져오기·내보내기·장소 삭제를 막는다(서버도 같은 이유로 거절한다). 메모와 미션 기록은 쓸 수 있다.
 export const isContractor = () => currentUser?.role === 'contractor';
 
 // 위 값은 다른 모듈에서 직접 바꿀 수 없으므로(import한 이름은 읽기 전용) 바꾸는 함수를 둔다.
