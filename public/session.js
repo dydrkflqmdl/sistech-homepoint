@@ -87,6 +87,13 @@ export function showUserName() {
   const el = $('#user-name');
   el.textContent = currentUser?.name ?? '';
   el.title = currentUser?.name ?? '';
+  // 휴대폰 머리글의 아이디(☰ 왼쪽)도 같은 글로 맞춘다. 비면 숨긴다.
+  const name = currentUser?.name ?? '';
+  const bar = $('#topbar-user');
+  $('#topbar-user-name').textContent = name;
+  bar.title = name;
+  bar.setAttribute('aria-label', `로그인: ${name}`);
+  bar.hidden = !name;
   // 계정 관리 버튼은 관리자에게만. 역할은 JWT(app_metadata)에서 오므로 토큰을 새로 받을 때마다 다시 본다.
   $('#accounts-button').hidden = !currentUser?.admin;
 }

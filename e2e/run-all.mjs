@@ -28,6 +28,8 @@ const scripts = [
   'ux-menu', 'ux-mission-modal', 'ux-detail-inline',
   // 휴대폰 아래 창 높이 조절 바
   'ux-sheet', 'ux-names',
+  // 현위치 버튼
+  'ux-locate',
 ];
 for (const f of fs.readdirSync(RESULTS)) if (f.startsWith('rpc-')) fs.rmSync(path.join(RESULTS, f));
 const rows = [];

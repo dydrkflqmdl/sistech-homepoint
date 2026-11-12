@@ -30,6 +30,8 @@ const header = `(() => {
     menuShown: shown('#menu-button'), expanded: q('#menu-button').getAttribute('aria-expanded'), label: q('#menu-button').getAttribute('aria-label'),
     open: q('.topbar').classList.contains('menu-open'),
     items: items.filter(shown), user: shown('#user-name') ? q('#user-name').textContent : null,
+    topUser: shown('#topbar-user') ? q('#topbar-user-name').textContent : null,
+    topUserRight: shown('#topbar-user') ? Math.round(r('#topbar-user').right) : null, menuLeft: Math.round(r('#menu-button').left),
     minH: Math.min(...items.filter(shown).map((s) => r(s).height)),
     inside: items.filter(shown).every((s) => r(s).left >= 0 && r(s).right <= innerWidth),
     below: shown('#top-actions') ? r('#top-actions').top >= r('.topbar').bottom : null,
@@ -43,13 +45,14 @@ const header = `(() => {
 let v0 = await ev(header);
 check('390: ☰만 보이고 버튼 줄(가져오기·내보내기·계정 관리·로그아웃)은 접힘', v0.menuShown && v0.items.length === 0 && v0.expanded === 'false' && v0.label === '메뉴 열기' && !v0.open, v0);
 check('390: 제목 한 줄 + ☰, 머리글 높이 64px 이하, 가로 넘침 없음', v0.topbarH <= 64 && !v0.overflowX && (await ev(`document.querySelector('.topbar h1').getClientRects().length === 1 && document.querySelector('.topbar h1').getBoundingClientRect().height < 30`)), v0);
+check('390: 접혀 있어도 아이디가 ☰ 왼쪽에 보임(머리글 안)', v0.topUser === ADMIN && v0.topUserRight <= v0.menuLeft && v0.user === null, v0);
 await b.shot('ux-menu-closed-390');
 
 // ── 펼치기 ──
 await ev(`document.querySelector('#menu-button').click()`); await sleep(100);
 let v = await ev(header);
-check('☰ → 네 버튼과 아이디가 머리글 아래에 펼쳐짐(aria-expanded, "메뉴 닫기")',
-  v.open && v.expanded === 'true' && v.label === '메뉴 닫기' && v.items.join() === '#import-button,#export-button,#accounts-button,#logout-button' && v.user === ADMIN && v.below, v);
+check('☰ → 네 버튼이 머리글 아래에(아이디는 머리글에 한 번만) 펼쳐짐(aria-expanded, "메뉴 닫기")',
+  v.open && v.expanded === 'true' && v.label === '메뉴 닫기' && v.items.join() === '#import-button,#export-button,#accounts-button,#logout-button' && v.user === null && v.topUser === ADMIN && v.below, v);
 check('펼쳐도 머리글 높이·지도 크기 그대로, 화면 안, 버튼 높이 44px 이상', v.topbarH === v0.topbarH && v.mapH === v0.mapH && v.inside && !v.overflowX && v.minH >= 44, { v0, v });
 check('펼쳐도 초점을 펼친 칸 안으로 옮기지 않음(펼침 단추)', !(await ev(`document.querySelector('#top-actions').contains(document.activeElement)`)), v);
 await b.shot('ux-menu-open-390');

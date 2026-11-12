@@ -4,6 +4,7 @@
 //   window.__kakaoMaps            만들어진 지도 목록(보통 1개)
 //   window.__kakaoFire(t, type)   addListener로 걸린 처리기를 직접 부른다(예: 지도 'zoom_changed')
 //   map.__overlayTypes            켜진 겹침 지도 종류(Set)
+//   map.__circles            지도에 붙은 원(Circle)들(Set, radius·center)
 //   map.__calls                   setBounds/panTo/setLevel 등 부른 기록
 (() => {
   const listeners = new Map(); // target → Map(type → [fn])
@@ -155,6 +156,27 @@
     setVisible(v) { this.wrap.style.display = v ? '' : 'none'; }
   }
 
+  // 원(현위치 정확도). 만들거나 setMap 할 때 map.__calls에 남긴다.
+  class Circle {
+    constructor(opts = {}) {
+      this.opts = opts;
+      this.center = opts.center;
+      this.radius = opts.radius ?? 0;
+      this.map = null;
+      if (opts.map) this.setMap(opts.map);
+    }
+    setMap(map) {
+      this.map = map ?? null;
+      if (map) (map.__circles ??= new Set()).add(this);
+      else for (const m of window.__kakaoMaps ?? []) m.__circles?.delete(this);
+    }
+    getMap() { return this.map; }
+    setPosition(ll) { this.center = ll; }
+    getPosition() { return this.center; }
+    setRadius(r) { this.radius = r; }
+    getRadius() { return this.radius; }
+  }
+
   const event = {
     addListener: on,
     removeListener(target, type, fn) {
@@ -173,6 +195,7 @@
       LatLngBounds,
       Point,
       CustomOverlay,
+      Circle,
       MapTypeId,
       event,
       services: {},

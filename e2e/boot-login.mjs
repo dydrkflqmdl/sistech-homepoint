@@ -142,6 +142,9 @@ await b.waitFor(`!document.querySelector('#login').hidden`, 3000);
 await sleep(200);
 const v5 = await b.ev(view);
 const after = await b.ev(`({ removed: __fake.removed, channels: __fake.channels, scope: __fake.lastSignOutScope, session: __fake.session() })`);
+const tu = `(() => { const el = document.querySelector('#topbar-user'); return { shown: el.offsetParent !== null || el.getClientRects().length > 0, text: el.textContent.trim(), label: el.getAttribute('aria-label') }; })()`;
+const tuOut = await b.ev(tu);
+check('로그아웃 → 머리글 아이디(#topbar-user) 숨김·비움', !tuOut.shown && tuOut.text === '', tuOut);
 check('로그아웃 → 로그인 화면, 앱 숨김', v5.login && !v5.app, v5);
 check('로그아웃 → 목록 비움·이메일 지움', v5.listChildren === 0 && v5.email === '' && v5.summary === '', v5);
 check('로그아웃 → removeChannel 호출·구독 0개', after.removed.includes('places-missions') && after.channels === 0, after);
@@ -154,6 +157,9 @@ await b.ev(`document.querySelector('#login-id').value = 'other@sistech.test'; do
 await b.waitFor(`!document.querySelector('.app').hidden && document.querySelectorAll('#place-list .group').length === 2`, 3000);
 const v6 = await b.ev(view);
 check('다른 계정 재로그인 → 새 이메일·목록·구독 1개', v6.email === 'other@sistech.test' && v6.groups === 2 && (await b.ev('__fake.channels')) === 1, v6);
+
+const tuIn = await b.ev(tu);
+check('다른 계정 재로그인 → 머리글 아이디가 새 이름으로(☰ 안 열어도 보임)', tuIn.shown && tuIn.text === 'other@sistech.test' && tuIn.label === '로그인: other@sistech.test', tuIn);
 
 // 로그인 전 끌어다 놓기는 받지 않음
 await b.ev(`document.querySelector('#logout-button').click()`);

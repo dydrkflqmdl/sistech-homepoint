@@ -1420,6 +1420,28 @@ p {
   color: var(--accent-text);
 }
 
+/* 현위치 버튼과 내 위치 점 */
+.locate-toggle button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.locate-toggle button[aria-busy='true'] {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.my-location {
+  width: 16px;
+  height: 16px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  background: #1a73e8;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 0.25), 0 1px 4px rgb(0 0 0 / 0.4);
+  pointer-events: none;
+}
+
 /* 이름표: 핀 바로 위에 장소 이름을 한 줄로. 핀 크기는 바뀌지 않게 절대 위치로 둔다 */
 .pin .name-label {
   position: absolute;
@@ -1733,6 +1755,11 @@ body.dragging .drop-overlay {
 
 /* ── 휴대폰 머리글 메뉴(☰, menu-ui.js) ───────────────────── */
 
+/* 머리글의 로그인 아이디(휴대폰 전용, ☰ 왼쪽). 넓은 화면은 .actions 안 .user-name이 보여 주므로 숨긴다. */
+.topbar-user {
+  display: none;
+}
+
 /* 넓은 화면에서는 숨긴다. 버튼은 머리글에 그대로 늘어놓는다. */
 .menu-button {
   display: none;
@@ -1778,6 +1805,41 @@ body.dragging .drop-overlay {
     display: inline-flex;
   }
 
+  /* 한 줄·말줄임. 오른쪽으로 붙여 ☰ 바로 왼쪽에 둔다. [hidden]이면 CSS display가 이기지 않게 따로 숨긴다. */
+  .topbar-user {
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    max-width: 112px;
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.2;
+  }
+
+  .topbar-user[hidden] {
+    display: none;
+  }
+
+  .topbar-user svg {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+
+  .topbar-user-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .topbar .actions {
     position: absolute;
     top: calc(100% + 4px);
@@ -1818,21 +1880,19 @@ body.dragging .drop-overlay {
     background: var(--bg);
   }
 
-  /* 맨 아래 계정 줄: 아이디와 [로그아웃]을 선으로 나눠 둔다. */
+  /* 맨 아래 계정 줄: [로그아웃]만 선으로 나눠 둔다. 아이디는 머리글(.topbar-user)에 늘 보이므로 여기서는 숨긴다. */
   .topbar .account {
-    justify-content: space-between;
     margin-top: 4px;
-    padding: 4px 0 0 12px;
+    padding: 4px 0 0;
     border-top: 1px solid var(--line);
   }
 
   .topbar .account .btn {
-    width: auto;
+    flex: 1;
   }
 
-  /* 긴 아이디(이메일 계정이면 주소)는 잘라 보인다(전체는 툴팁). */
   .topbar .user-name {
-    max-width: 140px;
+    display: none;
   }
 }
 

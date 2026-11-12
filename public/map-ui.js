@@ -1,5 +1,5 @@
 // 카카오 지도: SDK 불러오기·실패 안내·다시 불러오기, 핀(바뀐 것만 고침), 배경 지도·지적편집도 버튼, 영역 맞추기, 좁은 높이에서 지도 접기.
-import { $, fill, focusDetailTitle, h, refocus } from './dom.js';
+import { $, fill, focusDetailTitle, h, refocus, toast } from './dom.js';
 import { config, hooks, placeColor, readStorage, state, visiblePlaces, writeStorage } from './state.js';
 import { colorLabel } from './palette.js';
 import { missionProgress } from './mission.js';
@@ -147,6 +147,101 @@ function mapControls() {
         '필지',
       ),
     ),
+    h(
+      'div',
+      { class: 'layer-toggle locate-toggle', role: 'group', 'aria-label': '내 위치' },
+      h(
+        'button',
+        { type: 'button', id: 'locate-btn', 'aria-label': '현위치', title: '현위치', onclick: () => locateMe() },
+        locateIcon(),
+        '현위치',
+      ),
+    ),
+  );
+}
+
+// 현위치: 누를 때 한 번만 읽는다. 좌표는 지도에만 그리고 어디에도 보내거나 저장하거나 기록하지 않는다.
+const LOCATE_ICON =
+  '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 1v5M12 18v5M1 12h5M18 12h5"/></svg>';
+// h()는 문자열을 글자로만 넣으므로(html 속성 없음) 아이콘은 직접 innerHTML로 넣는다. 고정된 SVG라 사용자 값이 섞이지 않는다.
+function locateIcon() {
+  const icon = h('span', { class: 'locate-icon', 'aria-hidden': 'true' });
+  icon.innerHTML = LOCATE_ICON;
+  return icon;
+}
+const LOCATE_MAX_ACCURACY_M = 2000;
+const LOCATE_LEVEL = 4;
+let locating = false;
+let locateDot = null;
+let locateCircle = null;
+
+function clearLocateMarks() {
+  locateDot?.setMap(null);
+  locateCircle?.setMap(null);
+  locateDot = null;
+  locateCircle = null;
+}
+
+function setLocateBusy(on) {
+  locating = on;
+  const btn = $('#locate-btn');
+  if (!btn) return;
+  btn.setAttribute('aria-busy', String(on));
+  btn.classList.toggle('is-busy', on);
+}
+
+function showMyLocation(coords) {
+  if (!kmap) return;
+  clearLocateMarks();
+  const pos = new kakao.maps.LatLng(coords.latitude, coords.longitude);
+  if (coords.accuracy > 0 && coords.accuracy <= LOCATE_MAX_ACCURACY_M) {
+    locateCircle = new kakao.maps.Circle({
+      center: pos,
+      radius: coords.accuracy,
+      strokeWeight: 1,
+      strokeColor: '#1a73e8',
+      strokeOpacity: 0.6,
+      fillColor: '#1a73e8',
+      fillOpacity: 0.15,
+      map: kmap,
+    });
+  }
+  // 핀 클릭을 가리지 않게 pointer-events는 CSS에서 끈다.
+  locateDot = new kakao.maps.CustomOverlay({
+    position: pos,
+    content: h('div', { class: 'my-location', 'aria-hidden': 'true' }),
+    xAnchor: 0.5,
+    yAnchor: 0.5,
+    zIndex: 1,
+    map: kmap,
+  });
+  kmap.setCenter(pos);
+  if (kmap.getLevel() > LOCATE_LEVEL) kmap.setLevel(LOCATE_LEVEL, { anchor: pos });
+}
+
+function locateMe() {
+  if (locating || !kmap) return;
+  if (!window.isSecureContext || !navigator.geolocation) {
+    toast('이 주소에서는 현위치를 쓸 수 없습니다(https에서만 됩니다).');
+    return;
+  }
+  setLocateBusy(true);
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      setLocateBusy(false);
+      showMyLocation(pos.coords);
+    },
+    (err) => {
+      setLocateBusy(false);
+      toast(
+        err?.code === 1
+          ? '위치 권한이 꺼져 있습니다. 브라우저(앱) 설정에서 위치를 허용해 주세요.'
+          : err?.code === 3
+            ? '현위치를 찾는 데 시간이 너무 걸립니다. 다시 눌러 주세요.'
+            : '현위치를 찾지 못했습니다.',
+      );
+    },
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
   );
 }
 

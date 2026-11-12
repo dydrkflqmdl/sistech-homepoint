@@ -48,12 +48,17 @@
         </div>
       </div>
       <header class="topbar">
-        <!-- 휴대폰에서도 버튼은 ☰ 안으로 접히므로 제목은 늘 한 줄이다. -->
+        <!-- 휴대폰에서도 버튼은 ☰ 안으로 접히므로 제목은 늘 한 줄이다. 로그인한 아이디는 ☰ 왼쪽(#topbar-user)에 늘 보인다(휴대폰만). -->
         <div class="brand">
           <h1><a id="home-link" href="./" title="처음 화면으로">HOME POINT NAVI</a></h1>
           <p class="brand-by">by SISTECH</p>
         </div>
         <!-- 휴대폰(767px 이하)에서는 버튼 줄(.actions)을 숨기고 이 ☰ 단추로 펼친다(menu-ui.js). 넓은 화면에서는 ☰가 숨는다. -->
+        <!-- 휴대폰 전용: 로그인한 아이디(#user-name과 같은 글). 이름이 비면 숨는다. 읽어 주는 글은 aria-label로 "로그인: 이름". -->
+        <span id="topbar-user" class="topbar-user" role="group" aria-label="로그인" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" /></svg>
+          <span id="topbar-user-name" class="topbar-user-name"></span>
+        </span>
         <button type="button" class="menu-button" id="menu-button" aria-controls="top-actions" aria-expanded="false" aria-label="메뉴 열기">
           <svg class="menu-icon-open" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
           <svg class="menu-icon-close" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6L6 18" /></svg>
