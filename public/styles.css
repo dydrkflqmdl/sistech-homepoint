@@ -1420,10 +1420,43 @@ p {
   color: var(--accent-text);
 }
 
+/* 이름표: 핀 바로 위에 장소 이름을 한 줄로. 핀 크기는 바뀌지 않게 절대 위치로 둔다 */
+.pin .name-label {
+  position: absolute;
+  bottom: calc(100% + 3px);
+  left: 50%;
+  max-width: 170px;
+  padding: 1px 6px;
+  overflow: hidden;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 0.92);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  transform: translateX(-50%);
+}
+
+.hide-names .pin .name-label {
+  display: none;
+}
+
+/* 이름표가 보이면 메모 말풍선은 그만큼 위로 올린다(이름표 높이 18px + 간격 3px + 여유 1px) */
+.pin {
+  --name-h: 22px;
+}
+
+.hide-names .pin {
+  --name-h: 0px;
+}
+
 /* 메모 말풍선: 핀 바로 위에 메모 내용을 두 줄까지 띄운다 */
 .pin .memo-label {
   position: absolute;
-  bottom: calc(100% + 7px);
+  bottom: calc(100% + 7px + var(--name-h));
   left: 50%;
   display: flex;
   align-items: flex-start;

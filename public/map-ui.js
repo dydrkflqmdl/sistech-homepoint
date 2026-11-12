@@ -153,7 +153,16 @@ function mapControls() {
 // 멀리서 보면 메모 글씨가 서로 겹치므로, 이만큼 멀어지면 선택한 장소의 메모만 보여 준다.
 // 카카오 지도 단계는 숫자가 클수록 멀다(1이 가장 가까움). 7단계쯤이 예전(Leaflet) 12배율과 비슷하다.
 const MEMO_LABEL_MAX_LEVEL = 6;
-const syncMemoLabels = () => kmap && $('#map').classList.toggle('hide-memo', kmap.getLevel() > MEMO_LABEL_MAX_LEVEL);
+// 장소 이름은 8단계(축척 2km)까지 가까이 오면 핀 위에 보인다. 선택한 핀도 같은 규칙이다.
+const NAME_LABEL_MAX_LEVEL = 8;
+// 핀을 다시 그리지 않고 #map의 클래스만 바꾼다(숨김은 CSS가 맡는다).
+function syncMemoLabels() {
+  if (!kmap) return;
+  const level = kmap.getLevel();
+  const map = $('#map');
+  map.classList.toggle('hide-memo', level > MEMO_LABEL_MAX_LEVEL);
+  map.classList.toggle('hide-names', level > NAME_LABEL_MAX_LEVEL);
+}
 
 // 키가 틀렸거나, 이 주소가 앱에 등록되지 않았거나, 인터넷이 끊기면 loadKakaoSdk가 던진다(startMap이 받아 안내한다).
 async function initMap() {
@@ -186,7 +195,7 @@ async function initMap() {
 }
 
 // 핀 모양(SVG)과 메모 말풍선. 메모나 미션이 있는 장소는 핀 바로 위에 미션 진행도(완료/전체)와 메모 내용을 띄운다.
-function pinHtml(color, selected, memo, progress = '') {
+function pinHtml(color, selected, memo, progress = '', name = '') {
   const w = selected ? 34 : 26;
   const hgt = Math.round((w * 4) / 3);
   const memoLabel =
@@ -195,9 +204,11 @@ function pinHtml(color, selected, memo, progress = '') {
         <path d="M5 4h14a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3h-7l-5 4v-4H5a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z" fill="${color}"/></svg>
         ${progress ? `<b class="memo-progress">${escapeHtml(progress)}</b>` : ''}${memo ? `<span class="memo-text">${escapeHtml(memo)}</span>` : ''}</span>`
       : '';
+  // 이름표는 핀 이름(aria-label)과 겹치므로 화면 읽기 프로그램에는 숨긴다.
+  const nameLabel = name ? `<span class="name-label" aria-hidden="true">${escapeHtml(name)}</span>` : '';
   return `<svg class="pin-shape" viewBox="0 0 24 32" width="${w}" height="${hgt}" aria-hidden="true">
       <path d="M12 1C5.9 1 1 5.8 1 11.8 1 20 12 31 12 31s11-11 11-19.2C23 5.8 18.1 1 12 1z" fill="${color}" stroke="#fff" stroke-width="1.6"/>
-      <circle cx="12" cy="11.6" r="4.2" fill="#fff"/></svg>${memoLabel}`;
+      <circle cx="12" cy="11.6" r="4.2" fill="#fff"/></svg>${nameLabel}${memoLabel}`;
 }
 
 // 핀 하나. 누르거나(클릭) 초점을 둔 채 Enter·Space를 누르면 그 장소를 고르고 상세 정보 제목으로 초점을 옮긴다.
@@ -248,11 +259,11 @@ export function renderMarkers(visible) {
     const color = placeColor(p);
     const progress = total > 0 ? `${done}/${total}` : '';
     const memo = p.memo.trim();
-    const look = `${color}|${selected}|${progress}|${memo}`;
+    const look = `${color}|${selected}|${progress}|${memo}|${p.name}`;
     if (marker.look !== look) {
       marker.look = look;
       el.className = selected ? 'pin selected' : 'pin';
-      el.innerHTML = pinHtml(color, selected, memo, progress);
+      el.innerHTML = pinHtml(color, selected, memo, progress, p.name);
     }
     // 화면 읽기 프로그램에는 이름과 진행 상태를 함께 알려 준다("SW_01, 진행 중 1/34").
     const label = `${p.name}, ${colorLabel(color)}${progress ? ` ${progress}` : ''}`;
