@@ -111,8 +111,8 @@ check('390 외주: ☰ 안에 가져오기·내보내기·계정 관리 없음(�
 await hostile('390 외주');
 await openPlace('SW_01');
 v = await ev(view);
-check('390 외주 상세: 메모 입력 칸(지금 메모가 들어 있음, 읽기 전용 글 없음), 삭제 없음, 길찾기·카카오맵 보기·미션 목록은 있음',
-  v.detail && v.memoInput && !v.memoReadonly && v.memoValue === places[0].memo && !v.deleteBtn && v.route.join() === '길찾기,카카오맵에서 보기' && v.missions === 3, v);
+check('390 외주 상세: 메모 입력 칸(지금 메모가 들어 있음, 읽기 전용 글 없음), 삭제 없음, 길찾기 단추 4개·미션 목록은 있음',
+  v.detail && v.memoInput && !v.memoReadonly && v.memoValue === places[0].memo && !v.deleteBtn && v.route.join() === '카카오맵,네이버지도,카카오내비,티맵' && v.missions === 3, v);
 const focusable = await ev(`[...document.querySelectorAll('#detail textarea, #detail input:not([type=hidden]), #detail button, #detail a')].map((e) => e.id || e.textContent.trim() || e.className).filter((t) => /삭제|memo-input/.test(t))`);
 check('390 외주 상세: 초점 갈 수 있는 곳에 메모 입력은 있고 삭제는 없음', focusable.join() === 'memo-input', focusable);
 await ev(`document.querySelector('#toast').textContent = ''`);

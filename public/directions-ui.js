@@ -1,39 +1,17 @@
-// 길찾기 창(모달): [길찾기]를 누르면 카카오맵·네이버지도·카카오내비·티맵 중 하나를 고르게 하고, 고른 앱의 자동차 길찾기를 연다.
-// 미션 기록 창(missions-ui.js)과 같은 방식·같은 모양이다(showModal, ×·Esc·바깥 누르기로 닫기, 닫으면 초점은 [길찾기]로).
-// 미션 기록 창과 달리 상세 정보 안이 아니라 <body>에 한 번만 만들어 둔다: 상세 정보는 원격 변경으로 자주 새로 그려지는데,
-// 그때마다 창이 닫히거나 다시 뜨지 않게 하려는 것이다. 목적지는 연 순간의 장소(이름·위경도)를 복사해 둔다.
-import { h, refocus, toast } from './dom.js';
+// 길찾기 단추: 상세 카드에 카카오맵·네이버지도·카카오내비·티맵 4개를 바로 둔다. 누르면 그 앱의 자동차 길찾기를 연다.
+// 상세 카드는 원격 변경으로 자주 새로 그려지므로, 단추는 그릴 때마다 새로 만들고 목적지(이름·위경도)는 그린 장소에서 복사해 둔다.
+// 휴대폰이 아니면(PC) 카카오내비·티맵은 쓸 수 없어 꺼 두고, 묶음 아래 한 줄로 이유를 알려 준다.
+import { h, toast } from './dom.js';
 import { config } from './state.js';
 import { logCause } from './api.js';
 import { needsPhone, openRoute, platformOf, preloadKakaoNavi, ROUTE_APPS } from './directions.js';
 
-let dialog = null;
-let dialogPlaceId = null;
+// 카카오내비 SDK는 휴대폰에서 장소 상세를 처음 그릴 때 한 번만 불러오기 시작한다(쓸 수 없는 PC에서는 받지 않는다).
+// 못 받아도 눌렀을 때 다시 시도하고 그때 알린다(directions.js).
+let preloaded = false;
 
-export const directionsDialogOpen = () => dialog !== null;
-
-// [길찾기]가 있는 자리(상세 카드는 새로 그려지므로 고를 때마다 찾는다).
-const OPENER = '#detail .route-open';
-
-// 창 닫기(× · Esc · 바깥 누르기 · 앱을 고른 뒤). restoreFocus가 거짓이면 초점을 옮기지 않는다(장소가 바뀌어 닫을 때).
-export function closeDirectionsDialog({ restoreFocus = true } = {}) {
-  if (!dialog) return;
-  const d = dialog;
-  dialog = null;
-  dialogPlaceId = null;
-  if (d.open) d.close();
-  d.remove();
-  if (restoreFocus) refocus(OPENER);
-}
-
-// 상세 정보를 그릴 때 부른다: 창을 연 장소가 더는 고른 장소가 아니면(다른 장소를 골랐거나 닫힘·삭제·로그아웃) 창도 닫는다.
-export function syncDirectionsDialog(selectedPlaceId) {
-  if (dialog && dialogPlaceId !== selectedPlaceId) closeDirectionsDialog({ restoreFocus: false });
-}
-
-// 앱을 고르면 창을 먼저 닫고 연다. 카카오내비는 SDK가 아직 오는 중일 수 있어 끝나는 대로 열리고, 못 열면 창 밖 알림으로 알린다.
+// 앱을 누르면 연다. 카카오내비는 SDK가 아직 오는 중일 수 있어 끝나는 대로 열리고, 못 열면 알림으로 알린다.
 async function choose(appId, place) {
-  closeDirectionsDialog();
   try {
     await openRoute(appId, place, { kakaoKey: config.kakaoJsKey });
   } catch (err) {
@@ -42,57 +20,33 @@ async function choose(appId, place) {
   }
 }
 
-export function openDirections(p) {
-  closeDirectionsDialog({ restoreFocus: false });
+// 상세 카드에 넣을 길찾기 묶음(단추 4개 + PC 안내 한 줄)을 만든다.
+export function routeActions(p) {
   const place = { id: p.id, name: p.name, lat: p.lat, lng: p.lng };
   const platform = platformOf();
-  // 카카오내비 SDK는 이 창을 열 때부터 불러온다(한 번만). 처음부터 모든 사람이 받지 않고, 쓸 수 없는 PC에서는 받지 않는다.
-  if (!needsPhone('kakaonavi', platform)) preloadKakaoNavi();
-  const apps = ROUTE_APPS.map((app, i) => {
-    const phoneOnly = needsPhone(app.id, platform);
-    return h(
+  if (!preloaded && !needsPhone('kakaonavi', platform)) {
+    preloaded = true;
+    preloadKakaoNavi();
+  }
+  const anyPhoneOnly = ROUTE_APPS.some((app) => needsPhone(app.id, platform));
+  const apps = ROUTE_APPS.map((app) =>
+    h(
       'button',
       {
         type: 'button',
         class: 'btn route-app',
         'data-app': app.id,
-        disabled: phoneOnly,
-        // 처음 초점은 열 수 있는 첫 앱에(키보드·화면 읽기 프로그램이 바로 이어서 쓴다).
-        autofocus: i === 0 ? true : null,
+        disabled: needsPhone(app.id, platform),
+        'aria-describedby': needsPhone(app.id, platform) ? 'route-note' : null,
         onclick: () => choose(app.id, place),
       },
-      h('span', { class: 'route-app-name' }, h('span', { class: 'route-dot', style: `background:${app.color}`, 'aria-hidden': 'true' }), app.label),
-      phoneOnly && h('span', { class: 'route-app-note' }, '휴대폰에서만 열 수 있습니다'),
-    );
-  });
-  dialog = h(
-    'dialog',
-    {
-      class: 'directions-dialog',
-      'aria-labelledby': 'directions-dialog-title',
-      // 휴대폰 뒤로 가기 등 브라우저가 닫으려 할 때도 같은 길로 닫는다. Esc는 detail-ui.js가 먼저 받는다.
-      oncancel: (e) => {
-        e.preventDefault();
-        closeDirectionsDialog();
-      },
-      // 창 바깥(어두운 배경)을 누르면 닫는다. 창 안은 .mission-dialog-body가 꽉 채우므로 dialog 자신이 눌린 것이 바깥이다.
-      onclick: (e) => {
-        if (e.target === e.currentTarget) closeDirectionsDialog();
-      },
-    },
-    h(
-      'div',
-      { class: 'mission-dialog-body' },
-      h(
-        'div',
-        { class: 'mission-dialog-head' },
-        h('div', {}, h('h3', { id: 'directions-dialog-title' }, '길찾기'), h('p', { class: 'mission-dialog-place' }, place.name)),
-        h('button', { type: 'button', class: 'icon-btn directions-dialog-close', 'aria-label': '닫기', onclick: () => closeDirectionsDialog() }, '×'),
-      ),
-      h('div', { class: 'route-apps' }, apps),
+      // 앱 이름 글자가 단추 이름이므로 아이콘은 꾸밈(alt="")이다.
+      h('img', { class: 'route-icon', src: app.icon, alt: '', width: 24, height: 24, decoding: 'async' }),
+      app.label,
     ),
   );
-  dialogPlaceId = place.id;
-  document.body.append(dialog);
-  dialog.showModal();
+  return [
+    h('div', { class: 'route-actions', role: 'group', 'aria-label': '길찾기' }, apps),
+    anyPhoneOnly && h('p', { id: 'route-note', class: 'route-note' }, '카카오내비·티맵은 휴대폰에서만 열 수 있습니다.'),
+  ];
 }

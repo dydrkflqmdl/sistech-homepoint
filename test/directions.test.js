@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  androidIntentUrl, kakaoMapAppUrl, kakaoMapRouteUrl, kakaoMapViewUrl, naverMapAppUrl, naverMapWebUrl, needsPhone, platformOf, routeTarget, ROUTE_APPS,
+  androidIntentUrl, kakaoMapAppUrl, kakaoMapRouteUrl, naverMapAppUrl, naverMapWebUrl, needsPhone, platformOf, routeTarget, ROUTE_APPS,
   tmapAppUrl, TMAP_APPSTORE_URL, TMAP_PLAY_URL,
 } from '../public/directions.js';
 
@@ -22,7 +22,6 @@ test('기기 구분: 안드로이드·iOS·iPadOS(터치 Macintosh)·PC', () => 
 test('카카오맵: 앱은 위도,경도 순서·이름 없음·자동차, 웹은 이름,위도,경도', () => {
   assert.equal(kakaoMapAppUrl(place), 'kakaomap://route?ep=37.5663,126.9779&by=car');
   assert.equal(kakaoMapRouteUrl(place), `https://map.kakao.com/link/to/${name},37.5663,126.9779`);
-  assert.equal(kakaoMapViewUrl(place), `https://map.kakao.com/link/map/${name},37.5663,126.9779`);
 });
 
 test('카카오맵 웹 주소: 이름 안의 쉼표·슬래시는 지우고, 이름이 비면 "목적지"', () => {

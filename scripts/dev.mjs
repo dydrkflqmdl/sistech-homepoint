@@ -1,11 +1,11 @@
-// 로컬 개발 서버. config.js를 만든 뒤 public/ 을 정적으로 서빙한다.
+// 로컬 개발 서버. public/ 을 정적으로 서빙하고, config.js만 환경변수로 만들어 메모리에서 내보낸다.
 // 사용법: npm start   (포트는 PORT 환경변수, 기본 4100 — 카카오 콘솔에 등록된 주소)
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeConfig } from './write-config.mjs';
+import { checkedConfigSource } from './write-config.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const publicDir = path.join(root, 'public');
@@ -23,8 +23,12 @@ const MIME = {
   '.webmanifest': 'application/manifest+json; charset=utf-8',
 };
 
+// config.js는 파일로 쓰지 않고 이 서버의 환경변수로 만들어 메모리에서 내보낸다.
+// 예전처럼 public/config.js 파일을 쓰면, 자동 점검(e2e)이 띄운 다른 포트의 서버가 같은 파일을 테스트 값으로 덮어쓰거나 지워서
+// 사람이 보던 4100 서버 화면이 깨졌다. 이제 서버마다 자기 설정을 따로 낸다(public/config.js 파일이 남아 있어도 읽지 않는다).
+let CONFIG;
 try {
-  writeConfig('public/config.js');
+  CONFIG = checkedConfigSource();
 } catch (e) {
   console.error(e.message);
   process.exit(1);
@@ -45,6 +49,7 @@ const server = http.createServer((req, res) => {
   }
   if (pathname.includes('\0')) return send(400, 'Bad Request');
   if (pathname.endsWith('/')) pathname += 'index.html';
+  if (pathname === '/config.js') return send(200, CONFIG, MIME['.js']);
 
   // 경로 탐색 차단: public/ 밖으로 나가는 경로는 거절한다.
   const file = path.resolve(publicDir, '.' + pathname);

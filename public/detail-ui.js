@@ -1,4 +1,4 @@
-// 상세 카드: 그리기(길찾기·메모·미션 목록·삭제), 한글 조합 중 다시 그리기 미루기, 장소 고르기·닫기·삭제, Esc 처리.
+// 상세 카드: 그리기(길찾기 단추·메모·미션 목록·삭제), 한글 조합 중 다시 그리기 미루기, 장소 고르기·닫기·삭제, Esc 처리.
 import { $, fill, h, refocus, toast } from './dom.js';
 import { hooks, isPlaceGone, state, touchPlace } from './state.js';
 import { authEpoch, authFailed, isContractor } from './session.js';
@@ -6,8 +6,7 @@ import { panToPlace } from './map-ui.js';
 import { discardMemo, flushMemo, memoDrafts, memoStatusView, memoText, onMemoInput } from './memo-ui.js';
 import { districtOf, groupHeadSelector, listItemSelector, missionBadge, placeDot } from './list-ui.js';
 import { closeMissionDialog, confirmDiscardDraft, missionDialog, missionRecord, toggleMission } from './missions-ui.js';
-import { kakaoMapViewUrl } from './directions.js';
-import { closeDirectionsDialog, directionsDialogOpen, openDirections, syncDirectionsDialog } from './directions-ui.js';
+import { routeActions } from './directions-ui.js';
 import { missionNames, missionProgress } from './mission.js';
 import * as api from './api.js';
 
@@ -18,8 +17,6 @@ const renderKeepingInput = (...args) => hooks.renderKeepingInput(...args);
 export function renderDetail() {
   const box = $('#detail');
   const p = state.places.find((x) => x.id === state.selectedId);
-  // 길찾기 창은 <body>에 따로 있어 다시 그려도 그대로다. 연 장소가 더는 고른 장소가 아닐 때만 닫는다.
-  syncDirectionsDialog(p?.id ?? null);
   box.hidden = !p;
   if (!p) {
     box.replaceChildren();
@@ -56,6 +53,9 @@ export function renderDetail() {
     h('div', { id: 'memo-status', class: 'memo-status', role: 'status' }, memoStatusView(p.id)),
   );
 
+  // 키보드로 길찾기 단추를 누르던 중이면 다시 그린 뒤 같은 단추로 초점을 돌려놓는다.
+  const routeApp = document.activeElement?.closest?.('#detail .route-app')?.dataset.app;
+
   fill(
     box,
     h(
@@ -75,13 +75,8 @@ export function renderDetail() {
           h('span', { class: 'addr-line' }, p.district && h('span', { class: 'district' }, p.district), p.address && h('span', {}, p.address)),
         p.phone && h('a', { href: `tel:${p.phone}` }, p.phone),
       ),
-    h(
-      'div',
-      { class: 'route-actions' },
-      // 누르면 길찾기 창(카카오맵·네이버지도·카카오내비·티맵 중 고르기). 창을 닫으면 초점이 여기로 돌아온다(directions-ui.js).
-      h('button', { type: 'button', class: 'btn primary route-open', 'aria-haspopup': 'dialog', onclick: () => openDirections(p) }, '길찾기'),
-      h('a', { class: 'btn', href: kakaoMapViewUrl(p), target: '_blank', rel: 'noopener' }, '카카오맵에서 보기'),
-    ),
+    // 카카오맵·네이버지도·카카오내비·티맵 4개 단추(directions-ui.js). 다시 그려도 누르던 단추로 초점을 돌려놓는다(아래).
+    routeActions(p),
     memoBlock,
     missions.length > 0 &&
       h(
@@ -128,6 +123,7 @@ export function renderDetail() {
   // 초점은 창 안의 autofocus 칸으로 가고, 쓰던 칸이 있었으면 renderKeepingInput(app.js)이 그 칸으로 돌려놓는다.
   const dialog = box.querySelector('dialog.mission-dialog');
   if (dialog && !dialog.open) dialog.showModal();
+  if (routeApp) refocus(`#detail .route-app[data-app="${routeApp}"]`);
 }
 
 // 상세 정보 안에서 한글을 조합하는 중이면(IME) 상세 정보는 다시 그리지 않고 미뤄 둔다.
@@ -257,15 +253,10 @@ async function removePlace(place) {
   }
 }
 
-// Esc: 길찾기 창이 열려 있으면 그 창만 닫는다. 미션 기록 창이 열려 있으면 그 창만 닫는다(고치던 값이 있으면 버릴지 묻고, 저장 중이면 닫지 않는다).
+// Esc: 미션 기록 창이 열려 있으면 그 창만 닫는다(고치던 값이 있으면 버릴지 묻고, 저장 중이면 닫지 않는다).
 // 브라우저가 모달을 스스로 닫지 않게 기본 동작은 막는다. 창이 없으면 상세 정보를 닫는다(입력 칸 안에서는 아무것도 안 한다).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || state.selectedId === null) return;
-  if (directionsDialogOpen()) {
-    e.preventDefault();
-    closeDirectionsDialog();
-    return;
-  }
   if (state.selectedMission != null) {
     e.preventDefault();
     closeMissionDialog();

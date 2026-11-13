@@ -8,12 +8,13 @@ export function platformOf(ua = navigator.userAgent, touchPoints = navigator.max
   return 'pc';
 }
 
-// 길찾기 창에 보여 줄 앱 목록(순서대로). color는 단추 앞의 작은 점 색이다.
+// 길찾기 단추로 보여 줄 앱 목록(순서대로). icon은 단추 앞의 앱 아이콘(public/icons/, 앱스토어 공식 아이콘 96×96).
+// 아이콘은 각 회사 상표라 "그 앱 열기" 단추 표시로만 쓴다.
 export const ROUTE_APPS = [
-  { id: 'kakaomap', label: '카카오맵', color: '#fee500' },
-  { id: 'navermap', label: '네이버지도', color: '#03c75a' },
-  { id: 'kakaonavi', label: '카카오내비', color: '#3c8bff' },
-  { id: 'tmap', label: '티맵', color: '#ef4044' },
+  { id: 'kakaomap', label: '카카오맵', icon: './icons/kakaomap.png' },
+  { id: 'navermap', label: '네이버지도', icon: './icons/navermap.png' },
+  { id: 'kakaonavi', label: '카카오내비', icon: './icons/kakaonavi.png' },
+  { id: 'tmap', label: '티맵', icon: './icons/tmap.png' },
 ];
 
 // 카카오내비는 SDK로만, 티맵은 앱 주소뿐(웹 길찾기 없음)이라 PC에서는 열 수 없다.
@@ -34,7 +35,6 @@ const appName = (name) => encodeURIComponent(String(name).trim() || '목적지')
 const linkName = (name) => encodeURIComponent(String(name).replace(/[,/]/g, ' ').trim() || '목적지');
 
 // 카카오맵
-export const kakaoMapViewUrl = (p) => `https://map.kakao.com/link/map/${linkName(p.name)},${p.lat},${p.lng}`;
 export const kakaoMapRouteUrl = (p) => `https://map.kakao.com/link/to/${linkName(p.name)},${p.lat},${p.lng}`;
 // 앱 주소(공식 문서는 없지만 쓰던 형식). 이름 칸이 없어 목적지 이름은 앱에 안 넘어간다.
 export const kakaoMapAppUrl = (p) => `kakaomap://route?ep=${p.lat},${p.lng}&by=car`;
@@ -84,7 +84,7 @@ export function routeTarget(appId, place, { platform, origin }) {
 
 // ── 카카오내비(Kakao JavaScript SDK) ─────────────────────
 
-// URL 스킴은 공식으로 지원하지 않아 SDK로만 연다. 길찾기 창을 열 때 미리 불러오기 시작한다(preloadKakaoNavi).
+// URL 스킴은 공식으로 지원하지 않아 SDK로만 연다. 휴대폰에서 장소 상세를 처음 그릴 때 미리 불러오기 시작한다(preloadKakaoNavi).
 export const NAVI_SDK_URL = 'https://t1.kakaocdn.net/kakao_js_sdk/2.8.5/kakao.min.js';
 export const NAVI_SDK_INTEGRITY = 'sha384-v6JKY3z4FUkWq21oZDHZe74YvuPk/WUrVLrDHTBojHXClOSa3iXy7sCXPY1jkFbj';
 const NAVI_SDK_TIMEOUT_MS = 15000;

@@ -32,7 +32,7 @@ const scripts = [
   'ux-locate',
   // 계정 권한 3단계(관리자·직원·외주)
   'ux-roles',
-  // 길찾기 창(카카오맵·네이버지도·카카오내비·티맵)
+  // 길찾기 단추(카카오맵·네이버지도·카카오내비·티맵)
   'ux-directions',
 ];
 for (const f of fs.readdirSync(RESULTS)) if (f.startsWith('rpc-')) fs.rmSync(path.join(RESULTS, f));
@@ -43,6 +43,8 @@ try {
     const r = spawnSync(process.execPath, [path.join(E2E, s + '.mjs')], { env: { ...process.env, E2E_PORT: String(PORT) }, encoding: 'utf-8', timeout: 300000 });
     fs.writeFileSync(path.join(RESULTS, s + '.log'), (r.stdout ?? '') + (r.stderr ?? ''));
     const file = path.join(RESULTS, s + '.json');
+    // 결과 없이 죽었으면 CI에서 원인이 바로 보이도록 그 스크립트 로그의 끝 40줄을 그대로 찍는다.
+    if (!fs.existsSync(file)) console.log(`--- ${s} 로그 마지막 40줄 (results/${s}.log) ---\n${((r.stdout ?? '') + (r.stderr ?? '')).split('\n').slice(-40).join('\n')}\n--- 끝 ---`);
     // 스크립트가 도중에 죽으면 결과 파일이 없다 → 실패로 센다(예전 결과를 읽지 않게 위에서 지웠다).
     const j = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf-8')) : { pass: 0, total: 1, results: [{ ok: false, label: `스크립트가 끝나지 않음(종료 코드 ${r.status}) — results/${s}.log 참고` }] };
     rows.push({ s, pass: j.pass, total: j.total, fails: j.results.filter((x) => !x.ok).map((x) => x.label) });

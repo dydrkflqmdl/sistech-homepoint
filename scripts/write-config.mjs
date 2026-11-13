@@ -53,8 +53,9 @@ export function assertPublicAnonKey(key) {
   }
 }
 
-// 설정 파일을 쓰고 경로를 돌려준다. Supabase 값이 비어 있거나 anon 자리에 비밀 키가 있으면 오류를 던진다.
-export function writeConfig(outPath = 'public/config.js', env = process.env) {
+// 검사를 거친 설정 파일 내용(글자). Supabase 값이 비어 있거나 anon 자리에 비밀 키가 있으면 오류를 던진다.
+// 개발 서버(dev.mjs)는 이 내용을 파일로 쓰지 않고 /config.js 요청에 바로 내보낸다.
+export function checkedConfigSource(env = process.env) {
   const { cfg, source } = buildConfigSource(env);
   const missing = [];
   if (!cfg.supabaseUrl) missing.push('SUPABASE_URL');
@@ -64,6 +65,12 @@ export function writeConfig(outPath = 'public/config.js', env = process.env) {
   }
   assertPublicAnonKey(cfg.supabaseAnonKey);
   if (!cfg.kakaoJsKey) console.warn('경고: KAKAO_JS_KEY가 비어 있어 지도가 뜨지 않습니다.');
+  return source;
+}
+
+// 설정 파일을 쓰고 경로를 돌려준다(배포 빌드용). 검사는 checkedConfigSource와 같다.
+export function writeConfig(outPath = 'public/config.js', env = process.env) {
+  const source = checkedConfigSource(env);
   const abs = path.resolve(root, outPath);
   fs.mkdirSync(path.dirname(abs), { recursive: true });
   fs.writeFileSync(abs, source);
