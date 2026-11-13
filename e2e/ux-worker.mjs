@@ -6,6 +6,7 @@ import { launch, PROJECT, prepare, reporter, sleep } from './lib.mjs';
 
 const { loginIdToEmail } = await import(PROJECT + '/public/login-id.js');
 const { parseFlightTime, formatFlightTime } = await import(PROJECT + '/public/flight-time.js');
+const { parseBatteryNo } = await import(PROJECT + '/public/battery-no.js');
 const { check, finish } = reporter('ux-worker');
 const b = await launch('ux-worker');
 const ev = b.ev;
@@ -26,10 +27,19 @@ const workerInfo = (m) => ev(`(() => { const f = ${form(m)}; const i = f?.queryS
 const openMission = (m) => ev(`document.querySelector('#detail .mission-item[data-mission="${m}"]').click()`);
 // 비행시간은 분·초 두 칸: fill의 flightTime('10분')은 flightMin·flightSec로 나눠 넣는다.
 const splitFlight = (values) => {
-  if (!('flightTime' in values)) return values;
-  const { flightTime, ...rest } = values;
-  const t = parseFlightTime(flightTime);
-  return { ...rest, flightMin: t.min, flightSec: t.sec };
+  let out = values;
+  if ('flightTime' in out) {
+    const { flightTime, ...rest } = out;
+    const t = parseFlightTime(flightTime);
+    out = { ...rest, flightMin: t.min, flightSec: t.sec };
+  }
+  // 배터리 번호는 숫자 두 칸: fill의 batteryNo('2-1')는 batteryNo1·batteryNo2로 나눠 넣는다.
+  if ('batteryNo' in out) {
+    const { batteryNo, ...rest } = out;
+    const t = parseBatteryNo(batteryNo);
+    out = { ...rest, batteryNo1: t.a, batteryNo2: t.b };
+  }
+  return out;
 };
 const flight = async (m) => {
   const t = await ev(`(() => { const f = ${form(m)}; return [f.querySelector('input[name=flightMin]').value, f.querySelector('input[name=flightSec]').value]; })()`);
@@ -61,7 +71,7 @@ check('이름만 있는(고친 것 없는) 새 미션은 닫을 때 묻지 않�
 
 // ── 3. 저장: worker는 늘 로그인 아이디 ──
 await openMission('M_02'); await sleep(150);
-await fill('M_02', { done: true, flightTime: '10분', batteryNo: '2', batteryLeft: '40' });
+await fill('M_02', { done: true, flightTime: '10분', batteryNo: '2-1', batteryLeft: '40' });
 await submit('M_02'); await idle('M_02'); await sleep(200);
 check('저장할 때 worker는 로그인 아이디(손두병)로 보내고 그대로 기록됨', (await savedWorker()) === '손두병' && (await record('M_02'))?.worker === '손두병' && (await record('M_02'))?.done === true, await record('M_02'));
 

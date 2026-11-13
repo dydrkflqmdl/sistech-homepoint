@@ -704,6 +704,20 @@ p {
   display: none;
 }
 
+/* 배터리 번호: [  ] - [  ] 두 칸 사이에 - 를 두고 한 줄에 */
+.mission-form .battery-inputs {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  column-gap: 8px;
+}
+
+.mission-form .battery-sep {
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+}
+
 /* 비행시간: [  ]분 [  ]초 두 칸을 한 줄에 */
 .mission-form .flight-inputs {
   display: grid;

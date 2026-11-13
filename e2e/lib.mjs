@@ -175,6 +175,8 @@ export async function launch(name, { confirm = true, fakeSupabase = true, fakeKa
     });
   }
   await send('Page.enable');
+  // 내려받기는 이 테스트용 프로필 폴더 안에만 저장한다(close 때 함께 지워짐). 안 하면 ~/Downloads에 places-….csv가 쌓인다.
+  await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: path.join(profile, 'downloads') });
   if (fakeKakao) await send('Page.addScriptToEvaluateOnNewDocument', { source: fs.readFileSync(path.join(E2E, 'fake-kakao.js'), 'utf-8') });
   if (fakeSupabase) await send('Page.addScriptToEvaluateOnNewDocument', { source: fakeSupabaseSource() });
   // confirm은 기본으로 "예". 몇 번, 무슨 문구로 물었는지는 window.__confirms에 남긴다.

@@ -35,10 +35,10 @@ check('목록 줄 스타일이 상세 정보 안에 번지지 않음(버튼 테�
 
 // ── 다시 그려도 떼었다 붙이지 않음 ──
 await ev(`document.querySelector('#detail .mission-item').click()`); await sleep(200);
-await ev(`(() => { const i = document.querySelector('dialog.mission-dialog input[name=batteryNo]'); i.focus(); i.value = '배터리'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await ev(`(() => { const i = document.querySelector('dialog.mission-dialog input[name=batteryNo1]'); i.focus(); i.value = '123'; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await ev(`__fake.remoteChange((db) => { db.places.find((p) => p.name === 'SW_03').memo = '원격메모'; })`); await sleep(600);
-v = await ev(`({ open: document.querySelector('dialog.mission-dialog')?.open, active: document.activeElement?.name, val: document.querySelector('dialog.mission-dialog input[name=batteryNo]')?.value, inSlot: document.querySelector('#detail').parentElement?.classList.contains('detail-slot') })`);
-check('미션 기록 창을 연 채 다른 장소가 원격으로 바뀌어 목록을 다시 그려도 창·입력값·초점 그대로', v.open && v.active === 'batteryNo' && v.val === '배터리' && v.inSlot, v);
+v = await ev(`({ open: document.querySelector('dialog.mission-dialog')?.open, active: document.activeElement?.name, val: document.querySelector('dialog.mission-dialog input[name=batteryNo1]')?.value, inSlot: document.querySelector('#detail').parentElement?.classList.contains('detail-slot') })`);
+check('미션 기록 창을 연 채 다른 장소가 원격으로 바뀌어 목록을 다시 그려도 창·입력값·초점 그대로', v.open && v.active === 'batteryNo1' && v.val === '123' && v.inSlot, v);
 await ev(`document.querySelector('dialog.mission-dialog .mission-dialog-close').click()`); await sleep(200);
 await ev(`document.querySelector('#memo-input').focus()`);
 await ev(`__fake.remoteChange((db) => { db.places.find((p) => p.name === 'SW_04').memo = '원격2'; })`); await sleep(600);

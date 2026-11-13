@@ -156,12 +156,12 @@ await openPlace('SW_01');
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_02"]').click()`); await sleep(300);
 const typeIn = (n, val) => ev(`(() => { const i = document.querySelector('dialog.mission-dialog input[name=${n}]'); i.value = ${JSON.stringify(val)}; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await ev(`document.querySelector('dialog.mission-dialog input[name=done]').click()`);
-await typeIn('flightMin', '5'); await typeIn('flightSec', '10'); await typeIn('batteryNo', '2'); await typeIn('batteryLeft', '40');
+await typeIn('flightMin', '5'); await typeIn('flightSec', '10'); await typeIn('batteryNo1', '2'); await typeIn('batteryNo2', '1'); await typeIn('batteryLeft', '40');
 await ev(`document.querySelector('dialog.mission-dialog button[type=submit]').click()`); await sleep(600);
 let rec = await ev(`__fake.store().find((p) => p.name === 'SW_01').missions.find((m) => m.mission === 'M_02') ?? null`);
 const dlg = await ev(`({ open: !!document.querySelector('dialog.mission-dialog')?.open, toast: document.querySelector('#toast').textContent })`);
-check('390 외주: 미션 기록 저장됨(완료·5분 10초·배터리 2번 40%·작업자 = 로그인 아이디), 창 닫힘',
-  rec?.done === true && rec.flightTime === '5분 10초' && rec.batteryNo === '2' && rec.batteryLeft === '40' && rec.worker === '홍외주' && !dlg.open && /저장했습니다/.test(dlg.toast), { rec, dlg });
+check('390 외주: 미션 기록 저장됨(완료·5분 10초·배터리 2-1번 40%·작업자 = 로그인 아이디), 창 닫힘',
+  rec?.done === true && rec.flightTime === '5분 10초' && rec.batteryNo === '2-1' && rec.batteryLeft === '40' && rec.worker === '홍외주' && !dlg.open && /저장했습니다/.test(dlg.toast), { rec, dlg });
 check('390 외주: 장소 목록 검색은 메모까지 찾음', await (async () => {
   await ev(`document.querySelector('#detail .icon-btn').click()`);
   await sleep(300);

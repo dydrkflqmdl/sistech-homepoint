@@ -4,6 +4,7 @@ import { findPlace, hooks, isPlaceGone, rememberOwnWrite, replacePlace, state } 
 import { authEpoch, authFailed, currentWorkerName } from './session.js';
 import { discardMemo, flushMemo, memoUnsaved } from './memo-ui.js';
 import * as api from './api.js';
+import { BATTERY_NO_DIGITS, formatBatteryNo, normalizeBatteryNo, parseBatteryNo } from './battery-no.js';
 import { FLIGHT_MIN_DIGITS, FLIGHT_SEC_DIGITS, formatFlightTime, normalizeFlightTime, parseFlightTime } from './flight-time.js';
 
 // 다시 그리기(app.js·detail-ui.js)와 지워진 장소 빼기(detail-ui.js)는 위쪽 모듈에 있어 hooks로 부른다.
@@ -17,22 +18,24 @@ export const missionRecord = (p, name) =>
 
 // '이름'(worker)은 고칠 수 없다(readonly): 늘 지금 로그인한 사람의 표시 아이디로 기록한다.
 // '비행시간'은 분·초 두 칸(flightMin·flightSec)으로 받아 "12분 30초"로 합쳐 저장한다(flight-time.js).
+// '사용한 배터리 번호'는 숫자 두 칸(batteryNo1·batteryNo2)으로 받아 "3-4"로 합쳐 저장한다(battery-no.js).
 const MISSION_FIELDS = [
   { key: 'worker', label: '이름', placeholder: '작업자', inputmode: 'text', readonly: true },
   { key: 'flightTime', label: '비행시간', flight: true },
-  { key: 'batteryNo', label: '사용한 배터리 번호', placeholder: '예: 3', inputmode: 'text' },
+  { key: 'batteryNo', label: '사용한 배터리 번호', battery: true },
   // 숫자(0~100)만 받고 %는 칸 옆에 붙여 보여 준다. 값에는 %를 넣지 않는다.
   { key: 'batteryLeft', label: '마지막 배터리 남은 용량', placeholder: '예: 45', inputmode: 'numeric', unit: '%' },
 ];
 
 // 화면의 입력 칸 이름(순서대로). 막힌 칸 표시·첫 막힌 칸으로 초점 옮기기에 쓴다.
-const MISSION_INPUTS = ['worker', 'flightMin', 'flightSec', 'batteryNo', 'batteryLeft'];
+const MISSION_INPUTS = ['worker', 'flightMin', 'flightSec', 'batteryNo1', 'batteryNo2', 'batteryLeft'];
 // 숫자만 받는 칸(숫자 아닌 글자는 치는 대로 지운다).
-const DIGIT_INPUTS = new Set(['flightMin', 'flightSec', 'batteryLeft']);
+const DIGIT_INPUTS = new Set(['flightMin', 'flightSec', 'batteryNo1', 'batteryNo2', 'batteryLeft']);
 
 const MISSION_REQUIRED_MESSAGE = '완료로 저장하려면 이름, 비행시간, 사용한 배터리 번호, 마지막 배터리 남은 용량을 모두 적어야 합니다.';
 const BATTERY_LEFT_MESSAGE = '마지막 배터리 남은 용량은 0~100 사이 숫자만 적어 주세요.';
 const FLIGHT_MESSAGE = '비행시간은 분·초 칸에 숫자만 적어 주세요. 초는 0~59입니다.';
+const BATTERY_NO_MESSAGE = '사용한 배터리 번호는 두 칸 모두 숫자로 적어 주세요.';
 
 // 보기 화면 등에서 남은 용량을 보여 줄 때 쓴다. 비어 있으면 ''.
 const batteryLeftText = (v) => (String(v ?? '').trim() ? `${String(v).trim()}%` : '');
@@ -55,6 +58,18 @@ function flightDraft(text) {
 // 초안의 비행시간(저장할 글자). 분·초 칸이 비었으면 옛 기록 글자, 그것도 없으면 ''.
 export const draftFlightTime = (d) => formatFlightTime(d.flightMin, d.flightSec) || d.flightLegacy || '';
 
+// 저장된 배터리 번호 글자를 두 칸 초안으로. "3-4"로 읽을 수 없는 옛 기록("3")은 칸을 비우고 batteryLegacy에 둔다
+// (칸에 아무것도 안 적고 저장하면 옛 글자를 그대로 다시 보낸다 — 열어 보기만 해서 지워지지 않게).
+function batteryDraft(text) {
+  const parsed = parseBatteryNo(text);
+  return parsed
+    ? { batteryNo1: parsed.a, batteryNo2: parsed.b, batteryLegacy: '' }
+    : { batteryNo1: '', batteryNo2: '', batteryLegacy: String(text ?? '').trim() };
+}
+
+// 초안의 배터리 번호(저장할 글자). 두 칸이 비었으면 옛 기록 글자, 그것도 없으면 ''.
+export const draftBatteryNo = (d) => formatBatteryNo(d.batteryNo1, d.batteryNo2) || d.batteryLegacy || '';
+
 function newMissionDraft(p, name) {
   const r = missionRecord(p, name);
   return {
@@ -66,7 +81,7 @@ function newMissionDraft(p, name) {
     // 저장된 기록의 이름(다른 사람일 수 있다). 폼에 "지금 기록의 이름은 …, 저장하면 내 아이디로 바뀝니다"를 보일 때 쓴다.
     savedWorker: String(r.worker ?? '').trim(),
     ...flightDraft(r.flightTime),
-    batteryNo: r.batteryNo ?? '',
+    ...batteryDraft(r.batteryNo),
     batteryLeft: r.batteryLeft ?? '',
     // 저장하려다 막힌 칸: { 칸 이름: 'required' | 'range' }. 다시 그려도 빨간 테두리가 남도록 초안에 둔다.
     invalid: {},
@@ -95,7 +110,9 @@ export function missionDraftDirty() {
   return (
     Boolean(d.done) !== Boolean(r.done) ||
     draftFlightTime(d) !== normalizeFlightTime(r.flightTime) ||
-    ['batteryNo', 'batteryLeft'].some((key) => String(d[key] ?? '').trim() !== String(r[key] ?? '').trim())
+    // 배터리 번호도 같다("3 - 4"로 적힌 옛 기록은 "3-4"와 같게 본다).
+    draftBatteryNo(d) !== normalizeBatteryNo(r.batteryNo) ||
+    ['batteryLeft'].some((key) => String(d[key] ?? '').trim() !== String(r[key] ?? '').trim())
   );
 }
 
@@ -168,32 +185,43 @@ function onMissionFieldInput(p, name, key, e) {
   }
   updateMissionDraft(p, name, key, input.value);
   delete state.missionDraft.invalid[key];
-  // 비행시간은 분·초 중 한 칸만 채워도 되므로, 빈 칸 표시는 두 칸을 함께 지운다.
-  if (key === 'flightMin' || key === 'flightSec') {
-    for (const k of ['flightMin', 'flightSec']) if (state.missionDraft.invalid[k] === 'required') delete state.missionDraft.invalid[k];
+  // 비행시간은 분·초 중 한 칸만 채워도 되므로, 빈 칸 표시는 두 칸을 함께 지운다. 배터리 번호도 같다.
+  for (const pair of [['flightMin', 'flightSec'], ['batteryNo1', 'batteryNo2']]) {
+    if (!pair.includes(key)) continue;
+    for (const k of pair) if (state.missionDraft.invalid[k] === 'required') delete state.missionDraft.invalid[k];
   }
   syncMissionInvalid(name);
 }
 
-// 저장 전에 확인한다. 완료면 네 항목 모두 필요하다(비행시간은 분·초 중 한 칸 이상, 옛 기록 글자가 남아 있어도 된다).
-// 비행시간 분·초는 숫자(초는 0~59), 남은 용량은 적었다면 0~100 정수여야 한다.
+// 저장 전에 확인한다. 완료면 네 항목 모두 필요하다(비행시간은 분·초 중 한 칸 이상, 배터리 번호는 두 칸 모두, 옛 기록 글자가 남아 있어도 된다).
+// 비행시간 분·초는 숫자(초는 0~59), 배터리 번호는 두 칸 모두 숫자(한 칸만 적으면 안 된다), 남은 용량은 적었다면 0~100 정수여야 한다.
 function validateMissionDraft(draft) {
   const invalid = {};
   const filled = (v) => String(v ?? '').trim() !== '';
   if (draft.done) {
     if (!filled(draft.worker)) invalid.worker = 'required';
     if (!draftFlightTime(draft)) invalid.flightMin = invalid.flightSec = 'required';
-    for (const key of ['batteryNo', 'batteryLeft']) if (!filled(draft[key])) invalid[key] = 'required';
+    if (!draftBatteryNo(draft)) invalid.batteryNo1 = invalid.batteryNo2 = 'required';
+    if (!filled(draft.batteryLeft)) invalid.batteryLeft = 'required';
   }
   const min = String(draft.flightMin ?? '').trim();
   const sec = String(draft.flightSec ?? '').trim();
   if (min && !new RegExp(`^\\d{1,${FLIGHT_MIN_DIGITS}}$`).test(min)) invalid.flightMin = 'range';
   if (sec && !(new RegExp(`^\\d{1,${FLIGHT_SEC_DIGITS}}$`).test(sec) && Number(sec) <= 59)) invalid.flightSec = 'range';
+  // 배터리 번호는 완료든 아니든 한 칸만 적으면 막는다(빈 칸을 표시). 칸은 숫자 1~3자리.
+  const no1 = String(draft.batteryNo1 ?? '').trim();
+  const no2 = String(draft.batteryNo2 ?? '').trim();
+  if (no1 || no2) {
+    const ok = new RegExp(`^\\d{1,${BATTERY_NO_DIGITS}}$`);
+    if (!ok.test(no1)) invalid.batteryNo1 = 'range';
+    if (!ok.test(no2)) invalid.batteryNo2 = 'range';
+  }
   const left = String(draft.batteryLeft ?? '').trim();
   if (left && !(/^\d+$/.test(left) && Number(left) <= 100)) invalid.batteryLeft = 'range';
   const reasons = Object.values(invalid);
   const ranges = [
     (invalid.flightMin === 'range' || invalid.flightSec === 'range') && FLIGHT_MESSAGE,
+    (invalid.batteryNo1 === 'range' || invalid.batteryNo2 === 'range') && BATTERY_NO_MESSAGE,
     invalid.batteryLeft === 'range' && BATTERY_LEFT_MESSAGE,
   ].filter(Boolean);
   const message = reasons.includes('required') ? MISSION_REQUIRED_MESSAGE : ranges.length ? ranges.join(' ') : null;
@@ -240,12 +268,14 @@ export function missionForm(p, draft) {
       }),
       '완료',
     ),
-    MISSION_FIELDS.map(({ key, label, placeholder, inputmode, unit, readonly, flight }) =>
+    MISSION_FIELDS.map(({ key, label, placeholder, inputmode, unit, readonly, flight, battery }) =>
       readonly
         ? workerField(draft)
         : flight
           ? flightField(p, draft, saving)
-          : h(
+          : battery
+            ? batteryNoField(p, draft, saving)
+            : h(
             'label',
             { class: unit ? 'field unit' : 'field' },
             h('span', {}, label),
@@ -337,6 +367,41 @@ function flightField(p, draft, saving) {
     h('span', { id: 'flight-label' }, '비행시간'),
     h('div', { class: 'flight-inputs' }, part('flightMin', '분', '예: 12', FLIGHT_MIN_DIGITS), part('flightSec', '초', '예: 30', FLIGHT_SEC_DIGITS)),
     draft.flightLegacy && empty && h('small', { class: 'field-note' }, `지금 기록: ${draft.flightLegacy} — 분·초를 적으면 바뀝니다.`),
+  );
+}
+
+// 배터리 번호 칸: [  ] - [  ] 숫자 두 칸. 저장할 때 "3-4"로 합친다(battery-no.js).
+// 읽을 수 없는 옛 기록이면 칸을 비워 두고 그 글자를 안내한다(아무것도 안 적으면 옛 글자를 그대로 저장).
+function batteryNoField(p, draft, saving) {
+  const name = draft.mission;
+  const empty = !String(draft.batteryNo1 ?? '').trim() && !String(draft.batteryNo2 ?? '').trim();
+  const part = (key, which, placeholder) =>
+    h('input', {
+      type: 'text',
+      name: key,
+      value: draft[key] ?? '',
+      placeholder,
+      inputmode: 'numeric',
+      pattern: '[0-9]*',
+      maxlength: BATTERY_NO_DIGITS,
+      autocomplete: 'off',
+      disabled: saving,
+      'aria-label': `사용한 배터리 번호 ${which} 칸`,
+      'aria-invalid': draft.invalid?.[key] ? 'true' : null,
+      oninput: (e) => onMissionFieldInput(p, name, key, e),
+    });
+  return h(
+    'div',
+    { class: 'field battery-no', role: 'group', 'aria-labelledby': 'battery-no-label' },
+    h('span', { id: 'battery-no-label' }, '사용한 배터리 번호'),
+    h(
+      'div',
+      { class: 'battery-inputs' },
+      part('batteryNo1', '앞', '예: 3'),
+      h('span', { class: 'battery-sep', 'aria-hidden': 'true' }, '-'),
+      part('batteryNo2', '뒤', '예: 4'),
+    ),
+    draft.batteryLegacy && empty && h('small', { class: 'field-note' }, `지금 기록: ${draft.batteryLegacy} — 두 칸을 적으면 바뀝니다.`),
   );
 }
 
@@ -522,7 +587,7 @@ async function saveMissionDraft(id, name) {
     done: Boolean(draft.done),
     worker: draft.worker,
     flightTime: draftFlightTime(draft),
-    batteryNo: String(draft.batteryNo ?? '').trim(),
+    batteryNo: draftBatteryNo(draft),
     // "045"처럼 앞에 0을 붙여 적어도 45로 보낸다.
     batteryLeft: left ? String(Number(left)) : '',
   };
