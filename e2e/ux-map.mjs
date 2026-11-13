@@ -28,7 +28,7 @@ const mapText = `document.querySelector('#map').textContent`;
   check('지도가 없어도 목록은 그대로', v.list === 2, v);
   await b.ev(`__e2e.row('SW_01').click()`);
   await sleep(200);
-  check('지도가 없어도 상세 정보·길찾기 단추는 그대로', await b.ev(`!document.querySelector('#detail').hidden && [...document.querySelectorAll('#detail .route-actions .btn')].map(x => x.textContent).join() === '카카오맵 길찾기,카카오맵에서 보기'`));
+  check('지도가 없어도 상세 정보·길찾기 단추는 그대로', await b.ev(`!document.querySelector('#detail').hidden && [...document.querySelectorAll('#detail .route-actions .btn')].map(x => x.textContent).join() === '길찾기,카카오맵에서 보기'`));
   await b.shot('ux-map-failed-390');
   // 가짜 SDK를 심고 [지도 다시 불러오기]
   await b.ev(FAKE_KAKAO);

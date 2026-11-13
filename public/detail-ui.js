@@ -6,7 +6,8 @@ import { panToPlace } from './map-ui.js';
 import { discardMemo, flushMemo, memoDrafts, memoStatusView, memoText, onMemoInput } from './memo-ui.js';
 import { districtOf, groupHeadSelector, listItemSelector, missionBadge, placeDot } from './list-ui.js';
 import { closeMissionDialog, confirmDiscardDraft, missionDialog, missionRecord, toggleMission } from './missions-ui.js';
-import { kakaoMapViewUrl, openKakaoMapRoute } from './kakao.js';
+import { kakaoMapViewUrl } from './directions.js';
+import { closeDirectionsDialog, directionsDialogOpen, openDirections, syncDirectionsDialog } from './directions-ui.js';
 import { missionNames, missionProgress } from './mission.js';
 import * as api from './api.js';
 
@@ -17,6 +18,8 @@ const renderKeepingInput = (...args) => hooks.renderKeepingInput(...args);
 export function renderDetail() {
   const box = $('#detail');
   const p = state.places.find((x) => x.id === state.selectedId);
+  // 길찾기 창은 <body>에 따로 있어 다시 그려도 그대로다. 연 장소가 더는 고른 장소가 아닐 때만 닫는다.
+  syncDirectionsDialog(p?.id ?? null);
   box.hidden = !p;
   if (!p) {
     box.replaceChildren();
@@ -75,7 +78,8 @@ export function renderDetail() {
     h(
       'div',
       { class: 'route-actions' },
-      h('button', { type: 'button', class: 'btn primary', onclick: () => openKakaoMapRoute(p) }, '카카오맵 길찾기'),
+      // 누르면 길찾기 창(카카오맵·네이버지도·카카오내비·티맵 중 고르기). 창을 닫으면 초점이 여기로 돌아온다(directions-ui.js).
+      h('button', { type: 'button', class: 'btn primary route-open', 'aria-haspopup': 'dialog', onclick: () => openDirections(p) }, '길찾기'),
       h('a', { class: 'btn', href: kakaoMapViewUrl(p), target: '_blank', rel: 'noopener' }, '카카오맵에서 보기'),
     ),
     memoBlock,
@@ -253,10 +257,15 @@ async function removePlace(place) {
   }
 }
 
-// Esc: 미션 기록 창이 열려 있으면 그 창만 닫는다(고치던 값이 있으면 버릴지 묻고, 저장 중이면 닫지 않는다).
+// Esc: 길찾기 창이 열려 있으면 그 창만 닫는다. 미션 기록 창이 열려 있으면 그 창만 닫는다(고치던 값이 있으면 버릴지 묻고, 저장 중이면 닫지 않는다).
 // 브라우저가 모달을 스스로 닫지 않게 기본 동작은 막는다. 창이 없으면 상세 정보를 닫는다(입력 칸 안에서는 아무것도 안 한다).
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || state.selectedId === null) return;
+  if (directionsDialogOpen()) {
+    e.preventDefault();
+    closeDirectionsDialog();
+    return;
+  }
   if (state.selectedMission != null) {
     e.preventDefault();
     closeMissionDialog();

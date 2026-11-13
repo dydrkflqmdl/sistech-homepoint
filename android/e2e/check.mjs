@@ -4,7 +4,7 @@
 //
 // 사용: 에뮬레이터(또는 개발자 모드 휴대폰)를 하나 켜 둔 뒤
 //   (cd android && ./gradlew assembleDebug) && node android/e2e/check.mjs [apk 경로]
-//   ONLY=back,export node android/e2e/check.mjs   # 일부만(back, export, import, external, beforeunload, keyboard, rotate, location, offline)
+//   ONLY=back,export node android/e2e/check.mjs   # 일부만(back, export, import, external, directions, beforeunload, keyboard, rotate, location, offline)
 // 주의: 설치된 앱을 지우고 다시 깐다(앱 데이터 초기화). 다운로드 폴더의 places-*·missions-* 파일을 지운다.
 // 스크린샷은 android/e2e/shots/에 남는다(git에 올리지 않음).
 import { execFileSync, spawn } from 'node:child_process';
@@ -76,6 +76,10 @@ async function waitTop(pred, timeout = 8000) {
 }
 const ours = (t) => t.startsWith(PKG + '/');
 const bringBack = () => { adbQuiet('shell', 'monkey', '-p', PKG, '-c', 'android.intent.category.LAUNCHER', '1'); return waitTop(ours); };
+// 앱이 부른 startActivity는 시스템 로그(ActivityTaskManager "START u0 {...}")에 남는다. 열 앱이 없어 실패한 시도도 남으므로
+// "어느 앱 주소를 먼저 시도했고(pkg), 어디로 넘어갔는지(dat)"를 화면이 아니라 이 기록으로 확인한다. before는 logLines()로 미리 떠 둔 기록.
+const logLines = () => adb('logcat', '-d', '-b', 'system').split('\n');
+const startedSince = (before) => { const seen = new Set(before); return logLines().filter((l) => !seen.has(l) && l.includes('START u0')); };
 
 // ── WebView 원격 점검(CDP) ───────────────────────────────
 async function connect() {
@@ -153,6 +157,13 @@ async function prepare(c, { signedIn = true } = {}) {
 }
 
 const want = (name) => ONLY.size === 0 || ONLY.has(name);
+// 상세 정보의 [길찾기] → 앱 고르기 창. 창은 <body>에 한 번만 만들어지고, 앱을 고르면 먼저 닫힌 뒤 연다.
+const DLG = `document.querySelector('dialog.directions-dialog')`;
+const openDirectionsDialog = async () => {
+  await c.ev(`document.querySelector('#detail .route-open').click()`);
+  return c.waitFor(`${DLG}?.open === true`, 3000);
+};
+const pickApp = (id) => c.ev(`${DLG}.querySelector('[data-app="${id}"]').click()`);
 const now = new Date();
 const stamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
@@ -323,28 +334,117 @@ try {
     shot('a10-external');
     await bringBack(); await sleep(500);
     check('돌아오면 앱은 원래 화면 그대로', (await c.ev(`location.href`)) === BASE && (await c.ev(`!document.querySelector('#detail').hidden`)));
-    await c.ev(`[...document.querySelectorAll('#detail button')].find((b) => b.textContent.includes('카카오맵 길찾기')).click()`);
+    // [길찾기] → 앱 고르기 창 → [카카오맵]: 에뮬레이터에는 카카오맵 앱이 없으니 intent의 대체 주소(웹 길찾기)가 바깥 브라우저로 열린다.
+    check('[길찾기] → 앱 고르기 창이 모달로 뜬다', await openDirectionsDialog() && (await c.ev(`${DLG}.matches(':modal')`)));
+    shot('a10c-directions-dialog');
+    let log = logLines();
+    await pickApp('kakaomap');
     t = await waitTop((x) => !ours(x), 6000);
-    check('[카카오맵 길찾기] → 카카오맵 앱이 없으면 웹 길찾기를 바깥 브라우저로', /chrome|browser|kakao/i.test(t), t);
+    check('[카카오맵] → 카카오맵 앱이 없으면 웹 길찾기를 바깥 브라우저로', /chrome|browser/i.test(t), t);
+    let st = startedSince(log);
+    check('카카오맵 앱(net.daum.android.map)을 먼저 시도하고, 앱이 없어 map.kakao.com 웹 길찾기로 넘어간다',
+      st.some((l) => l.includes('dat=kakaomap://') && l.includes('pkg=net.daum.android.map')) && st.some((l) => l.includes('dat=https://map.kakao.com')), st.map((l) => l.slice(l.indexOf('START u0'))));
+    shot('a10-external-kakaomap');
     await bringBack(); await sleep(500);
-    check('길찾기 뒤 돌아와도 앱 화면 그대로', (await c.ev(`location.href`)) === BASE);
+    check('길찾기 뒤 돌아와도 앱 화면 그대로(창은 이미 닫혀 있고 상세 정보 유지)', (await c.ev(`location.href`)) === BASE && (await c.ev(`!document.querySelector('#detail').hidden && ${DLG} === null`)));
+    back(); await sleep(400);
+  }
+
+  if (want('directions')) {
+    // 길찾기 창(앱 고르기)을 앱에서 실제로 쓴다. 에뮬레이터에는 카카오맵·네이버지도·티맵 앱이 없고 외부 주소(kakaocdn)는 막혀 있다.
+    // 앱 주소는 아래를 확인한다: ① 사이트가 만든 intent 주소(패키지·대체 주소·좌표 순서) ② 시스템 로그의 실제 startActivity ③ 맨 위 화면.
+    // 실제 카카오내비·카카오맵·네이버지도·티맵 앱을 여는 것은 에뮬레이터에서 확인할 수 없다(실기기에서 확인).
+    await c.ev(`__e2e.row('APP_01').click()`); await sleep(500);
+    // 사이트가 location.href에 넣는 주소를 모아 두고, 그대로 이동도 시킨다(window.__e2eGo는 사이트가 이동 대신 부르는 자리).
+    await c.ev(`window.__go = []; window.__e2eGo = (u) => { window.__go.push(u); location.href = u; }; 0`);
+    const lastGo = async () => (await c.ev(`window.__go.at(-1) ?? ''`));
+    const fallbackOf = (u) => decodeURIComponent((u.match(/S\.browser_fallback_url=([^;]*)/) ?? [])[1] ?? '');
+    const pidBefore = adb('shell', 'pidof', PKG).trim();
+
+    // ① 창 모양과 [뒤로]
+    check('[길찾기] → 앱 고르기 창이 뜬다(제목 길찾기·장소 이름·앱 4개 모두 눌러 볼 수 있음)', await openDirectionsDialog() && (await c.ev(`(() => { const d = ${DLG};
+      const names = [...d.querySelectorAll('.route-app')].map((b) => b.querySelector('.route-app-name').textContent);
+      return d.querySelector('h3').textContent === '길찾기' && d.querySelector('.mission-dialog-place').textContent === 'APP_01'
+        && names.join() === '카카오맵,네이버지도,카카오내비,티맵' && [...d.querySelectorAll('.route-app')].every((b) => !b.disabled); })()`)));
+    shot('a10d-directions-dialog');
+    back(); await sleep(600);
+    check('[뒤로] → 길찾기 창만 닫힌다(앱은 그대로 앞에, 상세 정보 유지)',
+      ours(topActivity()) && (await c.ev(`${DLG} === null && !document.querySelector('#detail').hidden && document.querySelector('#detail-title').textContent.includes('APP_01')`)), topActivity());
+    check('창을 닫으면 초점이 [길찾기] 단추로 돌아온다', await c.ev(`document.activeElement === document.querySelector('#detail .route-open')`));
+    check('(대조) 창이 닫힌 뒤의 [뒤로]는 상세 정보를 닫는다', await (async () => { back(); await sleep(500); return c.ev(`document.querySelector('#detail').hidden`); })());
+    await c.ev(`__e2e.row('APP_01').click()`); await sleep(500);
+
+    // ② 네이버지도: 앱이 없으면 네이버 웹 길찾기
+    await openDirectionsDialog();
+    let log = logLines();
+    await pickApp('navermap');
+    let t = await waitTop((x) => !ours(x), 6000);
+    let go = await lastGo();
+    check('[네이버지도] intent 주소: 앱 com.nhn.android.nmap, 도착지 위도·경도, 대체 주소는 네이버 웹 길찾기(경도,위도 순서)',
+      /^intent:\/\/route\/car\?dlat=\d+\.\d+&dlng=\d+\.\d+&dname=APP_01/.test(go) && go.includes('package=com.nhn.android.nmap')
+      && /^https:\/\/map\.naver\.com\/p\/directions\/-\/126\.717126,37\.277767,APP_01,,\/-\/car$/.test(fallbackOf(go)), go);
+    let st = startedSince(log);
+    check('[네이버지도] 네이버 앱(com.nhn.android.nmap)을 먼저 시도하고, 앱이 없어 map.naver.com 웹 길찾기가 바깥 브라우저로 열린다',
+      /chrome|browser/i.test(t) && st.some((l) => l.includes('dat=nmap://') && l.includes('pkg=com.nhn.android.nmap')) && st.some((l) => l.includes('dat=https://map.naver.com')), { t, st: st.map((l) => l.slice(l.indexOf('START u0'))) });
+    check('[네이버지도] 앱이 꺼지지 않았다(같은 프로세스)', adb('shell', 'pidof', PKG).trim() === pidBefore);
+    shot('a10d-naver');
+    await bringBack(); await sleep(500);
+    check('[네이버지도] 뒤 돌아와도 앱 화면 그대로(창 닫힘, 상세 정보 유지)', (await c.ev(`location.href`)) === BASE && (await c.ev(`!document.querySelector('#detail').hidden && ${DLG} === null`)));
+
+    // ③ 티맵: 앱이 없으면 플레이스토어(에뮬레이터에 스토어가 없으면 브라우저)
+    await openDirectionsDialog();
+    log = logLines();
+    await pickApp('tmap');
+    t = await waitTop((x) => !ours(x), 6000);
+    go = await lastGo();
+    check('[티맵] intent 주소: 앱 com.skt.tmap.ku, 도착지(goalx=경도·goaly=위도), 대체 주소는 플레이스토어 com.skt.tmap.ku',
+      /^intent:\/\/route\?goalname=APP_01&goalx=126\.717126&goaly=37\.277767#Intent;scheme=tmap;/.test(go) && go.includes('package=com.skt.tmap.ku')
+      && fallbackOf(go) === 'https://play.google.com/store/apps/details?id=com.skt.tmap.ku', go);
+    st = startedSince(log);
+    check('[티맵] 티맵 앱(com.skt.tmap.ku)을 먼저 시도하고, 앱이 없어 play.google.com(플레이스토어 또는 브라우저)로 넘어간다',
+      !ours(t) && st.some((l) => l.includes('dat=tmap://') && l.includes('pkg=com.skt.tmap.ku')) && st.some((l) => l.includes('dat=https://play.google.com')), { t, st: st.map((l) => l.slice(l.indexOf('START u0'))) });
+    check('[티맵] 앱이 꺼지지 않았다(같은 프로세스)', adb('shell', 'pidof', PKG).trim() === pidBefore);
+    shot('a10d-tmap');
+    await bringBack(); await sleep(500);
+    check('[티맵] 뒤 돌아와도 앱 화면 그대로(창 닫힘, 상세 정보 유지)', (await c.ev(`location.href`)) === BASE && (await c.ev(`!document.querySelector('#detail').hidden && ${DLG} === null`)));
+
+    // ④ 카카오내비: 점검 환경은 kakaocdn.net을 막으므로 SDK를 못 받는다 → 창 밖 알림, 앱은 그대로
+    await openDirectionsDialog();
+    await pickApp('kakaonavi');
+    const toastMsg = (await c.waitFor(`document.querySelector('#toast').textContent.includes('카카오내비를 열지 못했습니다')`, 5000)) && await c.ev(`document.querySelector('#toast').textContent`);
+    check('[카카오내비] SDK를 못 받으면 "카카오내비를 열지 못했습니다…" 알림, 창은 닫힘', Boolean(toastMsg) && (await c.ev(`${DLG} === null`)), toastMsg);
+    shot('a10d-navi-toast');
+    check('[카카오내비] 실패해도 앱은 안 꺼지고 바깥으로 나가지도 않는다', ours(topActivity()) && adb('shell', 'pidof', PKG).trim() === pidBefore && (await c.ev(`location.href`)) === BASE);
+    // 가짜 Kakao 객체를 심으면 같은 경로로 Navi.start가 불린다(좌표 종류 wgs84, 경도=x·위도=y). 실제 카카오내비는 에뮬레이터에서 열 수 없다.
+    await c.ev(`window.__navi = []; (() => { let ready = false;
+      window.Kakao = { isInitialized: () => ready, init: (k) => { ready = true; window.__navi.push({ init: k }); }, Navi: { start: (o) => window.__navi.push({ start: o }) } }; })(); 0`);
+    await openDirectionsDialog();
+    await pickApp('kakaonavi');
+    await c.waitFor(`window.__navi.some((x) => x.start)`, 3000);
+    const navi = await c.ev(`window.__navi`);
+    check('[카카오내비] 가짜 Kakao: init(키)에 이어 Navi.start가 목적지(이름·경도 x·위도 y·wgs84)로 불린다',
+      navi[0]?.init === 'test' && JSON.stringify(navi[1]?.start) === JSON.stringify({ name: 'APP_01', x: 126.717126, y: 37.277767, coordType: 'wgs84' }), navi);
+    check('[카카오내비] 가짜 Kakao로 부른 뒤에도 앱 화면 그대로', ours(topActivity()) && (await c.ev(`!document.querySelector('#detail').hidden && ${DLG} === null`)));
+    await c.ev(`delete window.Kakao; delete window.__e2eGo; 0`);
     back(); await sleep(400);
   }
 
   if (want('beforeunload')) {
     // 저장 안 한 메모가 있으면 사이트가 beforeunload로 묻는다. 앱은 그 창(영어 "Leave this page")을 띄우지 않고 넘어가야
-    // [카카오맵 길찾기](kakaomap://)가 막히지 않는다. 창이 뜨면 페이지 JS가 멈춰 c.ev가 영영 안 돌아오므로 화면부터 본다.
+    // [길찾기] → [카카오맵](intent:)이 막히지 않는다. 창이 뜨면 페이지 JS가 멈춰 c.ev가 영영 안 돌아오므로 화면부터 본다.
     await c.ev(`__e2e.row('APP_01').click()`); await sleep(500);
     await c.ev(`(() => {
       const memo = document.querySelector('#memo-input');
       memo.focus(); memo.value = '앱 점검 메모 ' + Date.now(); memo.dispatchEvent(new Event('input', { bubbles: true }));
       // 누르기는 이 평가가 끝난 뒤에 한다. 창이 뜨면 누르기 안에서 JS가 멈춰 평가가 안 돌아오기 때문이다.
-      const go = [...document.querySelectorAll('#detail button')].find((b) => b.textContent.includes('카카오맵 길찾기'));
-      setTimeout(() => go.click(), 0);
+      setTimeout(() => {
+        document.querySelector('#detail .route-open').click();
+        document.querySelector('dialog.directions-dialog [data-app="kakaomap"]').click();
+      }, 0);
     })()`);
     const leaveDialog = (n) => n['resource-id'] === 'android:id/message' || /leave|navigate|나가/i.test(n.text ?? '');
     const stuck = await waitUi(leaveDialog, 3000);
-    check('저장 안 한 메모가 있어도 [카카오맵 길찾기]에 "떠날까요?" 창이 뜨지 않는다', !stuck, stuck?.text);
+    check('저장 안 한 메모가 있어도 [길찾기] → [카카오맵]에 "떠날까요?" 창이 뜨지 않는다', !stuck, stuck?.text);
     if (stuck) {
       shot('a10b-beforeunload');
       back(); await sleep(600); // 창을 닫아야 페이지 JS가 다시 돈다.

@@ -32,6 +32,8 @@ const scripts = [
   'ux-locate',
   // 계정 권한 3단계(관리자·직원·외주)
   'ux-roles',
+  // 길찾기 창(카카오맵·네이버지도·카카오내비·티맵)
+  'ux-directions',
 ];
 for (const f of fs.readdirSync(RESULTS)) if (f.startsWith('rpc-')) fs.rmSync(path.join(RESULTS, f));
 const rows = [];

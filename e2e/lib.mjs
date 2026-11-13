@@ -27,8 +27,8 @@ for (const d of [SHOTS, RESULTS, FIXTURES]) fs.mkdirSync(d, { recursive: true })
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 공용 지도 서버 보호 + 진짜 supabase-js 차단
-export const BLOCKED = ['*dapi.kakao.com*', '*daumcdn.net*', '*openstreetmap.org*', '*cartocdn.com*', '*arcgisonline.com*', '*cdn.jsdelivr.net*'];
+// 공용 지도 서버 보호 + 진짜 supabase-js·카카오내비 SDK(kakaocdn) 차단
+export const BLOCKED = ['*dapi.kakao.com*', '*daumcdn.net*', '*openstreetmap.org*', '*cartocdn.com*', '*arcgisonline.com*', '*cdn.jsdelivr.net*', '*kakaocdn.net*'];
 
 export function fakeSupabaseSource() {
   const mission = fs.readFileSync(path.join(PROJECT, 'public/mission.js'), 'utf-8').replace(/^export /gm, '');
