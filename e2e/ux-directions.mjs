@@ -16,10 +16,12 @@ const places = [
 ];
 const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 14; SM-S911N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36';
 const IOS_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+const TABLET_PC_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/31.0 Chrome/148.0.0.0 Safari/537.36';
+// 진짜 SDK(2.8.5)처럼 Kakao.Navi는 Kakao.init(키)를 부른 뒤에야 생긴다(불러온 직후에는 init·isInitialized만 있다).
 const FAKE_KAKAO = `(() => {
   window.__navi = [];
   let ready = false;
-  window.Kakao = { isInitialized: () => ready, init: (k) => { ready = true; window.__navi.push({ init: k }); }, Navi: { start: (o) => window.__navi.push({ start: o }) } };
+  window.Kakao = { isInitialized: () => ready, init: (k) => { ready = true; window.__navi.push({ init: k }); window.Kakao.Navi = { start: (o) => window.__navi.push({ start: o }) }; } };
 })();`;
 // 실제 이동·새 탭을 막고 주소만 모은다.
 const CATCH = `window.__go = []; window.__opens = []; window.__e2eGo = (u) => window.__go.push(u); window.open = (...a) => { window.__opens.push(a); return null; }; 0`;
@@ -220,6 +222,22 @@ check('iOS: 카카오내비·티맵 모두 켜짐, PC 안내 없음, 단추 4개
 check('콘솔 예외 0건(iOS)', b.errors.length === 0, b.errors);
 await b.close();
 
+// ══ 4-2. 갤럭시 탭 PC 버전: UA에 Android가 없고(X11; Linux) 터치만 있어도 안드로이드로 봄 ══
+b = await launch('ux-directions-tablet', { viewport: [800, 1280, false] });
+await b.send('Emulation.setUserAgentOverride', { userAgent: TABLET_PC_UA });
+await b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+await prepare(b, { places });
+await openPlace(b, 'SW_01');
+await reset(b);
+v = await b.ev(state);
+check('갤럭시 탭 PC 버전(UA에 Android 없음·터치 5): 단추 4개 모두 켜짐, "휴대폰에서만" 안내 줄 없음', v.apps.join() === APPS && v.disabled.join() === 'false,false,false,false' && v.note === null, v);
+await clickApp(b, 'kakaomap'); await waitCount(b, '__go', 1);
+c = await caught(b);
+check('갤럭시 탭 PC 버전 카카오맵: 새 탭이 아니라 intent://로 시작하고 package=net.daum.android.map인 주소로 이동',
+  c.go.length === 1 && c.go[0].startsWith('intent://') && c.go[0].includes('package=net.daum.android.map') && c.opens.length === 0, c);
+check('콘솔 예외 0건(갤럭시 탭 PC 버전)', b.errors.length === 0, b.errors);
+await b.close();
+
 // ══ 5. 카카오내비 SDK: 로딩 중에 눌러도 끝나는 대로 호출 / 실패하면 알림 ══
 // 5-1 로딩 중(요청을 붙잡아 둠): kakaocdn 차단을 풀고 Fetch로 응답을 보류한다. 진짜 서버에는 아무것도 보내지 않는다.
 b = await launch('ux-directions-sdk', { viewport: [390, 844, true] });
@@ -252,6 +270,52 @@ await b.send('Fetch.failRequest', { requestId: held[0].id, errorReason: 'Failed'
 c = await caught(b);
 check('끝난 뒤 늦게 온 요청 실패는 알림을 띄우지 않음', c.toast === '' && c.navi.length === 2, c);
 check('콘솔 예외 0건(SDK 로딩)', b.errors.length === 0, b.errors);
+await b.close();
+
+// 5-3 갤럭시 탭 PC 버전: SDK를 불러오는 동안만 navigator.userAgent가 안드로이드로 보이고, 끝나면 원래대로 돌아옴
+// 진짜 SDK 본문은 integrity 때문에 바꿔 채울 수 없으므로, 요청은 붙잡아 둔 채(그동안 userAgent를 확인) 가짜 SDK 본문을 "SDK가 실행되는 순간" 그대로 실행한 뒤 load를 알린다.
+const UA_DESC = `(() => { const d = Object.getOwnPropertyDescriptor(navigator, 'userAgent'); return d === undefined ? null : 'own'; })()`;
+const FAKE_SDK_BODY = `${FAKE_KAKAO}; window.__sdkUa = navigator.userAgent; 0`;
+b = await launch('ux-directions-tablet-sdk', { viewport: [800, 1280, false] });
+await b.send('Emulation.setUserAgentOverride', { userAgent: TABLET_PC_UA });
+await b.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+await b.send('Network.setBlockedURLs', { urls: BLOCKED.filter((u) => !/kakaocdn/.test(u)) });
+await b.send('Fetch.enable', { patterns: [{ urlPattern: '*kakaocdn.net*', requestStage: 'Request' }] });
+const heldT = [];
+b.listeners.push((m) => { if (m.method === 'Fetch.requestPaused') heldT.push({ id: m.params.requestId, url: m.params.request.url }); });
+await prepare(b, { places });
+const keyT = await b.ev(`window.APP_CONFIG.kakaoJsKey`);
+await openPlace(b, 'SW_01');
+await reset(b);
+await b.waitFor(`!!document.getElementById('kakao-navi-sdk')`, 3000).catch(() => {});
+check('갤럭시 탭 PC 버전: 장소 상세를 처음 그리면 SDK 요청이 한 번 나감(미리 불러오기)', heldT.length === 1 && heldT[0].url === 'https://t1.kakaocdn.net/kakao_js_sdk/2.8.5/kakao.min.js', heldT);
+const during = await b.ev(`({ ua: navigator.userAgent, own: ${UA_DESC} })`);
+check('SDK를 불러오는 동안 navigator.userAgent에 Android가 들어 있음', /Android/.test(during.ua) && /SamsungBrowser\/31\.0/.test(during.ua) && during.own === 'own', during);
+await b.ev(`${FAKE_SDK_BODY}; document.getElementById('kakao-navi-sdk')?.dispatchEvent(new Event('load')); 0`);
+const after = await b.ev(`({ sdkUa: window.__sdkUa, ua: navigator.userAgent, own: ${UA_DESC} })`);
+check('SDK가 실행된 순간의 userAgent에 Android·SamsungBrowser가 있음', /Android/.test(after.sdkUa) && /SamsungBrowser/.test(after.sdkUa), after);
+check('불러온 뒤 navigator.userAgent는 원래 PC 버전 UA 그대로, 덮어쓴 속성(own descriptor)은 없음', after.ua === TABLET_PC_UA && after.own === null, after);
+await clickApp(b, 'kakaonavi'); await b.waitFor(`window.__navi?.some((x) => 'start' in x)`, 3000);
+c = await caught(b);
+check('[카카오내비]: 가짜 Navi.start가 wgs84 인자로 불림',
+  JSON.stringify(c.navi) === JSON.stringify([{ init: keyT }, { start: { name: 'SW_01', x: 126.479826, y: 36.516667, coordType: 'wgs84' } }]), c.navi);
+await b.send('Fetch.failRequest', { requestId: heldT[0].id, errorReason: 'Failed' }); await sleep(300);
+check('늦게 온 요청 실패 뒤에도 userAgent는 원래대로', (await b.ev(`navigator.userAgent`)) === TABLET_PC_UA && (await b.ev(UA_DESC)) === null);
+check('콘솔 예외 0건(갤럭시 탭 SDK)', b.errors.length === 0, b.errors);
+await b.close();
+
+// 5-4 안드로이드 휴대폰: 가리지 않음(SDK를 불러오는 동안에도 own userAgent 없음)
+b = await launch('ux-directions-android-sdk', { viewport: [390, 844, true] });
+await b.send('Emulation.setUserAgentOverride', { userAgent: ANDROID_UA });
+await b.send('Network.setBlockedURLs', { urls: BLOCKED.filter((u) => !/kakaocdn/.test(u)) });
+await b.send('Fetch.enable', { patterns: [{ urlPattern: '*kakaocdn.net*', requestStage: 'Request' }] });
+const heldA = [];
+b.listeners.push((m) => { if (m.method === 'Fetch.requestPaused') heldA.push({ id: m.params.requestId, url: m.params.request.url }); });
+await prepare(b, { places });
+await openPlace(b, 'SW_01');
+await b.waitFor(`!!document.getElementById('kakao-navi-sdk')`, 3000).catch(() => {});
+check('안드로이드 휴대폰: SDK를 불러오는 동안에도 navigator.userAgent를 가리지 않음(own descriptor 없음)', heldA.length === 1 && (await b.ev(UA_DESC)) === null && (await b.ev(`navigator.userAgent`)) === ANDROID_UA, heldA);
+await b.send('Fetch.failRequest', { requestId: heldA[0].id, errorReason: 'Failed' }); await sleep(200);
 await b.close();
 
 // 5-2 SDK를 못 받음(외부 주소 차단): 눌러도 알림, 다시 눌러 보면 다시 받아 봄

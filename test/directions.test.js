@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  androidIntentUrl, kakaoMapAppUrl, kakaoMapRouteUrl, naverMapAppUrl, naverMapWebUrl, needsPhone, platformOf, routeTarget, ROUTE_APPS,
+  androidIntentUrl, kakaoMapAppUrl, kakaoMapRouteUrl, naverMapAppUrl, naverMapWebUrl, naviSdkUserAgent, needsPhone, platformOf, routeTarget, ROUTE_APPS,
   tmapAppUrl, TMAP_APPSTORE_URL, TMAP_PLAY_URL,
 } from '../public/directions.js';
 
@@ -17,6 +17,14 @@ test('기기 구분: 안드로이드·iOS·iPadOS(터치 Macintosh)·PC', () => 
   assert.equal(platformOf('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 5), 'ios');
   assert.equal(platformOf('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)', 0), 'pc');
   assert.equal(platformOf('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126', 0), 'pc');
+  // PC 버전 보기로 열린 안드로이드 태블릿(UA에 Android 없음)은 터치로 구분한다.
+  const LINUX = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36';
+  assert.equal(platformOf('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/31.0 Chrome/148.0.0.0 Safari/537.36', 5), 'android');
+  assert.equal(platformOf(LINUX, 10), 'android');
+  assert.equal(platformOf(LINUX, 0), 'pc');
+  assert.equal(platformOf('Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36', 10), 'pc');
+  assert.equal(platformOf('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36', 10), 'pc');
+  assert.equal(platformOf('Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36', 5), 'android');
 });
 
 test('카카오맵: 앱은 위도,경도 순서·이름 없음·자동차, 웹은 이름,위도,경도', () => {
@@ -106,4 +114,14 @@ test('카카오내비는 휴대폰에서 어느 기기든 SDK 호출(navi)', () 
 test('앱 목록 순서와 이름', () => {
   assert.deepEqual(ROUTE_APPS.map((a) => a.label), ['카카오맵', '네이버지도', '카카오내비', '티맵']);
   assert.throws(() => routeTarget('nope', place, { platform: 'android', origin: ORIGIN }));
+});
+
+test('naviSdkUserAgent: PC 버전 태블릿에만 SDK용 안드로이드 UA를 돌려준다', () => {
+  const SAMSUNG_PC = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/31.0 Chrome/148.0.0.0 Safari/537.36';
+  assert.equal(naviSdkUserAgent(SAMSUNG_PC, 'android'),
+    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/31.0 Chrome/148.0.0.0 Safari/537.36');
+  assert.equal(naviSdkUserAgent('Mozilla/5.0 (Linux; Android 14; SM-S911N) Chrome/126 Mobile', 'android'), null);
+  assert.equal(naviSdkUserAgent(SAMSUNG_PC, 'pc'), null);
+  assert.equal(naviSdkUserAgent(SAMSUNG_PC, 'ios'), null);
+  assert.match(naviSdkUserAgent('Linux touch thing', 'android'), /Android/);
 });

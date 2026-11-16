@@ -1,10 +1,14 @@
 // 길찾기 링크들: 카카오맵·네이버지도·카카오내비·티맵. 링크를 만드는 함수는 순수 함수(화면을 모른다)라 test/directions.test.js가 확인한다.
 // 여는 함수(openRoute)만 브라우저(location·window.open)와 카카오 JavaScript SDK를 쓴다.
 
-// 어떤 기기인지: 'android' | 'ios' | 'pc'. iPadOS는 데스크톱 Safari로 자신을 소개하므로 터치 지원 여부로 구분한다.
+// 어떤 기기인지: 'android' | 'ios' | 'pc'. 터치 지원 여부(touchPoints > 1)로 PC인 척하는 태블릿을 가려낸다.
+// - iPadOS는 데스크톱 Safari(Macintosh)로 자신을 소개한다.
+// - 갤럭시 탭의 삼성 인터넷·태블릿용 크롬은 기본값이 "PC 버전 보기"라 Android 글자 없이 리눅스 PC(X11; Linux x86_64)로 소개한다.
+// 터치가 없는 진짜 리눅스 PC, Linux 글자가 없는 크롬북(CrOS), 윈도 터치 노트북은 그대로 'pc'다.
 export function platformOf(ua = navigator.userAgent, touchPoints = navigator.maxTouchPoints) {
   if (/Android/i.test(ua)) return 'android';
   if (/iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && touchPoints > 1)) return 'ios';
+  if (/Linux/.test(ua) && touchPoints > 1) return 'android';
   return 'pc';
 }
 
@@ -90,10 +94,47 @@ export const NAVI_SDK_INTEGRITY = 'sha384-v6JKY3z4FUkWq21oZDHZe74YvuPk/WUrVLrDHT
 const NAVI_SDK_TIMEOUT_MS = 15000;
 let naviSdk = null;
 
+// 카카오 SDK에 보여 줄 User-Agent. 가릴 필요가 없으면 null.
+export function naviSdkUserAgent(ua, platform) {
+  if (platform !== 'android' || /Android/i.test(ua)) return null;
+  const masked = ua.replace(/\([^)]*Linux[^)]*\)/, '(Linux; Android 10; K)');
+  return /Android/.test(masked) ? masked : `${ua} Android`;
+}
+
+// SDK(2.8.5)는 스크립트가 실행되는 순간 한 번만 navigator.userAgent로 기기를 정하고, Android 글자가 없으면 Navi.start가 오류도 이동도 없이 조용히 아무것도 안 한다.
+// "PC 버전 보기"로 열린 안드로이드 태블릿(platformOf가 터치로 android로 본 경우)은 UA에 Android가 없으므로, SDK를 불러오는 동안만 userAgent를 안드로이드처럼 보이게 한다.
+// SDK 버전을 올리면 이 전제(불러올 때 한 번만 읽음)를 다시 확인해야 한다.
+// 되돌리기는 script의 onload·onerror에서만 한다(시간 초과로 떼어 낸 script도 늦게 실행될 수 있어, 그때 가려져 있지 않으면 SDK가 PC로 굳는다).
+// 가려진 동안에는 navigator.userAgent가 가짜 값이라 새로 판단하지 않고 개수만 올리며, 0이 될 때만 되돌린다.
+let uaMasks = 0;
+function maskUserAgentForSdk() {
+  if (uaMasks === 0) {
+    const fake = naviSdkUserAgent(navigator.userAgent, platformOf());
+    if (!fake) return () => {};
+    try {
+      Object.defineProperty(navigator, 'userAgent', { configurable: true, get: () => fake });
+    } catch {
+      return () => {}; // 못 가리면 전처럼 그대로 불러온다
+    }
+  }
+  uaMasks += 1;
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    uaMasks -= 1;
+    if (uaMasks === 0) delete navigator.userAgent;
+  };
+}
+
+// SDK를 불러왔는지. 진짜 SDK는 불러온 직후에는 init·isInitialized 같은 함수만 있고, Kakao.Navi는 Kakao.init(키)를 부른 뒤에야 생긴다.
+// 그래서 Navi가 아니라 init이 있는지로 본다(Navi로 보면 진짜 SDK는 받아 놓고도 늘 실패로 처리된다).
+const naviSdkLoaded = () => typeof window.Kakao?.init === 'function' && typeof window.Kakao?.isInitialized === 'function';
+
 // SDK를 한 번만 불러온다. 실패하면 다음에 눌렀을 때 다시 받도록 비워 둔다.
 // 자동 점검은 가짜 window.Kakao를 먼저 심어 두므로, 이미 있으면 진짜를 불러오지 않는다.
 function loadNaviSdk() {
-  if (window.Kakao?.Navi) return Promise.resolve(window.Kakao);
+  if (naviSdkLoaded()) return Promise.resolve(window.Kakao);
   if (naviSdk) return naviSdk;
   naviSdk = new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout')), NAVI_SDK_TIMEOUT_MS);
@@ -103,12 +144,15 @@ function loadNaviSdk() {
     script.src = NAVI_SDK_URL;
     script.integrity = NAVI_SDK_INTEGRITY;
     script.crossOrigin = 'anonymous';
+    const restoreUserAgent = maskUserAgentForSdk();
     script.onload = () => {
+      restoreUserAgent();
       clearTimeout(timer);
-      if (window.Kakao?.Navi) resolve(window.Kakao);
-      else reject(new Error('no Kakao.Navi'));
+      if (naviSdkLoaded()) resolve(window.Kakao);
+      else reject(new Error('no Kakao SDK'));
     };
     script.onerror = () => {
+      restoreUserAgent();
       clearTimeout(timer);
       reject(new Error('load error'));
     };
@@ -130,6 +174,7 @@ export async function startKakaoNavi(place, key) {
   if (!key) throw new Error('카카오 JavaScript 키가 없습니다');
   const Kakao = await loadNaviSdk();
   if (!Kakao.isInitialized()) Kakao.init(key);
+  if (!Kakao.Navi) throw new Error('no Kakao.Navi');
   Kakao.Navi.start({ name: String(place.name).trim() || '목적지', x: Number(place.lng), y: Number(place.lat), coordType: 'wgs84' });
 }
 
