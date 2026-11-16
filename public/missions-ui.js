@@ -17,18 +17,19 @@ export const missionRecord = (p, name) =>
   p.missions?.find((m) => m.mission === name) ?? { mission: name, done: false, worker: '', flightTime: '', batteryNo: '', batteryLeft: '' };
 
 // '이름'(worker)은 고칠 수 없다(readonly): 늘 지금 로그인한 사람의 표시 아이디로 기록한다.
-// '비행시간'은 분·초 두 칸(flightMin·flightSec)으로 받아 "12분 30초"로 합쳐 저장한다(flight-time.js).
 // '사용한 배터리 번호'는 숫자 두 칸(batteryNo1·batteryNo2)으로 받아 "3-4"로 합쳐 저장한다(battery-no.js).
+// '비행시간'은 분·초 두 칸(flightMin·flightSec)으로 받아 "12분 30초"로 합쳐 저장한다(flight-time.js).
+// 화면(입력 창·보기 창)에 나오는 순서다: 이름 → 사용한 배터리 번호 → 비행시간 → 남은 용량.
 const MISSION_FIELDS = [
   { key: 'worker', label: '이름', placeholder: '작업자', inputmode: 'text', readonly: true },
-  { key: 'flightTime', label: '비행시간', flight: true },
   { key: 'batteryNo', label: '사용한 배터리 번호', battery: true },
+  { key: 'flightTime', label: '비행시간', flight: true },
   // 숫자(0~100)만 받고 %는 칸 옆에 붙여 보여 준다. 값에는 %를 넣지 않는다.
   { key: 'batteryLeft', label: '마지막 배터리 남은 용량', placeholder: '예: 45', inputmode: 'numeric', unit: '%' },
 ];
 
 // 화면의 입력 칸 이름(순서대로). 막힌 칸 표시·첫 막힌 칸으로 초점 옮기기에 쓴다.
-const MISSION_INPUTS = ['worker', 'flightMin', 'flightSec', 'batteryNo1', 'batteryNo2', 'batteryLeft'];
+const MISSION_INPUTS = ['worker', 'batteryNo1', 'batteryNo2', 'flightMin', 'flightSec', 'batteryLeft'];
 // 숫자만 받는 칸(숫자 아닌 글자는 치는 대로 지운다).
 const DIGIT_INPUTS = new Set(['flightMin', 'flightSec', 'batteryNo1', 'batteryNo2', 'batteryLeft']);
 
@@ -134,10 +135,10 @@ export function confirmDiscardDraft() {
   return true;
 }
 
-// 기록을 한 줄로: "완료 · 홍길동 · 12분 · 3 · 45%". 빈 칸은 —.
+// 기록을 한 줄로(화면 칸 순서대로): "완료 · 홍길동 · 3-4 · 12분 · 45%". 빈 칸은 —.
 function missionSummaryLine(r) {
   const show = (v) => (String(v ?? '').trim() ? String(v).trim() : '—');
-  return [r.done ? '완료' : '미완료', show(r.worker), show(r.flightTime), show(r.batteryNo), show(batteryLeftText(r.batteryLeft))].join(' · ');
+  return [r.done ? '완료' : '미완료', show(r.worker), show(r.batteryNo), show(r.flightTime), show(batteryLeftText(r.batteryLeft))].join(' · ');
 }
 
 // 입력할 때마다 state에만 적는다. 서버에는 [저장]을 눌러야 보낸다.
@@ -220,8 +221,8 @@ function validateMissionDraft(draft) {
   if (left && !(/^\d+$/.test(left) && Number(left) <= 100)) invalid.batteryLeft = 'range';
   const reasons = Object.values(invalid);
   const ranges = [
-    (invalid.flightMin === 'range' || invalid.flightSec === 'range') && FLIGHT_MESSAGE,
     (invalid.batteryNo1 === 'range' || invalid.batteryNo2 === 'range') && BATTERY_NO_MESSAGE,
+    (invalid.flightMin === 'range' || invalid.flightSec === 'range') && FLIGHT_MESSAGE,
     invalid.batteryLeft === 'range' && BATTERY_LEFT_MESSAGE,
   ].filter(Boolean);
   const message = reasons.includes('required') ? MISSION_REQUIRED_MESSAGE : ranges.length ? ranges.join(' ') : null;

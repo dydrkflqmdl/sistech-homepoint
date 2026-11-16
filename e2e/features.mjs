@@ -85,7 +85,7 @@ check('정상 저장 → 창 닫힘·알림·초점은 M_02 미션 버튼', !v.o
 // 저장값은 미션 버튼을 다시 눌러 보기 화면에서 본다(초점은 [수정]).
 await openMission('M_02'); await sleep(150);
 v = await ev(`({ view: !!document.querySelector('#detail .mission-view[data-mission="M_02"]'), summary: [...document.querySelectorAll('#detail .mission-view dd')].map(d => d.textContent).join('|'), active: document.activeElement?.textContent })`);
-check('다시 열면 보기 모드·저장값·[수정]에 초점', v.view && v.summary === '미완료|admin@sistech.test|10분|2-1|45%' && v.active === '수정', v);
+check('다시 열면 보기 모드·저장값·[수정]에 초점', v.view && v.summary === '미완료|admin@sistech.test|2-1|10분|45%' && v.active === '수정', v);
 check('DB 기록 version 1', (await record('SW_01', 'M_02'))?.version === 1);
 await ev(`document.querySelector('#detail .mission-view[data-mission="M_02"] .btn.edit').click()`); await sleep(100);
 await fill({ done: true });
@@ -103,7 +103,7 @@ await clearToast();
 await submit(); await waitIdle(); await sleep(150);
 v = await ev(`({ conflict: document.querySelector('#detail .mission-conflict-latest')?.textContent, message: document.querySelector('#detail .mission-conflict-message')?.textContent, role: document.querySelector('#detail .mission-conflict')?.getAttribute('role'),
   form: !!document.querySelector('#detail .mission-form[data-mission="M_02"]'), flight: document.querySelector('#detail .mission-form input[name=flightMin]')?.value, done: document.querySelector('#detail .mission-form input[name=done]')?.checked, toast: document.querySelector('#toast').textContent })`);
-check('충돌 → 폼 안 고정 안내에 최신값 "미완료 · 다른사람 · 5분 · 9 · 10%"', v.conflict === '최신 저장값: 미완료 · 다른사람 · 5분 · 9 · 10%', v);
+check('충돌 → 폼 안 고정 안내에 최신값 "미완료 · 다른사람 · 9 · 5분 · 10%"', v.conflict === '최신 저장값: 미완료 · 다른사람 · 9 · 5분 · 10%', v);
 check('충돌 → 입력 화면 유지·적던 값 보존·폼 안 안내(role=alert, 알림 칸은 쓰지 않음)', v.form && v.flight === '33' && v.done === true && v.message === '다른 기기에서 먼저 저장된 기록이 있습니다. 내가 적은 값은 그대로 두었습니다.' && v.role === 'alert' && !/다른 기기/.test(v.toast), v);
 check('충돌 → 목록 진행도는 최신 기록 기준(완료 풀림 → 1/3)', await ev(`/미션 1\\/3/.test(document.querySelector('#detail .detail-head .badge').textContent)`));
 await submit(); await waitIdle(); await sleep(150);
@@ -126,7 +126,7 @@ await clearToast();
 let n = (await saveCalls()).length;
 await submit(); await sleep(200);
 v = { notice: await noticeText(), toast: await toastText(), invalid: await ev(`[...document.querySelectorAll('#detail .mission-form [aria-invalid=true]')].map(i => i.name).join()`) };
-check('완료 + 빈 칸 → 화면에서 막고 창 안 안내(토스트 없음), 빨간 칸 분·초·배터리 번호 앞·뒤·남은 용량, save_mission 호출 없음', v.notice === REQUIRED && v.toast === null && (await saveCalls()).length === n && v.invalid === 'flightMin,flightSec,batteryNo1,batteryNo2,batteryLeft', v);
+check('완료 + 빈 칸 → 화면에서 막고 창 안 안내(토스트 없음), 빨간 칸 배터리 번호 앞·뒤·분·초·남은 용량, save_mission 호출 없음', v.notice === REQUIRED && v.toast === null && (await saveCalls()).length === n && v.invalid === 'batteryNo1,batteryNo2,flightMin,flightSec,batteryLeft', v);
 await fill({ done: false, batteryLeft: '150' });
 await clearToast(); await submit(); await sleep(200);
 check('남은 용량 150 → 창 안에 "0~100 사이 숫자" 안내, 호출 없음', (await noticeText()) === '마지막 배터리 남은 용량은 0~100 사이 숫자만 적어 주세요.' && (await toastText()) === null && (await saveCalls()).length === n, await noticeText());
@@ -191,7 +191,7 @@ check('같은 미션 기록이 원격으로 바뀌어도 적던 초안은 덮이
 console.log('관찰: 같은 미션 원격 변경 직후 즉시 안내 =', JSON.stringify({ conflict: v.conflict, toast: v.toast }));
 await submit(); await waitIdle(); await sleep(150);
 v = await ev(`({ conflict: document.querySelector('#detail .mission-conflict-latest')?.textContent ?? null, message: document.querySelector('#detail .mission-conflict-message')?.textContent ?? null, value: document.querySelector('#detail .mission-form input[name=batteryNo1]')?.value, value2: document.querySelector('#detail .mission-form input[name=batteryNo2]')?.value })`);
-check('그 상태로 저장 → 폼 안 충돌 안내(최신값 "원격")·초안 유지', v.conflict === '최신 저장값: 미완료 · 원격 · 3분 · 7 · 30%' && /다른 기기에서 먼저 저장된 기록/.test(v.message ?? '') && v.value === '123' && v.value2 === '45', v);
+check('그 상태로 저장 → 폼 안 충돌 안내(최신값 "원격")·초안 유지', v.conflict === '최신 저장값: 미완료 · 원격 · 7 · 3분 · 30%' && /다른 기기에서 먼저 저장된 기록/.test(v.message ?? '') && v.value === '123' && v.value2 === '45', v);
 // 미션명이 바뀌어 고른 미션이 사라짐 → 입력 칸 닫힘
 await ev(`__fake.remoteChange((db) => { db.places.find(p => p.id === 1).mission = 'Z_01'; })`);
 await sleep(600);

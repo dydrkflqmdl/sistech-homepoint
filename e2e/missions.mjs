@@ -84,8 +84,8 @@ const editorInfo = await evaluate(`(() => {
 check('선택한 미션 aria-current=true', editorInfo.current === 'true', JSON.stringify(editorInfo.current));
 check('편집 폼이 선택한 미션 바로 아래', editorInfo.nextIsEditor);
 check('미션 기록 창(모달)이 열림: 제목 미션명·장소명, 초점 완료 체크', editorInfo.dialogOpen && editorInfo.title === 'Q1_A_TA_SW__01_01' && editorInfo.place === 'SW_01' && editorInfo.active === 'done', JSON.stringify([editorInfo.dialogOpen, editorInfo.title, editorInfo.place, editorInfo.active]));
-// 비행시간 분·초 두 칸, 배터리 번호 두 칸이라 글자 칸은 이름·분·초·배터리 번호 앞·뒤·용량 6개다.
-check('완료 체크박스 + 입력 6개(비행시간 분·초, 배터리 번호 앞·뒤 두 칸씩)', editorInfo.hasCheckbox && editorInfo.textInputs === 6 && editorInfo.inputNames === 'worker,flightMin,flightSec,batteryNo1,batteryNo2,batteryLeft', `inputs=${editorInfo.inputNames}`);
+// 배터리 번호 두 칸, 비행시간 분·초 두 칸이라 글자 칸은 이름·배터리 번호 앞·뒤·분·초·용량 6개다(화면 순서).
+check('완료 체크박스 + 입력 6개(배터리 번호 앞·뒤, 비행시간 분·초 두 칸씩, 배터리 번호가 비행시간보다 위)', editorInfo.hasCheckbox && editorInfo.textInputs === 6 && editorInfo.inputNames === 'worker,batteryNo1,batteryNo2,flightMin,flightSec,batteryLeft', `inputs=${editorInfo.inputNames}`);
 check('새 미션은 편집 모드 + 저장/취소 버튼', editorInfo.saveBtn === '저장' && editorInfo.cancelBtn === '취소', JSON.stringify([editorInfo.saveBtn, editorInfo.cancelBtn]));
 check('라벨 한국어(이름/비행시간/배터리/용량)', /이름/.test(editorInfo.labels) && /비행시간/.test(editorInfo.labels) && /배터리/.test(editorInfo.labels) && /용량/.test(editorInfo.labels), editorInfo.labels);
 await shot('phone-editor');
@@ -118,9 +118,9 @@ const blocked = await evaluate(`(() => ({ toast: document.querySelector('#toast'
   notice: (() => { const n = document.querySelector('#detail .mission-editor .mission-form-notice'); return n && !n.hidden ? n.textContent : null; })(), active: document.activeElement?.name,
   invalid: [...document.querySelectorAll('#detail .mission-editor input[aria-invalid="true"]')].map(i => i.name), stillEdit: !!document.querySelector('#detail .mission-editor form.mission-form'),
   worker: document.querySelector('#detail .mission-editor input[name="worker"]')?.value }))()`);
-// 이름 칸은 로그인 아이디(이 계정은 login_id가 없어 이메일)로 미리 채워져 있으므로 빈 칸은 나머지(비행시간 분·초, 배터리 번호 앞·뒤, 남은 용량)다.
+// 이름 칸은 로그인 아이디(이 계정은 login_id가 없어 이메일)로 미리 채워져 있으므로 빈 칸은 나머지(배터리 번호 앞·뒤, 비행시간 분·초, 남은 용량)다.
 // 막힌 까닭은 알림(토스트)이 아니라 창 안 안내(.mission-form-notice)로 보이고, 초점은 첫 빨간 칸(분)으로 간다.
-check('완료 체크 + 빈 칸이면 저장 차단(창 안 안내·빨간 칸 5개·첫 칸 초점·편집 유지, 토스트 없음, 이름은 로그인 아이디로 고정)', /모두 적어야/.test(blocked.notice ?? '') && !(blocked.hidden === false && /모두 적어야/.test(blocked.toast ?? '')) && blocked.invalid.join() === 'flightMin,flightSec,batteryNo1,batteryNo2,batteryLeft' && blocked.active === 'flightMin' && blocked.worker === 'admin@sistech.test' && blocked.stillEdit, JSON.stringify(blocked));
+check('완료 체크 + 빈 칸이면 저장 차단(창 안 안내·빨간 칸 5개·첫 칸 초점·편집 유지, 토스트 없음, 이름은 로그인 아이디로 고정)', /모두 적어야/.test(blocked.notice ?? '') && !(blocked.hidden === false && /모두 적어야/.test(blocked.toast ?? '')) && blocked.invalid.join() === 'batteryNo1,batteryNo2,flightMin,flightSec,batteryLeft' && blocked.active === 'batteryNo1' && blocked.worker === 'admin@sistech.test' && blocked.stillEdit, JSON.stringify(blocked));
 const blockedApi = await store();
 check('차단 시 서버에 기록 없음', (blockedApi.find((p) => p.name === 'SW_01')?.missions ?? []).length === 0);
 // 이름 칸은 읽기 전용: 값을 바꾸려 해도 로그인 아이디로 남는다.

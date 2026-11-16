@@ -60,7 +60,7 @@ await ev(`${form('M_01')}.querySelector('button[type=submit]').click()`);
 await b.waitFor(dialogClosed, 2000); // 저장하면 창이 닫힘
 await sleep(1100); // 옛 결과(내 저장 전 스냅숏)가 도착한 뒤
 await ev(`document.querySelector('#detail .mission-item[data-mission="M_01"]').click()`); await sleep(150); // 다시 열어 보기 화면 확인
-v = await ev(`({ view: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), battery: document.querySelector('#detail .mission-view[data-mission="M_01"] dd:nth-of-type(4)')?.textContent })`);
+v = await ev(`({ view: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), battery: document.querySelector('#detail .mission-view[data-mission="M_01"] dd:nth-of-type(3)')?.textContent })`); // 완료·이름 다음 세 번째가 배터리 번호
 check('내 저장 전에 시작한 받기 결과가 늦게 와도 방금 저장한 기록(보기 화면·배터리 4-6)이 되돌아가지 않음', v.view && v.battery === '4-6', v);
 await b.waitFor(`document.querySelector('#detail .mission-item[data-mission="M_02"]')?.classList.contains('done')`, 4000);
 v = await ev(`({ m2: document.querySelector('#detail .mission-item[data-mission="M_02"]').classList.contains('done'), m1: !!document.querySelector('#detail .mission-view[data-mission="M_01"]'), gets: __fake.calls.filter(c => c.name === 'get_places').length - ${g0} })`);

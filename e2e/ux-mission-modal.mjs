@@ -67,8 +67,8 @@ await b.shot('ux-mission-modal-new-390');
 await ev(`document.querySelector('dialog.mission-dialog input[name=done]').click()`);
 await ev(`document.querySelector('dialog.mission-dialog button[type=submit]').click()`); await sleep(200);
 v = await ev(state);
-check('완료 + 빈 칸 저장 → 창 안에 "모두 적어야" 안내, 분·초·배터리 번호 두 칸·남은 용량 빨강, 초점 분 칸, 알림(토스트)은 띄우지 않음',
-  /모두 적어야/.test(v.notice ?? '') && v.invalid.join() === 'flightMin,flightSec,batteryNo1,batteryNo2,batteryLeft' && v.active === 'flightMin' && !/모두 적어야/.test(v.toast), v);
+check('완료 + 빈 칸 저장 → 창 안에 "모두 적어야" 안내, 배터리 번호 두 칸·분·초·남은 용량 빨강, 초점 배터리 번호 앞 칸(화면에서 맨 위 빈 칸), 알림(토스트)은 띄우지 않음',
+  /모두 적어야/.test(v.notice ?? '') && v.invalid.join() === 'batteryNo1,batteryNo2,flightMin,flightSec,batteryLeft' && v.active === 'batteryNo1' && !/모두 적어야/.test(v.toast), v);
 await b.shot('ux-mission-modal-invalid-390');
 // 숫자 아닌 글자는 지워짐, 분만 적어도 비행시간 빨강이 둘 다 풀림
 const typed = await type('flightMin', '12분');

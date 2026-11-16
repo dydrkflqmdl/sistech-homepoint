@@ -104,7 +104,7 @@ await submit('M_03'); await idle('M_03'); await sleep(150);
 let v = await ev(`({ latest: ${form('M_03')}.querySelector('.mission-conflict-latest')?.textContent })`);
 v.flight = await flight('M_03');
 w = await workerInfo('M_03');
-check('충돌 → 최신 저장값에는 저장한 사람(박), 이름 칸은 로그인 아이디, 적던 비행시간은 그대로', v.latest === '최신 저장값: 미완료 · 박 · 5분 · 9 · 10%' && w.value === '손두병' && v.flight === '7분', { v, w });
+check('충돌 → 최신 저장값에는 저장한 사람(박), 이름 칸은 로그인 아이디, 적던 비행시간은 그대로', v.latest === '최신 저장값: 미완료 · 박 · 9 · 5분 · 10%' && w.value === '손두병' && v.flight === '7분', { v, w });
 await ev(`${form('M_03')}.querySelector('.conflict-latest').click()`); await sleep(150);
 w = await workerInfo('M_03');
 v = await ev(`({ panel: !!${form('M_03')}.querySelector('.mission-conflict'), active: document.activeElement?.name })`);
