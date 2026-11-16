@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  androidIntentUrl, kakaoMapAppUrl, kakaoMapRouteUrl, naverMapAppUrl, naverMapWebUrl, naviSdkUserAgent, needsPhone, platformOf, routeTarget, ROUTE_APPS,
+  androidIntentUrl, isOwnApp, kakaoMapAppUrl, kakaoMapRouteUrl, naverMapAppUrl, naverMapWebUrl, naviSdkUserAgent, needsPhone, platformOf, routeTarget, ROUTE_APPS,
   tmapAppUrl, TMAP_APPSTORE_URL, TMAP_PLAY_URL,
 } from '../public/directions.js';
 
@@ -73,8 +73,8 @@ test('안드로이드 intent 꼴: scheme·action·category·package·대체 주�
   assert.match(tricky, /S\.browser_fallback_url=https%3A%2F%2Fe\.com%2Fa%3Bb%23c;end$/);
 });
 
-test('안드로이드: 카카오맵·네이버지도·티맵은 intent, 대체는 웹 길찾기 / 웹 길찾기 / 플레이스토어', () => {
-  const ctx = { platform: 'android', origin: ORIGIN };
+test('안드로이드(우리 앱): 카카오맵·네이버지도·티맵은 intent, 대체는 웹 길찾기 / 웹 길찾기 / 플레이스토어', () => {
+  const ctx = { platform: 'android', origin: ORIGIN, ownApp: true };
   const k = routeTarget('kakaomap', place, ctx);
   assert.equal(k.type, 'intent');
   assert.equal(k.url, androidIntentUrl(kakaoMapAppUrl(place), 'net.daum.android.map', kakaoMapRouteUrl(place)));
@@ -124,4 +124,32 @@ test('naviSdkUserAgent: PC 버전 태블릿에만 SDK용 안드로이드 UA를 �
   assert.equal(naviSdkUserAgent(SAMSUNG_PC, 'pc'), null);
   assert.equal(naviSdkUserAgent(SAMSUNG_PC, 'ios'), null);
   assert.match(naviSdkUserAgent('Linux touch thing', 'android'), /Android/);
+});
+
+test('androidIntentUrl: 대체 주소가 없으면 S.browser_fallback_url 칸을 넣지 않는다', () => {
+  for (const none of [undefined, '']) {
+    const url = androidIntentUrl('tmap://route?x=1', 'com.skt.tmap.ku', none);
+    assert.ok(!url.includes('browser_fallback_url'));
+    assert.ok(url.endsWith(';package=com.skt.tmap.ku;end'));
+  }
+});
+
+test('안드로이드 일반 브라우저: intent에 대체 주소가 없고 fallback은 안내용으로만 돌려준다', () => {
+  const ctx = { platform: 'android', origin: ORIGIN };
+  const k = routeTarget('kakaomap', place, ctx);
+  assert.equal(k.url, androidIntentUrl(kakaoMapAppUrl(place), 'net.daum.android.map'));
+  assert.ok(!k.url.includes('browser_fallback_url'));
+  assert.equal(k.fallback, kakaoMapRouteUrl(place));
+  assert.equal(routeTarget('navermap', place, ctx).fallback, naverMapWebUrl(place));
+  const t = routeTarget('tmap', place, ctx);
+  assert.ok(!t.url.includes('browser_fallback_url'));
+  assert.equal(t.fallback, TMAP_PLAY_URL);
+  // ownApp: true면 기존 주소 그대로
+  assert.equal(routeTarget('tmap', place, { ...ctx, ownApp: true }).url, androidIntentUrl(tmapAppUrl(place), 'com.skt.tmap.ku', TMAP_PLAY_URL));
+});
+
+test('isOwnApp: 우리 앱 웹뷰만 true', () => {
+  assert.equal(isOwnApp('Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36 HomePointNavi/1.0.2'), true);
+  assert.equal(isOwnApp('Mozilla/5.0 (Linux; Android 14; SM-S911N) Chrome/126 Mobile Safari/537.36'), false);
+  assert.equal(isOwnApp('Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 SamsungBrowser/31.0 Chrome/148.0.0.0 Mobile Safari/537.36'), false);
 });

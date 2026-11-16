@@ -24,6 +24,9 @@ export const ROUTE_APPS = [
 // 카카오내비는 SDK로만, 티맵은 앱 주소뿐(웹 길찾기 없음)이라 PC에서는 열 수 없다.
 export const needsPhone = (appId, platform) => platform === 'pc' && (appId === 'kakaonavi' || appId === 'tmap');
 
+// 우리 안드로이드 앱(웹뷰)인지: 앱이 User-Agent 끝에 HomePointNavi/<버전>을 붙인다.
+export const isOwnApp = (ua = navigator.userAgent) => /HomePointNavi\//.test(ua);
+
 // ── 링크 만들기(순수 함수) ───────────────────────────────
 
 const PLAY_STORE = (id) => `https://play.google.com/store/apps/details?id=${id}`;
@@ -52,24 +55,25 @@ export const naverMapWebUrl = (p) => `https://map.naver.com/p/directions/-/${p.l
 // 티맵(공식 문서 없음). 좌표 순서가 경도(goalx), 위도(goaly)다.
 export const tmapAppUrl = (p) => `tmap://route?goalname=${appName(p.name)}&goalx=${p.lng}&goaly=${p.lat}`;
 
-// 안드로이드 intent 주소: 앱이 있으면 그 앱을 열고, 없으면 S.browser_fallback_url로 보낸다(크롬·웹뷰 앱 모두 같다).
-// appUrl의 "scheme://" 뒷부분을 그대로 가져온다. 대체 주소는 한 번 더 인코딩해 넣는다.
+// 안드로이드 intent 주소: 앱이 있으면 그 앱을 열고, 없으면 S.browser_fallback_url로 보낸다.
+// appUrl의 "scheme://" 뒷부분을 그대로 가져온다. 대체 주소는 한 번 더 인코딩해 넣는다. 대체 주소가 없으면(빈 값) 그 칸을 넣지 않는다.
 export function androidIntentUrl(appUrl, pkg, fallbackUrl) {
   const i = appUrl.indexOf('://');
   const [scheme, rest] = [appUrl.slice(0, i), appUrl.slice(i + 3)];
   return (
     `intent://${rest}#Intent;scheme=${scheme};action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE;` +
-    `package=${pkg};S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`
+    `package=${pkg};${fallbackUrl ? `S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};` : ''}end`
   );
 }
 
 // 앱을 눌렀을 때 무엇을 할지.
 //   { type: 'tab', url }                    새 탭으로 웹 길찾기(PC)
-//   { type: 'intent', url }                 안드로이드: location.href에 넣으면 앱, 없으면 대체 주소
-//   { type: 'scheme', url, fallback }       iOS: 앱 주소로 가 보고 1.5초 뒤에도 화면이 그대로면 대체 주소
+//   { type: 'intent', url, fallback }       안드로이드: location.href에 넣으면 앱(우리 앱만 intent 안에 대체 주소가 들어 있음)
+//   { type: 'scheme', url, fallback }       iOS: 앱 주소로 가 본다
+//   (intent·scheme: 1.5초 뒤에도 화면이 그대로면 호출한 쪽이 fallback 주소를 링크로 안내한다. 자동으로 넘어가지 않는다)
 //   { type: 'navi' }                        카카오내비(SDK)
 //   { type: 'unavailable' }                 PC에서는 못 엶
-export function routeTarget(appId, place, { platform, origin }) {
+export function routeTarget(appId, place, { platform, origin, ownApp = false }) {
   if (appId === 'kakaonavi') return platform === 'pc' ? { type: 'unavailable' } : { type: 'navi' };
   if (needsPhone(appId, platform)) return { type: 'unavailable' };
   // 웹 길찾기가 있는 앱은 PC에서 새 탭으로, 휴대폰에서는 앱이 없을 때의 대체 주소로 쓴다. 티맵은 웹이 없어 스토어로 보낸다.
@@ -82,7 +86,10 @@ export function routeTarget(appId, place, { platform, origin }) {
   const a = apps[appId];
   if (!a) throw new Error(`알 수 없는 길찾기 앱: ${appId}`);
   if (platform === 'pc') return { type: 'tab', url: web };
-  if (platform === 'android') return { type: 'intent', url: androidIntentUrl(a.app, a.pkg, a.android) };
+  // 우리 앱(웹뷰)은 MainActivity가 intent를 직접 처리해 지도 앱이 없을 때만 대체 주소를 바깥 브라우저로 열고 앱 화면은 그대로 둔다.
+  // 일반 브라우저(삼성 인터넷)는 앱을 열면서 대체 주소도 함께 열어 창이 넘어가 버리므로 대체 주소를 빼고, 안내 링크로만 보여 준다.
+  // 대체 주소가 없으면 크롬 계열은 package의 스토어 화면을 연다.
+  if (platform === 'android') return { type: 'intent', url: androidIntentUrl(a.app, a.pkg, ownApp ? a.android : undefined), fallback: a.android };
   return { type: 'scheme', url: a.app, fallback: a.ios };
 }
 
@@ -186,10 +193,11 @@ function go(url) {
   else location.href = url;
 }
 
-// 앱 주소로 가 보고, 앱이 없어서 화면이 그대로면(숨겨지지 않았으면) 1.5초 뒤 대체 주소로 넘어간다.
-function openAppThenFallback(appUrl, fallbackUrl) {
+// 앱 주소로 가 보고, 1.5초 뒤에도 화면이 그대로면(숨겨지지 않았으면) onStay를 부른다. 대체 주소로 자동 이동하지 않는다
+// (Safari는 "앱에서 열겠습니까?"를 묻는 동안에도 화면이 보여, 자동으로 넘기면 앱이 열려도 창이 웹·스토어로 넘어간다).
+function openApp(appUrl, onStay) {
   const timer = setTimeout(() => {
-    if (!document.hidden) go(fallbackUrl);
+    if (!document.hidden) onStay();
   }, 1500);
   document.addEventListener('visibilitychange', () => clearTimeout(timer), { once: true });
   go(appUrl);
@@ -197,17 +205,18 @@ function openAppThenFallback(appUrl, fallbackUrl) {
 
 // 고른 앱으로 목적지(place: { name, lat, lng })의 자동차 길찾기를 연다.
 // 카카오내비는 비동기이고 실패할 수 있어 Promise를 돌려준다(나머지는 바로 끝나 resolve).
-export async function openRoute(appId, place, { kakaoKey } = {}) {
-  const target = routeTarget(appId, place, { platform: platformOf(), origin: location.origin });
+// 앱이 안 열린 것 같으면(1.5초 뒤에도 화면 그대로) onNotOpened({ appId, platform, url })를 부른다. url은 안내할 대체 주소.
+export async function openRoute(appId, place, { kakaoKey, onNotOpened } = {}) {
+  const platform = platformOf();
+  const target = routeTarget(appId, place, { platform, origin: location.origin, ownApp: isOwnApp() });
+  const stay = () => onNotOpened?.({ appId, platform, url: target.fallback });
   switch (target.type) {
     case 'tab':
       window.open(target.url, '_blank', 'noopener');
       break;
     case 'intent':
-      go(target.url);
-      break;
     case 'scheme':
-      openAppThenFallback(target.url, target.fallback);
+      openApp(target.url, stay);
       break;
     case 'navi':
       await startKakaoNavi(place, kakaoKey);

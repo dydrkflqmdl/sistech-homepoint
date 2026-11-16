@@ -26,6 +26,7 @@ const FAKE_KAKAO = `(() => {
 // 실제 이동·새 탭을 막고 주소만 모은다.
 const CATCH = `window.__go = []; window.__opens = []; window.__e2eGo = (u) => window.__go.push(u); window.open = (...a) => { window.__opens.push(a); return null; }; 0`;
 
+const OWN_APP_UA = `${ANDROID_UA} HomePointNavi/1.0.2`;
 const name = (n) => encodeURIComponent(n);
 const state = `(() => {
   const g = document.querySelector('#detail .route-actions'), r = g?.getBoundingClientRect(), card = document.querySelector('#detail').getBoundingClientRect();
@@ -66,6 +67,13 @@ const caught = (b) => b.ev(`({ go: window.__go, opens: window.__opens, navi: win
 const reset = (b) => b.ev(`${CATCH}; window.__navi = window.__navi ? [] : undefined; document.querySelector('#toast').textContent = ''; 0`);
 const cdn = (b) => b.requests.filter((u) => /kakaocdn/.test(u));
 const APPS = '카카오맵,네이버지도,카카오내비,티맵';
+// 앱이 안 열린 것 같을 때 묶음 아래에 뜨는 안내 줄(없으면 null)
+const helpState = (b) => b.ev(`(() => { const p = document.querySelector('#detail .route-help'); const a = p?.querySelector('a'); if (!p) return null;
+  const card = document.querySelector('#detail').getBoundingClientRect(); const q = a.getBoundingClientRect();
+  return { text: p.textContent, role: p.getAttribute('role'), link: a.textContent, href: a.getAttribute('href'), target: a.target, rel: a.rel, h: Math.round(q.height),
+    inside: q.left >= card.left - 1 && q.right <= card.right + 1 && document.documentElement.scrollWidth <= innerWidth, below: p.getBoundingClientRect().top >= document.querySelector('#detail .route-actions').getBoundingClientRect().bottom }; })()`);
+const waitHelp = (b, ms = 3500) => b.waitFor(`!!document.querySelector('#detail .route-help')`, ms).catch(() => {});
+const helpOk = (h, link, href) => h && h.text === `앱이 열리지 않으면 ${link}` && h.role === 'status' && h.link === link && h.href === href && h.target === '_blank' && /noopener/.test(h.rel) && h.h >= 44 && h.inside && h.below;
 const NOTE = '카카오내비·티맵은 휴대폰에서만 열 수 있습니다.';
 
 // ══ 1. 카드 모양·원격 갱신 (390px, 기본 UA = PC) ══
@@ -163,21 +171,48 @@ const parseIntent = (u) => {
 await clickApp(b, 'kakaomap'); await waitCount(b, '__opens', 1);
 c = await caught(b);
 let it = parseIntent(c.go[0]);
-check('안드로이드 카카오맵: location.href에 intent://route?ep=위도,경도&by=car, scheme=kakaomap, package=net.daum.android.map, 대체=웹 길찾기',
+check('안드로이드 카카오맵: location.href에 intent://route?ep=위도,경도&by=car, scheme=kakaomap, package=net.daum.android.map, 대체 주소 없음(브라우저가 앱과 함께 대체 주소를 여는 것을 막음)',
   c.go.length === 1 && it.rest === 'route?ep=36.516667,126.479826&by=car' && it.scheme === 'kakaomap' && it.package === 'net.daum.android.map' && it.action === 'android.intent.action.VIEW'
-    && it.category === 'android.intent.category.BROWSABLE' && decodeURIComponent(it['S.browser_fallback_url']) === 'https://map.kakao.com/link/to/SW_01,36.516667,126.479826' && c.opens.length === 0 && c.dialogs === 0, c.go);
+    && it.category === 'android.intent.category.BROWSABLE' && !('S.browser_fallback_url' in it) && c.opens.length === 0 && c.dialogs === 0, c.go);
 await reset(b); await clickApp(b, 'navermap'); await waitCount(b, '__go', 1);
 c = await caught(b);
 it = parseIntent(c.go[0]);
-check('안드로이드 네이버지도: intent://route/car?dlat=위도&dlng=경도&dname=이름&appname=인코딩한 origin, scheme=nmap, package=com.nhn.android.nmap, 대체=네이버 웹 길찾기',
+check('안드로이드 네이버지도: intent://route/car?dlat=위도&dlng=경도&dname=이름&appname=인코딩한 origin, scheme=nmap, package=com.nhn.android.nmap, 대체 주소 없음',
   c.go.length === 1 && it.rest === `route/car?dlat=36.516667&dlng=126.479826&dname=SW_01&appname=${encodeURIComponent(await b.ev('location.origin'))}` && it.scheme === 'nmap' && it.package === 'com.nhn.android.nmap'
-    && decodeURIComponent(it['S.browser_fallback_url']) === 'https://map.naver.com/p/directions/-/126.479826,36.516667,SW_01,,/-/car', c.go);
+    && !('S.browser_fallback_url' in it), c.go);
 await reset(b); await clickApp(b, 'tmap'); await waitCount(b, '__go', 1);
 c = await caught(b);
 it = parseIntent(c.go[0]);
-check('안드로이드 티맵: intent://route?goalname=이름&goalx=경도&goaly=위도, scheme=tmap, package=com.skt.tmap.ku, 대체=플레이스토어',
+check('안드로이드 티맵: intent://route?goalname=이름&goalx=경도&goaly=위도, scheme=tmap, package=com.skt.tmap.ku, 대체 주소 없음',
   c.go.length === 1 && it.rest === 'route?goalname=SW_01&goalx=126.479826&goaly=36.516667' && it.scheme === 'tmap' && it.package === 'com.skt.tmap.ku'
-    && decodeURIComponent(it['S.browser_fallback_url']) === 'https://play.google.com/store/apps/details?id=com.skt.tmap.ku', c.go);
+    && !('S.browser_fallback_url' in it), c.go);
+await waitHelp(b);
+let hp = await helpState(b);
+check('안드로이드 티맵: 1.5초 뒤에도 화면 그대로면 이동은 한 번뿐이고 "앱이 열리지 않으면 플레이스토어에서 티맵 받기" 링크(새 탭·noopener·44px 이상·카드 안)',
+  (await caught(b)).go.length === 1 && helpOk(hp, '플레이스토어에서 티맵 받기', 'https://play.google.com/store/apps/details?id=com.skt.tmap.ku'), hp);
+await reset(b); await clickApp(b, 'kakaomap'); await waitHelp(b);
+hp = await helpState(b);
+check('안드로이드 카카오맵: 이전 안내를 지우고 새로 "웹에서 길찾기 열기"(카카오맵 웹 길찾기), 이동은 한 번뿐', (await caught(b)).go.length === 1 && helpOk(hp, '웹에서 길찾기 열기', 'https://map.kakao.com/link/to/SW_01,36.516667,126.479826'), hp);
+await reset(b); await clickApp(b, 'navermap'); await waitHelp(b);
+hp = await helpState(b);
+check('안드로이드 네이버지도: "웹에서 길찾기 열기"(네이버 웹 길찾기)', (await caught(b)).go.length === 1 && helpOk(hp, '웹에서 길찾기 열기', 'https://map.naver.com/p/directions/-/126.479826,36.516667,SW_01,,/-/car'), hp);
+await reset(b); await clickApp(b, 'tmap');
+check('다른 앱 단추를 누르면 이전 안내가 바로 사라짐(새 안내는 1.5초 뒤)', (await helpState(b)) === null);
+// 원격 갱신으로 카드를 다시 그려도 안내 유지
+await waitHelp(b);
+await b.ev(`__fake.remoteChange((db) => { db.places.find((p) => p.name === 'SW_01').memo = '원격안내'; })`); await b.waitFor(`document.querySelector('#memo-input')?.value === '원격안내'`, 3000).catch(() => {});
+hp = await helpState(b);
+check('원격 갱신으로 카드를 다시 그려도 안내가 유지됨', helpOk(hp, '플레이스토어에서 티맵 받기', 'https://play.google.com/store/apps/details?id=com.skt.tmap.ku'), hp);
+// 숨겨지면(앱이 열려 돌아왔을 때 남지 않게) 안내가 사라짐
+await b.ev(`Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); 0`); await sleep(200);
+check('안내가 뜬 뒤 페이지가 숨겨지면 안내가 사라짐', (await helpState(b)) === null);
+await b.ev(`delete document.hidden; 0`);
+// 앱이 열려 1.5초 안에 숨겨지면 안내가 뜨지 않음
+await reset(b); await clickApp(b, 'kakaomap');
+await b.ev(`Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); 0`);
+await sleep(1900);
+check('1.5초 안에 화면이 숨겨지면(앱이 열림) 안내가 뜨지 않음', (await helpState(b)) === null);
+await b.ev(`delete document.hidden; 0`);
 // 카카오내비(가짜 SDK)
 await reset(b); await clickApp(b, 'kakaonavi'); await b.waitFor(`window.__navi?.some((x) => 'start' in x)`, 3000);
 c = await caught(b);
@@ -194,7 +229,20 @@ check('안드로이드 티맵: 이름 쉼표·슬래시도 그대로 인코딩�
 check('콘솔 예외 0건(안드로이드)', b.errors.length === 0, b.errors);
 await b.close();
 
-// ══ 4. iOS: 앱 주소로 가 보고 1.5초 뒤에도 그대로면 대체 주소 ══
+// ══ 3-2. 우리 앱(웹뷰, UA 끝에 HomePointNavi/<버전>): intent 안에 대체 주소가 그대로 있음 ══
+b = await launch('ux-directions-ownapp', { viewport: [390, 844, true] });
+await b.send('Emulation.setUserAgentOverride', { userAgent: OWN_APP_UA });
+await b.send('Page.addScriptToEvaluateOnNewDocument', { source: FAKE_KAKAO });
+await prepare(b, { places });
+await openPlace(b, 'SW_01');
+const fb = async (app) => { await reset(b); await clickApp(b, app); await waitCount(b, '__go', 1); const u = (await caught(b)).go[0] ?? ''; const m = u.match(/S\.browser_fallback_url=([^;]*);end$/); return m && decodeURIComponent(m[1]); };
+check('우리 앱 카카오맵: intent에 웹 길찾기 대체 주소가 그대로 있음', (await fb('kakaomap')) === 'https://map.kakao.com/link/to/SW_01,36.516667,126.479826');
+check('우리 앱 네이버지도: intent에 네이버 웹 길찾기 대체 주소', (await fb('navermap')) === 'https://map.naver.com/p/directions/-/126.479826,36.516667,SW_01,,/-/car');
+check('우리 앱 티맵: intent에 플레이스토어 대체 주소', (await fb('tmap')) === 'https://play.google.com/store/apps/details?id=com.skt.tmap.ku');
+check('콘솔 예외 0건(우리 앱)', b.errors.length === 0, b.errors);
+await b.close();
+
+// ══ 4. iOS: 앱 주소로만 가고, 1.5초 뒤에도 그대로면 안내 링크(자동 이동 없음) ══
 b = await launch('ux-directions-ios', { viewport: [390, 844, true] });
 await b.send('Emulation.setUserAgentOverride', { userAgent: IOS_UA });
 await prepare(b, { places });
@@ -204,19 +252,22 @@ const iosCase = async (app, appUrl, fallback) => {
   await reset(b); await clickApp(b, app);
   await waitCount(b, '__go', 1);
   const first = (await caught(b)).go.slice();
-  await waitCount(b, '__go', 2, 4000);
+  await waitHelp(b);
+  await sleep(300);
   const after = (await caught(b)).go.slice();
-  check(`iOS ${app}: 앱 주소로 먼저 가고 1.5초 뒤 화면이 그대로면 대체 주소`, first.length === 1 && first[0] === appUrl && after.length === 2 && after[1] === fallback, { first, after });
+  const hp = await helpState(b);
+  check(`iOS ${app}: 앱 주소로 한 번만 가고(자동 이동 없음) 1.5초 뒤 화면이 그대로면 안내 링크(대체 주소)`,
+    first.length === 1 && first[0] === appUrl && after.length === 1 && helpOk(hp, app === 'tmap' ? '앱스토어에서 티맵 받기' : '웹에서 길찾기 열기', fallback), { first, after, hp });
 };
 await iosCase('kakaomap', 'kakaomap://route?ep=36.516667,126.479826&by=car', 'https://map.kakao.com/link/to/SW_01,36.516667,126.479826');
 await iosCase('navermap', `nmap://route/car?dlat=36.516667&dlng=126.479826&dname=SW_01&appname=${encodeURIComponent(origin)}`, 'https://map.naver.com/p/directions/-/126.479826,36.516667,SW_01,,/-/car');
 await iosCase('tmap', 'tmap://route?goalname=SW_01&goalx=126.479826&goaly=36.516667', 'https://apps.apple.com/kr/app/id431589174');
-// 앱이 열려 화면이 숨겨지면(visibilitychange) 대체 주소로 넘어가지 않음
+// 앱이 열려 화면이 숨겨지면(visibilitychange) 안내가 뜨지 않음
 await reset(b); await clickApp(b, 'tmap');
 await b.ev(`document.dispatchEvent(new Event('visibilitychange'))`);
 await sleep(1900);
 c = await caught(b);
-check('iOS: 앱이 열려 화면이 숨겨지면(visibilitychange) 대체 주소로 가지 않음', c.go.length === 1, c.go);
+check('iOS: 앱이 열려 1.5초 안에 visibilitychange가 오면 안내가 뜨지 않음', c.go.length === 1 && (await helpState(b)) === null, c.go);
 v = await b.ev(state);
 check('iOS: 카카오내비·티맵 모두 켜짐, PC 안내 없음, 단추 4개 44px 이상', v.disabled.join() === 'false,false,false,false' && v.note === null && v.minH >= 44, v);
 check('콘솔 예외 0건(iOS)', b.errors.length === 0, b.errors);
@@ -234,7 +285,10 @@ check('갤럭시 탭 PC 버전(UA에 Android 없음·터치 5): 단추 4개 모�
 await clickApp(b, 'kakaomap'); await waitCount(b, '__go', 1);
 c = await caught(b);
 check('갤럭시 탭 PC 버전 카카오맵: 새 탭이 아니라 intent://로 시작하고 package=net.daum.android.map인 주소로 이동',
-  c.go.length === 1 && c.go[0].startsWith('intent://') && c.go[0].includes('package=net.daum.android.map') && c.opens.length === 0, c);
+  c.go.length === 1 && c.go[0].startsWith('intent://') && c.go[0].includes('package=net.daum.android.map') && !c.go[0].includes('browser_fallback_url') && c.opens.length === 0, c);
+await waitHelp(b);
+hp = await helpState(b);
+check('갤럭시 탭 PC 버전: 1.5초 뒤 "웹에서 길찾기 열기" 안내, 이동은 여전히 한 번', (await caught(b)).go.length === 1 && helpOk(hp, '웹에서 길찾기 열기', 'https://map.kakao.com/link/to/SW_01,36.516667,126.479826'), hp);
 check('콘솔 예외 0건(갤럭시 탭 PC 버전)', b.errors.length === 0, b.errors);
 await b.close();
 

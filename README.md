@@ -500,16 +500,17 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 �
 
 장소 상세 카드에 카카오맵·네이버지도·카카오내비·티맵 단추 4개가 바로 있습니다(앱 아이콘 + 글자, 아이콘은 `public/icons/`의 앱스토어 공식 아이콘 96×96을 24px로 표시하고 각 회사 상표라 그 앱을 여는 단추에만 씀, PC에서 꺼진 단추의 아이콘은 흑백, 휴대폰 390px에서 2×2, 높이 44px 이상, 묶음은 `role="group"` `aria-label="길찾기"`이고 보이는 제목은 없습니다). 누르면 그 앱의 **자동차 길찾기(목적지 = 고른 장소의 위도·경도·이름)**를 엽니다. 기기는 User-Agent로 가리되, iPad(Macintosh로 소개)와 "PC 버전 보기"가 기본인 갤럭시 탭의 삼성 인터넷·태블릿 크롬(Android 글자 없이 `X11; Linux`로 소개)은 터치 지원 여부로 구분해 각각 iOS·안드로이드로 보고 앱을 엽니다(터치 없는 리눅스 PC·크롬북·윈도 터치 노트북은 PC 그대로). PC에서는 카카오내비·티맵 단추가 꺼지고 묶음 아래에 "카카오내비·티맵은 휴대폰에서만 열 수 있습니다." 한 줄이 보입니다. 코드는 `public/directions.js`(링크 만들기·열기)와 `public/directions-ui.js`(단추)에 있고, 링크 만드는 함수는 `test/directions.test.js`가 확인합니다.
 
-| 앱 | 안드로이드(크롬·앱) | iOS | PC |
+| 앱 | 안드로이드(브라우저·앱) | iOS | PC |
 | --- | --- | --- | --- |
-| 카카오맵 | `intent://route?ep=위도,경도&by=car#Intent;scheme=kakaomap;…;package=net.daum.android.map;S.browser_fallback_url=…;end` (앱이 없으면 웹 길찾기) | `kakaomap://route?ep=위도,경도&by=car`로 가 보고 1.5초 뒤에도 화면이 그대로면 웹 길찾기 `https://map.kakao.com/link/to/이름,위도,경도` | 웹 길찾기를 새 탭으로 |
-| 네이버지도 | `intent://route/car?dlat=위도&dlng=경도&dname=이름&appname=이 사이트 주소#Intent;scheme=nmap;…;package=com.nhn.android.nmap;…` (앱이 없으면 네이버 웹 길찾기) | `nmap://route/car?…`로 가 보고 1.5초 뒤에도 그대로면 네이버 웹 길찾기 | 웹 길찾기 `https://map.naver.com/p/directions/-/경도,위도,이름,,/-/car`를 새 탭으로 |
+| 카카오맵 | `intent://route?ep=위도,경도&by=car#Intent;scheme=kakaomap;…;package=net.daum.android.map;end` (앱이 없으면 1.5초 뒤 안내 줄의 웹 길찾기 링크. 우리 앱만 `S.browser_fallback_url=…;`이 intent 안에 들어 있음) | `kakaomap://route?ep=위도,경도&by=car`로만 가고, 1.5초 뒤에도 화면이 그대로면 안내 줄에 웹 길찾기 링크 `https://map.kakao.com/link/to/이름,위도,경도` | 웹 길찾기를 새 탭으로 |
+| 네이버지도 | `intent://route/car?dlat=위도&dlng=경도&dname=이름&appname=이 사이트 주소#Intent;scheme=nmap;…;package=com.nhn.android.nmap;…` (앱이 없으면 안내 줄의 네이버 웹 길찾기 링크) | `nmap://route/car?…`로만 가고, 1.5초 뒤에도 그대로면 안내 줄에 네이버 웹 길찾기 링크 | 웹 길찾기 `https://map.naver.com/p/directions/-/경도,위도,이름,,/-/car`를 새 탭으로 |
 | 카카오내비 | 카카오 JavaScript SDK `Kakao.Navi.start({ name, x: 경도, y: 위도, coordType: 'wgs84' })` | 같음 | 못 엶(단추가 꺼지고 아래에 "휴대폰에서만 열 수 있습니다" 안내) |
-| 티맵 | `intent://route?goalname=이름&goalx=경도&goaly=위도#Intent;scheme=tmap;…;package=com.skt.tmap.ku;…` (앱이 없으면 플레이스토어) | `tmap://route?…`로 가 보고 1.5초 뒤에도 그대로면 앱스토어 | 못 엶(단추가 꺼지고 아래에 "휴대폰에서만 열 수 있습니다" 안내) |
+| 티맵 | `intent://route?goalname=이름&goalx=경도&goaly=위도#Intent;scheme=tmap;…;package=com.skt.tmap.ku;…` (앱이 없으면 안내 줄의 플레이스토어 링크) | `tmap://route?…`로만 가고, 1.5초 뒤에도 그대로면 안내 줄에 앱스토어 링크 | 못 엶(단추가 꺼지고 아래에 "휴대폰에서만 열 수 있습니다" 안내) |
 
 - 카카오맵 앱 주소(`kakaomap://route`)는 공식 문서가 없는 형식이라 이름 칸이 없습니다. 네이버지도 앱 주소는 공식 문서(URL Scheme)를 따르며 `appname`은 필수입니다. 네이버 웹 길찾기와 티맵 주소는 공식 문서가 없는 형식입니다(네이버 웹은 도착지만 채운 자동차 길찾기 화면이 열리는 것을 확인했습니다).
 - 카카오내비는 URL로 열 수 없어 카카오 JavaScript SDK(2.8.5, `integrity` 지정)로만 엽니다. SDK는 처음부터 받지 않고 **휴대폰에서 장소 상세가 처음 그려질 때** 한 번 불러오기 시작합니다(세션당 한 번, PC에서는 쓸 수 없어 받지 않습니다. 못 받았으면 단추를 눌렀을 때 다시 받아 봅니다). 앱 키는 지도와 같은 JavaScript 키(`config.js`의 `kakaoJsKey`)이고, 그 키의 사이트 도메인에 등록된 주소에서만 동작합니다. 좌표 종류 `wgs84`를 빼면 기본값(katec)이라 엉뚱한 곳이 열리므로 꼭 넣습니다. 앱이 없으면 SDK가 설치 페이지로 보내고, SDK를 못 받으면 "카카오내비를 열지 못했습니다. 잠시 뒤 다시 눌러 주세요."가 뜹니다. SDK는 스크립트가 실행되는 순간 한 번만 `navigator.userAgent`로 기기를 정하고 `Android` 글자가 없으면 `Navi.start`가 아무 일도 하지 않으므로, "PC 버전 보기"로 열린 안드로이드 태블릿에서는 SDK를 불러오는 동안만 `navigator.userAgent`를 안드로이드처럼 보이게 하고 끝나면(`onload`·`onerror`) 원래대로 되돌립니다(`naviSdkUserAgent`, 휴대폰·iOS·PC는 가리지 않음). SDK 버전을 올리면 이 전제를 다시 확인해야 합니다. 또 진짜 SDK는 불러온 직후에는 `Kakao.init`·`Kakao.isInitialized`만 있고 `Kakao.Navi`는 `Kakao.init(키)`를 부른 뒤에야 생기므로, SDK를 받았는지는 `Kakao.init`이 있는지로 확인합니다(`Kakao.Navi`로 확인하면 받아 놓고도 늘 실패로 처리되어 알림만 뜹니다). 점검용 가짜 `window.Kakao`도 같은 순서로 만듭니다.
-- 안드로이드 앱(WebView)도 UA에 Android가 있어 같은 intent 주소를 씁니다. 앱이 intent를 열고, 열 앱이 없으면 `S.browser_fallback_url`로 넘깁니다.
+- **브라우저에서는 대체 주소(웹 길찾기·스토어)로 자동으로 넘어가지 않습니다.** 앱 주소로만 가고, 1.5초 뒤에도 화면이 그대로면(숨겨지지 않았으면) 단추 묶음 아래에 "앱이 열리지 않으면 웹에서 길찾기 열기"(티맵은 "플레이스토어/앱스토어에서 티맵 받기") 한 줄이 뜹니다. 예전에는 자동으로 넘겼는데, Safari는 "앱에서 열겠습니까?"를 묻는 동안에도 화면이 보이고 삼성 인터넷은 intent의 대체 주소를 앱과 함께 열어서, 앱이 열려도 인터넷 창이 웹·스토어로 넘어가 있었습니다. 안내 줄은 다른 단추를 누르거나, 링크를 누르거나, 페이지가 숨겨지면(앱으로 넘어감) 사라지고 원격 갱신으로 다시 그려도 유지됩니다.
+- 안드로이드 앱(WebView, UA 끝에 `HomePointNavi/<버전>`)은 같은 intent 주소에 `S.browser_fallback_url`을 넣습니다. `MainActivity`가 intent를 직접 처리해 열 앱이 없을 때만 대체 주소를 바깥 브라우저로 열고 앱 화면은 그대로 두기 때문입니다.
 - 예전 [길찾기] 단추(창에서 고르기)와 [카카오맵에서 보기] 링크는 없앴습니다.
 
 ## 지도
