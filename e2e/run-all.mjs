@@ -26,11 +26,13 @@ const scripts = [
   'ux-export',
   // 휴대폰 머리글 메뉴(☰), 미션 기록 창(모달)·비행시간 분·초, 상세 정보를 고른 장소 줄 아래에
   'ux-menu', 'ux-mission-modal', 'ux-detail-inline',
+  // 미션 기록 [기록 지우기]·장소 삭제 뒤 다시 가져오기
+  'ux-mission-clear',
   // 휴대폰 아래 창 높이 조절 바
   'ux-sheet', 'ux-names',
   // 현위치 버튼
   'ux-locate',
-  // 계정 권한 3단계(관리자·직원·외주)
+  // 계정 권한 3단계(관리자·직원·비행팀)
   'ux-roles',
   // 길찾기 단추(카카오맵·네이버지도·카카오내비·티맵)
   'ux-directions',

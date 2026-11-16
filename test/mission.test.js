@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { missionNames, missionProgress } from '../public/mission.js';
+import { missionNames, missionPercent, missionProgress } from '../public/mission.js';
 
 test('미션명 맨 끝 숫자까지 미션을 펼친다', () => {
   const missions = missionNames('Q1_A_TA_SW__01_01 ~ _34');
@@ -120,4 +120,14 @@ test('미션 범위 밖에 남은 기록은 완료로 세지 않는다', () => {
 
 test('done이 정확히 true인 기록만 완료로 센다', () => {
   assert.deepEqual(missionProgress('M_1 ~ 2', [{ mission: 'M_1', done: 1 }, { mission: 'M_2', done: 'true' }]), { total: 2, done: 0 });
+});
+
+test('진행률은 내림한 정수다(다 끝나기 전에는 100이 아니다)', () => {
+  assert.equal(missionPercent(0, 190), 0);
+  assert.equal(missionPercent(1, 190), 0);
+  assert.equal(missionPercent(57, 190), 30);
+  assert.equal(missionPercent(70, 2840), 2);
+  assert.equal(missionPercent(189, 190), 99);
+  assert.equal(missionPercent(190, 190), 100);
+  assert.equal(missionPercent(0, 0), 0);
 });

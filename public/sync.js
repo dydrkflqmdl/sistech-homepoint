@@ -167,7 +167,7 @@ export async function refreshPlaces({ force = false } = {}) {
 }
 
 // 실시간 알림: 300ms 동안 오는 알림을 모아, 바뀐 장소만 get_places로 다시 받는다(계약 C2).
-// - places 알림은 그 장소 id, missions 알림은 place_id. 지운 장소(DELETE·deleted_at)는 받지 않고 바로 뺀다(계약 C3).
+// - places 알림은 그 장소 id, missions 알림은 place_id. 지운 장소(DELETE, 옛 서버의 deleted_at 표시도)는 받지 않고 바로 뺀다.
 // - 알림의 값이 화면에 있는 값과 같으면(내가 방금 저장한 변경 등) 건너뛴다.
 // - 어느 장소인지 모르는 알림·재연결·일부 받기 실패 때만 전체를 다시 받는다.
 const REALTIME_DEBOUNCE_MS = 300;

@@ -227,9 +227,9 @@ async function call(name, params, { signOutOn = ['expired', 'forbidden'], signal
   err.status = status;
   err.code = code;
   err.auth = auth;
-  // 화면은 직원으로 알고 있는데 서버가 외주로 보고 거절한 것(역할이 바뀐 뒤 옛 화면). 화면이 역할을 다시 받게 알린다.
+  // 화면은 직원으로 알고 있는데 서버가 비행팀으로 보고 거절한 것(역할이 바뀐 뒤 옛 화면). 화면이 역할을 다시 받게 알린다.
   // 지운 계정의 메모 거절(계정을 찾을 수 없음)은 문구만 그대로 보여 준다.
-  if (CONTRACTOR_MESSAGES.includes(message)) roleRejectedHandler?.();
+  if (message === CONTRACTOR_MESSAGE) roleRejectedHandler?.();
   // 화면 문구로 바꿔 버리는 실패(연결·서버 오류)는 원인을 콘솔에 남긴다. 한국어 검증 문구는 그대로 보여 주므로 남기지 않는다.
   if (!hasHangul(res.error.message)) logCause(`${name} 실패 (${status}${code ? ` ${code}` : ''})`, err);
   if (auth) {
@@ -240,12 +240,10 @@ async function call(name, params, { signOutOn = ['expired', 'forbidden'], signal
   throw err;
 }
 
-// ── 역할(관리자·직원·외주) ───────────────────────────────
+// ── 역할(관리자·직원·비행팀) ───────────────────────────────
 
-// 서버가 외주 계정의 가져오기·장소 삭제를 거절할 때 주는 문구(Postgres P0001).
-export const CONTRACTOR_MESSAGE = '외주 계정은 미션 기록과 메모만 할 수 있습니다.';
-// 외주 거절로 알아볼 문구. 앞의 것은 예전 서버(메모도 거절하던 때)의 문구다. 배포하는 사이 화면과 서버가 어긋나도 알아보게 둘 다 둔다.
-const CONTRACTOR_MESSAGES = ['외주 계정은 미션 기록만 할 수 있습니다.', CONTRACTOR_MESSAGE];
+// 서버가 비행팀 계정의 가져오기·장소 삭제·미션 기록 지우기를 거절할 때 주는 문구(Postgres P0001).
+export const CONTRACTOR_MESSAGE = '비행팀 계정은 미션 기록과 메모만 할 수 있습니다.';
 
 // 역할 값. 없거나 모르는 값은 직원이다.
 export const ROLES = ['admin', 'staff', 'contractor'];
@@ -254,7 +252,7 @@ export const normalizeRole = (v) => (ROLES.includes(v) ? v : 'staff');
 // 세션(JWT)의 역할. 서버가 정한 app_metadata만 본다(user_metadata는 사용자가 바꿀 수 있다).
 export const sessionRole = (user) => normalizeRole(user?.app_metadata?.role);
 
-// 서버가 외주 거절을 돌려주면 app.js가 역할을 다시 받도록 부를 함수를 등록한다.
+// 서버가 비행팀 거절을 돌려주면 app.js가 역할을 다시 받도록 부를 함수를 등록한다.
 let roleRejectedHandler = null;
 export const onRoleRejected = (fn) => {
   roleRejectedHandler = fn;
@@ -263,7 +261,7 @@ export const onRoleRejected = (fn) => {
 // 함수가 DB에 없을 때(아직 배포 전인 새 RPC)의 오류인지. PostgREST는 PGRST202, Postgres는 42883을 준다.
 const isMissingFunction = (err) => err?.code === 'PGRST202' || err?.code === '42883';
 
-// 장소 전체(미션 기록 포함). 삭제 표시된 장소는 서버가 빼고 준다.
+// 장소 전체(미션 기록 포함).
 export const listPlaces = async (opts) => (await call('list_places', undefined, opts)) ?? [];
 
 // 장소 몇 곳만 다시 받는다(계약 C2: get_places(p_ids bigint[]) → list_places 원소 배열). 없는(지워진) 장소는 빠진다.
@@ -290,6 +288,11 @@ export const importPlaces = (rows) => call('import_places', { rows });
 export const saveMission = (placeId, mission, fields, baseVersion, opts) =>
   call('save_mission', { p_place_id: placeId, p_mission: mission, p_fields: fields, p_base_version: baseVersion ?? null }, opts);
 
+// 미션 기록 한 건 지우기(관리자·직원만). baseVersion은 화면이 본 기록 판(null이면 확인 없이 지운다).
+// → { status: 'ok', cleared: boolean } | { status: 'conflict', record }  (conflict는 다른 기기가 먼저 고친 것: 지우지 않고 최신 기록을 준다)
+export const clearMission = (placeId, mission, baseVersion, opts) =>
+  call('clear_mission', { p_place_id: placeId, p_mission: mission, p_base_version: baseVersion ?? null }, opts);
+
 // 메모 저장(계약 C1: update_memo(p_place_id, p_memo, p_base_memo) → { status: 'ok' | 'conflict', place }).
 // baseMemo는 고치기 시작할 때 서버에 있던 메모. 그사이 다른 기기가 바꿨으면 서버가 conflict와 최신 장소를 준다.
 // 옛 함수(인자 2개, 장소를 그대로 돌려줌)도 받아 준다: 응답이 장소 객체면 ok로, 3인자 함수가 없으면 2인자로 다시 부른다.
@@ -313,12 +316,12 @@ export async function updateMemo(placeId, memo, baseMemo, opts) {
   return { status: 'ok', place: res ?? null };
 }
 
-// 장소 삭제 → 지웠으면 true, 이미 없으면 false.
+// 장소 삭제 → 지웠으면 true, 이미 없으면 false. 장소 행과 그 미션 기록을 실제로 지운다(같은 장소를 다시 가져오면 기록 없는 새 장소).
 export const deletePlace = async (placeId) => Boolean(await call('delete_place', { p_place_id: placeId }));
 
 // 지금 계정의 역할을 DB에서 바로 읽는다(my_role() → 'admin' | 'staff' | 'contractor'). 토큰은 최대 1시간 묵을 수 있어서 따로 읽는다.
 // 받지 못하면(실패, null, 모르는 값) null을 돌려준다. 그때 역할을 어떻게 할지는 부른 쪽이 정한다.
-// 토큰의 역할로 대신하지 않는다. 묵은 토큰 때문에 직원 화면이 외주로 바뀌어 고치던 메모를 버리면 안 된다.
+// 토큰의 역할로 대신하지 않는다. 묵은 토큰 때문에 직원 화면이 비행팀으로 바뀌어 고치던 메모를 버리면 안 된다.
 // 실패해도 로그아웃시키지 않는다(signOutOn: []).
 // null은 서버가 계정을 찾지 못한 경우다(지운 계정). 그래도 쓰기는 서버가 거절한다.
 export async function myRole() {
@@ -400,7 +403,7 @@ export const listAccounts = async () => (await callAdmin({ action: 'list' })).us
 export const createAccount = async (loginId, password, role = 'staff') =>
   (await callAdmin({ action: 'create', login_id: loginId, password, role })).user ?? null;
 
-// 직원 ↔ 외주를 바꾼다 → 바뀐 계정. 관리자 계정은 서버가 거절한다(오류 문구가 그대로 온다).
+// 직원 ↔ 비행팀을 바꾼다 → 바뀐 계정. 관리자 계정은 서버가 거절한다(오류 문구가 그대로 온다).
 export const setAccountRole = async (userId, role) =>
   (await callAdmin({ action: 'set_role', user_id: userId, role })).user ?? null;
 
@@ -439,16 +442,16 @@ export const logLogout = () => callLog('log_logout');
 const hasKeys = (o) => o != null && typeof o === 'object' && Object.keys(o).length > 0;
 
 // postgres_changes 알림을 화면이 쓰기 좋은 모양으로 바꾼다.
-// places: { table, type, placeId, removed(삭제·삭제 표시), row(새 값) }
+// places: { table, type, placeId, removed(삭제), row(새 값) }
 // missions: { table, type, placeId(new.place_id, 지울 때는 old에 있을 때만), mission, row }
-// placeId가 null이면 어느 장소인지 모르는 알림이다(화면은 전체를 다시 받는다).
+// placeId가 null이면 어느 장소인지 모르는 알림이다(화면은 전체를 다시 받는다). missions DELETE는 old에 id만 와서 여기에 해당한다.
 function changeOf(table, payload) {
   const row = hasKeys(payload?.new) ? payload.new : null;
   const old = hasKeys(payload?.old) ? payload.old : null;
   const type = payload?.eventType ?? null;
   if (table === 'places') {
     const id = row?.id ?? old?.id ?? null;
-    // 계약 C3: 지우면 deleted_at이 찍힌 UPDATE가 온다(완전히 지우는 DELETE도 계속 받는다).
+    // 지우면 DELETE가 온다(진짜 Supabase는 old에 기본 키 id만 준다). deleted_at이 찍힌 UPDATE는 옛 서버(삭제 표시)용으로 계속 알아본다.
     return { table, type, placeId: id, removed: type === 'DELETE' || Boolean(row?.deleted_at), row };
   }
   return { table, type, placeId: row?.place_id ?? old?.place_id ?? null, mission: row?.mission ?? null, row };

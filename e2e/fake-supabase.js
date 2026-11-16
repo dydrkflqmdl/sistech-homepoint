@@ -19,13 +19,13 @@
 //   setAdmins(emails)       이 이메일들의 세션에 app_metadata.role = 'admin'을 넣는다(다음 setSession·로그인부터). localStorage에 둔다
 //   seedAccounts(users)     가짜 admin-users 함수의 계정 목록([{ id, login_id, email, created_at, last_sign_in_at, is_admin, role? }]). role이 없으면 is_admin이면 'admin', 아니면 'staff'
 //   setRoles(map)           이메일 → 'staff' | 'contractor'. my_role()과 거절 판정은 이 값(DB의 현재 역할)을 따르고, 세션(JWT) app_metadata.role은 다음 setSession·로그인부터 반영된다
-//                           (세션을 만든 뒤 setRoles로 바꾸면 "토큰은 직원, DB는 외주"인 낡은 화면을 만들 수 있다)
-//   외주(contractor) 계정: import_places·delete_place는 '외주 계정은 미션 기록과 메모만 할 수 있습니다.'(P0001)로 거절한다. update_memo·save_mission은 허용한다
-//   contractorMessage       undefined가 아니면 외주 거절 문구를 이 값으로 바꾼다(예전 서버 문구 '외주 계정은 미션 기록만 할 수 있습니다.' 흉내)
+//                           (세션을 만든 뒤 setRoles로 바꾸면 "토큰은 직원, DB는 비행팀"인 낡은 화면을 만들 수 있다)
+//   비행팀(contractor) 계정: import_places·delete_place는 '비행팀 계정은 미션 기록과 메모만 할 수 있습니다.'(P0001)로 거절한다. update_memo·save_mission은 허용한다
+//   contractorMessage       undefined가 아니면 비행팀 거절 문구를 이 값으로 바꾼다(문구가 어긋난 서버 흉내)
 //   my_role() RPC: 'admin' | 'staff' | 'contractor'. failNext({ name: 'my_role', status: 500 })로 실패시키면 앱은 지금 역할을 그대로 둔다
 //                           (처음 열 때는 세션(JWT)의 역할, 그 뒤로는 마지막으로 받은 역할)
 //   myRoleValue             undefined가 아니면 my_role()이 이 값을 그대로 돌려준다(null: auth.users에 행이 없는 지운 계정 흉내). 페이지를 새로 열면 지워진다
-//                           쓰기 RPC의 거절 판정도 이 값을 따른다. null이면 update_memo는 '로그인한 계정을 찾을 수 없습니다. 다시 로그인해 주세요.', 가져오기·지우기는 외주 문구
+//                           쓰기 RPC의 거절 판정도 이 값을 따른다. null이면 update_memo는 '로그인한 계정을 찾을 수 없습니다. 다시 로그인해 주세요.', 가져오기·지우기는 비행팀 문구
 //   admin-users reset_password: 다른 관리자 계정은 400 '관리자 계정은 본인만 비밀번호를 바꿀 수 있습니다.'(본인 것은 됨)
 //   admin-users: list(role 포함)·create(role 선택)·set_role({ user_id, role: 'staff' | 'contractor' }, 관리자 계정·잘못된 값은 거절)
 //   accounts()              지금 계정 목록 복사본
@@ -39,7 +39,10 @@
 //   get_places(p_ids)        계약 C2. noGetPlaces = true면 PGRST202(함수 없음)로 실패한다.
 //   update_memo(…, p_base_memo) 계약 C1: base가 지금 메모와 다르면 { status: 'conflict', place }.
 //                            legacyMemo = true면 옛 서버(인자 2개, 장소를 그대로 돌려줌, 3인자 호출은 PGRST202)
-//   softDelete = true        계약 C3: delete_place가 deleted_at만 찍는다(목록·조회에서 빠짐, 알림은 UPDATE)
+//   delete_place             장소 행과 그 장소의 미션 기록을 실제로 지운다(알림은 places DELETE·missions DELETE, 둘 다 old에 id만).
+//                            다시 import_places하면 새 id의 새 장소이고 미션 기록은 없다. 옛 서버의 deleted_at 알림은 remoteChange로 흉내 낼 수 있다
+//   clear_mission(p_place_id, p_mission, p_base_version)  관리자·직원만(비행팀 거절). → { status: 'ok', cleared } | { status: 'conflict', record }
+//                            순서: 장소 없음 → 기록 없음(cleared: false) → version 다름(conflict) → 삭제(missions DELETE 알림)
 //   snapshotAtCall = ['get_places']  그 RPC는 부른 순간의 DB로 답하고 지연 뒤 돌려준다(늦게 온 옛 받기 결과 흉내)
 //   setAppLoginIds(map)      이메일 → app_metadata.login_id(계약 C4, 다음 setSession·로그인부터)
 //   비밀번호 규칙은 login-id.js의 isValidPassword·PASSWORD_RULE이 있으면 그것을, 없으면 6자~72바이트(길이만)
@@ -270,14 +273,22 @@
       denyContractor(session);
       const p = findLive(db, p_place_id);
       if (!p) return { result: false, wrote: false };
-      if (fake.softDelete) {
-        p.deletedAt = now();
-        p.updatedAt = now();
-      } else {
-        db.places = db.places.filter((x) => x !== p);
-        db.missions = db.missions.filter((m) => m.placeId !== p_place_id);
-      }
+      db.places = db.places.filter((x) => x !== p);
+      db.missions = db.missions.filter((m) => m.placeId !== p_place_id);
       return { result: true, wrote: true, table: 'places' };
+    },
+    // 미션 기록 한 건 지우기. 검사 순서: 권한 → 장소 → 기록 없음 → version 불일치(충돌) → 삭제
+    clear_mission: (db, { p_place_id, p_mission, p_base_version } = {}, session) => {
+      denyContractor(session);
+      const place = findLive(db, p_place_id);
+      if (!place) throw new RpcError('장소를 찾을 수 없습니다.');
+      const row = db.missions.find((m) => m.placeId === place.id && m.mission === p_mission);
+      if (!row) return { result: { status: 'ok', cleared: false }, wrote: false };
+      if ((p_base_version ?? null) !== null && p_base_version !== row.version) {
+        return { result: { status: 'conflict', record: missionJson(row) }, wrote: false };
+      }
+      db.missions = db.missions.filter((m) => m !== row);
+      return { result: { status: 'ok', cleared: true }, wrote: true, table: 'missions' };
     },
   };
 
@@ -344,15 +355,15 @@
     const account = load(ACCOUNTS_KEY, []).find((u) => String(u.email).toLowerCase() === lower);
     return account?.role === 'contractor' ? 'contractor' : 'staff';
   };
-  const CONTRACTOR_MESSAGE = '외주 계정은 미션 기록과 메모만 할 수 있습니다.';
+  const CONTRACTOR_MESSAGE = '비행팀 계정은 미션 기록과 메모만 할 수 있습니다.';
   const GONE_MESSAGE = '로그인한 계정을 찾을 수 없습니다. 다시 로그인해 주세요.';
   // 쓰기 RPC가 보는 지금 역할. my_role과 같은 값이다(myRoleValue = null이면 auth.users에 없는 지운 계정).
   const writeRole = (session) => (fake.myRoleValue !== undefined ? fake.myRoleValue : liveRole(session.user.email));
-  // 가져오기·지우기는 관리자·직원만 통과한다(외주와 지운 계정은 외주 문구로 거절).
+  // 가져오기·지우기는 관리자·직원만 통과한다(비행팀과 지운 계정은 비행팀 문구로 거절).
   const denyContractor = (session) => {
     if (!['admin', 'staff'].includes(writeRole(session))) throw new RpcError(fake.contractorMessage ?? CONTRACTOR_MESSAGE);
   };
-  // 메모는 관리자·직원·외주가 통과한다(지운 계정만 거절).
+  // 메모는 관리자·직원·비행팀이 통과한다(지운 계정만 거절).
   const denyGone = (session) => {
     if (!['admin', 'staff', 'contractor'].includes(writeRole(session))) throw new RpcError(GONE_MESSAGE);
   };
@@ -392,7 +403,7 @@
   const passwordOk = (pw) =>
     typeof isValidPassword === 'function' ? isValidPassword(pw) : typeof pw === 'string' && pw.length >= 6 && new TextEncoder().encode(pw).length <= 72;
   const passwordRule = () => (typeof PASSWORD_RULE === 'string' ? PASSWORD_RULE : '비밀번호는 6자 이상 72자 이하여야 합니다.');
-  const ROLE_RULE = '권한은 직원 또는 외주만 고를 수 있습니다.';
+  const ROLE_RULE = '권한은 직원 또는 비행팀만 고를 수 있습니다.';
   function adminUsers(body, session) {
     if (!session) throw new FnError(401, '로그인이 필요합니다.');
     if (session.user.app_metadata?.role !== 'admin') throw new FnError(403, '관리자만 쓸 수 있는 기능입니다.');
@@ -498,7 +509,6 @@
     emitted: [],
     noGetPlaces: false,
     legacyMemo: false,
-    softDelete: false,
     // 이름이 든 RPC는 부른 순간의 DB로 답한다(지연 뒤 도착). 기본은 지연이 끝날 때의 DB.
     snapshotAtCall: [],
     failNext({ status = 401, code = 'PGRST301', message = 'JWT expired', name = null } = {}) { failQueue.push({ status, code, message, name }); },

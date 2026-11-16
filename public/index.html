@@ -93,7 +93,11 @@
             <div id="color-filters" class="chips" role="group" aria-label="진행 상태로 거르기"></div>
           </div>
 
-          <p id="list-summary" class="summary"></p>
+          <!-- 목록 요약 한 줄: 장소 수("장소 142개") 옆에 전체 장소의 미션 진행("총 미션 70/2840 (2%)") -->
+          <div id="summary-row" class="summary-row" hidden>
+            <p id="list-summary" class="summary"></p>
+            <p id="mission-total" class="summary"></p>
+          </div>
           <!-- 목록을 받는 중("불러오는 중…")이거나 못 받았을 때(안내 + [다시 시도]) -->
           <div id="list-status" class="list-status" hidden></div>
           <ul id="place-list" class="list"></ul>

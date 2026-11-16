@@ -186,24 +186,33 @@ await sleep(700);
 let ids = await ev(`__fake.calls.filter(c => c.name === 'get_places').map(c => c.params.p_ids)`);
 check('다른 기기의 미션 기록 변경 → missions 알림의 place_id(2)만 get_places로 받아 반영', ids.length === get0 + 1 && JSON.stringify(ids.at(-1)) === '[2]' && (await ev(`/미션 1\\/2/.test(__e2e.row('SW_02').querySelector('.badge').textContent)`)), ids.at(-1));
 
-// C3: 지운 표시(deleted_at) → 받지 않고 바로 뺌
+// 옛 서버가 보내던 지운 표시(deleted_at) UPDATE도 알아봄 → 받지 않고 바로 뺌
 get0 = await calls('get_places');
 list0 = await calls('list_places');
 await ev(`__fake.remoteChange((db) => { db.places.find(p => p.name === 'TB_01').deletedAt = new Date().toISOString(); })`);
 await sleep(700);
 v = await ev(`({ summary: document.querySelector('#list-summary').textContent, groups: [...document.querySelectorAll('#place-list .group-name')].map(g => g.textContent) })`);
-check('C3: deleted_at이 찍힌 UPDATE → 다시 받지 않고 목록에서 바로 뺌', v.summary === '장소 2개' && !v.groups.includes('보은') && (await calls('get_places')) === get0 && (await calls('list_places')) === list0, v);
+check('옛 서버(삭제 표시): deleted_at이 찍힌 UPDATE → 다시 받지 않고 목록에서 바로 뺌', v.summary === '장소 2개' && !v.groups.includes('보은') && (await calls('get_places')) === get0 && (await calls('list_places')) === list0, v);
 
-// 내가 지움(soft delete 서버): 목록에서 빠지고 알림 뒤에도 다시 받지 않음
-await ev(`__fake.softDelete = true`);
+// 내가 지움(진짜 삭제 서버): 장소 행과 그 미션 기록이 실제로 없어지고, 알림은 DELETE(old에 id만)다.
+// places DELETE는 id로 바로 빼고, missions DELETE는 place_id가 없어 전체를 한 번 다시 받는다(그래도 지운 장소는 돌아오지 않는다).
 await ev(`__e2e.row('SW_02').click()`); await sleep(250);
 get0 = await calls('get_places');
 list0 = await calls('list_places');
+const emitted0 = await ev(`__fake.emitted.length`);
 await ev(`document.querySelector('#detail .delete-place .link').click()`);
-await sleep(800);
-v = await ev(`({ summary: document.querySelector('#list-summary').textContent, detail: !document.querySelector('#detail').hidden, deleted: !!__fake.rawDb().places.find(p => p.name === 'SW_02').deletedAt })`);
-check('soft delete 서버에서 장소 삭제 → 목록에서 빠지고, 자기 알림(deleted_at)으로 다시 받지 않음', v.summary === '장소 1개' && !v.detail && v.deleted && (await calls('get_places')) === get0 && (await calls('list_places')) === list0, v);
-await ev(`__fake.softDelete = false`);
+await sleep(1200);
+v = await ev(`({
+  summary: document.querySelector('#list-summary').textContent, detail: !document.querySelector('#detail').hidden,
+  rawPlace: !!__fake.rawDb().places.find(p => p.name === 'SW_02'), rawMissions: __fake.rawDb().missions.filter(m => m.placeId === 2).length,
+  emitted: __fake.emitted.slice(${emitted0}).map(e => e.table + ':' + e.eventType + ':' + e.id + ':' + e.placeId),
+  stillListed: !!__e2e.row('SW_02'),
+})`);
+check('진짜 삭제 서버에서 장소 삭제 → DB에서 장소·미션 기록이 실제로 없어지고 목록에서 빠짐',
+  v.summary === '장소 1개' && !v.detail && !v.rawPlace && v.rawMissions === 0 && !v.stillListed, v);
+check('삭제 알림은 DELETE(id만): places:DELETE:2:null, missions:DELETE:<기록 id>:null', v.emitted.includes('places:DELETE:2:null') && v.emitted.some((e) => /^missions:DELETE:\d+:null$/.test(e)), v.emitted);
+check('places DELETE는 다시 받지 않고, missions DELETE(place_id 없음)만 전체 다시 받기 1회 — 지운 장소는 돌아오지 않음',
+  (await calls('get_places')) === get0 && (await calls('list_places')) - list0 <= 1 && !v.stillListed, { get: (await calls('get_places')) - get0, list: (await calls('list_places')) - list0 });
 
 // C2가 없는 서버: get_places → PGRST202 → 전체(list_places)로 대신, 다음부터는 바로 전체
 await ev(`__fake.noGetPlaces = true`);

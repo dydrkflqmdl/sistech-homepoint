@@ -68,3 +68,6 @@ export function missionProgress(missionString, records = []) {
   const done = (records ?? []).filter((r) => r?.done === true && names.has(r.mission)).length;
   return { total: names.size, done };
 }
+
+// 진행률(%)을 정수로. 내림이라 다 끝나기 전에는 100이 되지 않는다(189/190 → 99). 전체가 0이면 0.
+export const missionPercent = (done, total) => (total > 0 ? Math.floor((done / total) * 100) : 0);

@@ -1,7 +1,7 @@
--- 외주 계정도 메모를 쓸 수 있게 한다.
--- 외주(contractor): 장소 보기, 미션 기록, 메모 고치기(update_memo)를 할 수 있다.
+-- 비행팀 계정도 메모를 쓸 수 있게 한다.
+-- 비행팀(contractor): 장소 보기, 미션 기록, 메모 고치기(update_memo)를 할 수 있다.
 --                   CSV 가져오기(import_places), 장소 지우기(delete_place)는 여전히 거절한다.
--- 거절 문구도 바꾼다: '외주 계정은 미션 기록과 메모만 할 수 있습니다.'
+-- 거절 문구도 바꾼다: '비행팀 계정은 미션 기록과 메모만 할 수 있습니다.'
 -- 지운 계정(auth.users에 행이 없어 app_role()이 null)은 세 함수 모두 계속 거절한다.
 --
 -- 20261112100000_roles.sql은 이미 배포했으므로 고치지 않고, 세 함수를 그 파일의 정의 그대로 다시 만든다.
@@ -10,7 +10,7 @@
 
 -- ===================================================================
 -- 1) import_places: 거절 문구만 바꾼다
--- 20261112100000_roles.sql의 정의 그대로이고, 외주 거절 문구만 바꿨다(관리자·직원만 통과는 그대로).
+-- 20261112100000_roles.sql의 정의 그대로이고, 비행팀 거절 문구만 바꿨다(관리자·직원만 통과는 그대로).
 -- ===================================================================
 
 create or replace function public.import_places(rows jsonb) returns jsonb
@@ -48,7 +48,7 @@ begin
     raise exception using message = '로그인이 필요합니다.', errcode = 'P0001';
   end if;
   if coalesce(public.app_role(), '') not in ('admin', 'staff') then
-    raise exception using message = '외주 계정은 미션 기록과 메모만 할 수 있습니다.', errcode = 'P0001';
+    raise exception using message = '비행팀 계정은 미션 기록과 메모만 할 수 있습니다.', errcode = 'P0001';
   end if;
   if rows is null or jsonb_typeof(rows) <> 'array' then
     raise exception using message = '가져올 장소 목록이 잘못되었습니다.', errcode = 'P0001';
@@ -163,8 +163,8 @@ end
 $$;
 
 -- ===================================================================
--- 2) update_memo: 외주도 통과
--- 20261112100000_roles.sql의 정의 그대로이고, 권한 검사만 바꿨다(관리자·직원·외주 통과).
+-- 2) update_memo: 비행팀도 통과
+-- 20261112100000_roles.sql의 정의 그대로이고, 권한 검사만 바꿨다(관리자·직원·비행팀 통과).
 -- 이제 이 거절은 auth.users에 없는 계정(지운 계정 등)만 받으므로 문구도 바꿨다.
 -- ===================================================================
 
@@ -208,7 +208,7 @@ $$;
 
 -- ===================================================================
 -- 3) delete_place: 거절 문구만 바꾼다
--- 20261112100000_roles.sql의 정의 그대로이고, 외주 거절 문구만 바꿨다(관리자·직원만 통과는 그대로).
+-- 20261112100000_roles.sql의 정의 그대로이고, 비행팀 거절 문구만 바꿨다(관리자·직원만 통과는 그대로).
 -- ===================================================================
 
 create or replace function public.delete_place(p_place_id bigint) returns boolean
@@ -220,7 +220,7 @@ begin
     raise exception using message = '로그인이 필요합니다.', errcode = 'P0001';
   end if;
   if coalesce(public.app_role(), '') not in ('admin', 'staff') then
-    raise exception using message = '외주 계정은 미션 기록과 메모만 할 수 있습니다.', errcode = 'P0001';
+    raise exception using message = '비행팀 계정은 미션 기록과 메모만 할 수 있습니다.', errcode = 'P0001';
   end if;
   update public.places set deleted_at = now() where id = p_place_id and deleted_at is null;
   return found;

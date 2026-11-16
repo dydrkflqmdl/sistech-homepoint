@@ -384,7 +384,7 @@ test('roleOf: admin·contractor 만 그대로, 없거나 모르는 값은 staff'
   assert.equal(roleOf({ role: 'admin' }), 'admin');
   assert.equal(roleOf({ role: 'contractor' }), 'contractor');
   assert.equal(roleOf({ role: 'staff' }), 'staff');
-  for (const meta of [{}, null, undefined, { role: '' }, { role: 'Contractor' }, { role: 'ADMIN' }, { role: 1 }, { role: ['admin'] }, { role: '외주' }]) {
+  for (const meta of [{}, null, undefined, { role: '' }, { role: 'Contractor' }, { role: 'ADMIN' }, { role: 1 }, { role: ['admin'] }, { role: '비행팀' }]) {
     assert.equal(roleOf(meta), 'staff', JSON.stringify(meta));
   }
 });
@@ -411,10 +411,10 @@ test('list: role 값(admin·staff·contractor, 모르는 값과 null 은 staff),
   });
 });
 
-test('create: role 을 주면 app_metadata.role 에 넣는다(직원·외주), 없거나 null 이면 직원', async () => {
+test('create: role 을 주면 app_metadata.role 에 넣는다(직원·비행팀), 없거나 null 이면 직원', async () => {
   const deps = makeFakeDeps();
   const cases = [
-    ['외주1', 'contractor', 'contractor'],
+    ['비행팀1', 'contractor', 'contractor'],
     ['직원1', 'staff', 'staff'],
     ['기본1', undefined, 'staff'],
     ['기본2', null, 'staff'],
@@ -428,10 +428,10 @@ test('create: role 을 주면 app_metadata.role 에 넣는다(직원·외주), �
   }
 });
 
-test('create: 직원·외주가 아닌 role 은 400(관리자도 만들 수 없음), 계정은 만들지 않는다', async () => {
-  assert.equal(ROLE_RULE, '권한은 직원 또는 외주만 고를 수 있습니다.');
+test('create: 직원·비행팀이 아닌 role 은 400(관리자도 만들 수 없음), 계정은 만들지 않는다', async () => {
+  assert.equal(ROLE_RULE, '권한은 직원 또는 비행팀만 고를 수 있습니다.');
   const deps = makeFakeDeps();
-  for (const bad of ['admin', 'Contractor', 'STAFF', '', '외주', '직원', 1, true, {}, ['staff']]) {
+  for (const bad of ['admin', 'Contractor', 'STAFF', '', '비행팀', '직원', 1, true, {}, ['staff']]) {
     const res = await call(deps, { action: 'create', login_id: '손두병', password: PW, role: bad });
     assert.equal(res.status, 400, JSON.stringify(bad));
     assert.deepEqual(res.body, { ok: false, error: ROLE_RULE }, JSON.stringify(bad));
@@ -440,7 +440,7 @@ test('create: 직원·외주가 아닌 role 은 400(관리자도 만들 수 없�
   assert.equal(deps.users.length, 0);
 });
 
-test('set_role: 직원 → 외주 → 직원, app_metadata 의 login_id·provider 는 남는다', async () => {
+test('set_role: 직원 → 비행팀 → 직원, app_metadata 의 login_id·provider 는 남는다', async () => {
   const seed = [
     ...SEED,
     { id: 'u-6', email: `${domainToASCII('오성민')}@sistech.local`, created_at: '2026-01-06T00:00:00Z', last_sign_in_at: null, user_metadata: { login_id: '오성민' }, app_metadata: { provider: 'email', login_id: '오성민' } },
@@ -490,7 +490,7 @@ test('set_role: 관리자 계정·자기 자신은 400, 바꾸지 않는다', as
 
 test('set_role: 잘못된 role·빠진 role 은 400, 빠진 user_id 는 400, 없는 계정은 404', async () => {
   const deps = makeFakeDeps(SEED);
-  for (const bad of [undefined, null, 'admin', 'Contractor', '', '외주', 1, {}]) {
+  for (const bad of [undefined, null, 'admin', 'Contractor', '', '비행팀', 1, {}]) {
     const res = await call(deps, { action: 'set_role', user_id: 'u-2', role: bad });
     assert.equal(res.status, 400, JSON.stringify(bad));
     assert.deepEqual(res.body, { ok: false, error: ROLE_RULE }, JSON.stringify(bad));

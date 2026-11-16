@@ -939,6 +939,17 @@ p {
   flex: 1;
 }
 
+/* [기록 지우기]: 지우는 동작이라 위험 색 글자·테두리로 [수정]과 구분한다(바탕은 그대로). */
+.btn.clear-record {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn.clear-record:hover {
+  border-color: var(--danger);
+  background: #fdecec;
+}
+
 /* 저장한 미션 기록 보기 화면 */
 .mission-view {
   display: grid;
@@ -1176,6 +1187,18 @@ p {
 }
 
 .summary:empty {
+  display: none;
+}
+
+/* 목록 요약 한 줄: 왼쪽에 장소 수, 그 옆에 전체 미션 진행. 좁으면 다음 줄로 넘긴다. */
+.summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+}
+
+.summary-row[hidden] {
   display: none;
 }
 
@@ -1971,7 +1994,7 @@ body.dragging .drop-overlay {
   }
 }
 
-/* ── 외주 계정(body.role-contractor, session.js applyRole) ─────
+/* ── 비행팀 계정(body.role-contractor, session.js applyRole) ─────
    보기·검색·길찾기·미션 기록·메모를 쓴다. 가져오기·내보내기·장소 삭제는 숨긴다(JS도 막는다). */
 .role-contractor #import-button,
 .role-contractor #csv-input,
@@ -1984,7 +2007,7 @@ body.dragging .drop-overlay {
   display: none !important;
 }
 
-/* 빈 화면 안내: 가져오기 방법은 외주에게 쓸모없으니 숨기고 한 줄만 보인다. */
+/* 빈 화면 안내: 가져오기 방법은 비행팀에게 쓸모없으니 숨기고 한 줄만 보인다. */
 .contractor-only {
   display: none;
 }

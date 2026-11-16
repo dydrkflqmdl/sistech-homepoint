@@ -1,7 +1,7 @@
 // 상세 정보의 미션 기록: 보기·입력 폼(이름은 읽기 전용), 초안·검사, 저장·취소·충돌 안내(최신값/덮어쓰기)·다시 시도, 떠나기 전 확인.
 import { $, h, refocus, toast } from './dom.js';
 import { findPlace, hooks, isPlaceGone, rememberOwnWrite, replacePlace, state } from './state.js';
-import { authEpoch, authFailed, currentWorkerName } from './session.js';
+import { authEpoch, authFailed, currentWorkerName, isContractor } from './session.js';
 import { discardMemo, flushMemo, memoUnsaved } from './memo-ui.js';
 import * as api from './api.js';
 import { BATTERY_NO_DIGITS, formatBatteryNo, normalizeBatteryNo, parseBatteryNo } from './battery-no.js';
@@ -441,6 +441,9 @@ function loadLatestMission(placeId, name) {
 }
 
 export function missionView(p, record) {
+  const viewKey = missionKey(p.id, record.mission);
+  // 지우는 중에는 [수정]·[기록 지우기]를 막는다(저장 중과 같은 집합).
+  const busy = missionSaving.has(viewKey);
   const show = (v) => (String(v ?? '').trim() ? String(v) : '—');
   return h(
     'div',
@@ -455,12 +458,79 @@ export function missionView(p, record) {
         h('dd', {}, show(key === 'batteryLeft' ? batteryLeftText(record[key]) : record[key])),
       ]).flat(),
     ),
+    // 기록 지우기가 끝나지 못한 까닭(충돌·오류). 창(모달)이 화면 아래 알림을 덮으므로 창 안에도 보인다.
+    missionViewNotices.has(viewKey) && h('p', { class: 'mission-form-notice', role: 'alert' }, missionViewNotices.get(viewKey)),
     h(
       'div',
       { class: 'button-row' },
-      h('button', { type: 'button', class: 'btn edit', autofocus: true, onclick: () => editMission(p, record.mission) }, '수정'),
+      h('button', { type: 'button', class: 'btn edit', autofocus: true, disabled: busy, onclick: () => editMission(p, record.mission) }, '수정'),
+      // 비행팀 계정은 기록을 지울 수 없다(서버도 거절한다).
+      !isContractor() &&
+        h('button', { type: 'button', class: 'btn clear-record', disabled: busy, onclick: () => clearMissionRecord(p.id, record.mission) }, busy ? '지우는 중…' : '기록 지우기'),
     ),
   );
+}
+
+// 기록 지우기가 막힌 까닭(보기 화면 안에 보인다). 키는 missionKey.
+const missionViewNotices = new Map();
+
+// [기록 지우기]: 그 미션 기록 한 건만 서버에서 지워 "기록 없음" 상태로 돌린다(장소·다른 미션·메모는 그대로).
+// 화면이 본 version을 같이 보내, 그사이 다른 기기가 고쳤으면 지우지 않고 최신 기록을 보여 준다.
+async function clearMissionRecord(id, name) {
+  if (isContractor()) return;
+  const place = findPlace(id);
+  const key = missionKey(id, name);
+  if (!place || missionSaving.has(key)) return;
+  const record = missionRecord(place, name);
+  if (!confirm(`"${place.name}"의 ${name} 기록을 지울까요?\n지우면 이 미션은 기록이 없는 상태로 돌아갑니다.`)) return;
+
+  missionViewNotices.delete(key);
+  missionSaving.add(key);
+  renderKeepingInput();
+  const epoch = authEpoch;
+  let result;
+  try {
+    result = await api.clearMission(id, name, record.version ?? null);
+  } catch (err) {
+    missionSaving.delete(key);
+    if (authFailed(err) || epoch !== authEpoch) return;
+    if (isPlaceGone(err)) {
+      dropGonePlace(id);
+      return;
+    }
+    missionViewNotices.set(key, err.message);
+    renderKeepingInput();
+    refocus(`${missionViewSelector(name)} .btn.clear-record`);
+    toast(err.message);
+    return;
+  }
+  missionSaving.delete(key);
+  if (epoch !== authEpoch) return;
+
+  const current = findPlace(id);
+  if (result?.status === 'conflict') {
+    // 다른 기기가 먼저 고쳤다. 지우지 않고 서버의 최신 기록을 화면에 보여 준다(창은 그대로).
+    const latest = result.record ?? null;
+    if (current) {
+      replacePlace({ ...current, missions: [...(current.missions ?? []).filter((m) => m.mission !== name), ...(latest ? [latest] : [])] });
+    }
+    const message = '다른 기기에서 먼저 바뀐 기록입니다. 최신 값을 확인한 뒤 다시 지워 주세요.';
+    missionViewNotices.set(key, message);
+    renderKeepingInput();
+    refocus(`${missionViewSelector(name)} .btn.clear-record`);
+    toast(message);
+    return;
+  }
+
+  // 지웠거나(cleared: true) 원래 기록이 없었다(cleared: false): 화면에서도 기록을 뺀다.
+  // replacePlace가 이 장소를 "화면이 직접 바꿈"으로 적어, 먼저 시작한 목록 받기가 늦게 끝나도 지운 기록을 되살리지 못한다.
+  if (current) replacePlace({ ...current, missions: (current.missions ?? []).filter((m) => m.mission !== name) });
+  if (draftMatches({ id }, name)) state.missionDraft = null;
+  const open = state.selectedId === id && state.selectedMission === name;
+  if (open) state.selectedMission = null;
+  renderKeepingInput();
+  if (open) refocus(missionItemSelector(name));
+  toast('미션 기록을 지웠습니다.');
 }
 
 // 미션 버튼: 그 미션의 기록 창(모달)을 연다. 아직 저장 안 한 미션은 바로 입력 화면, 저장한 미션은 보기 화면([수정])이다.
@@ -468,6 +538,7 @@ export function missionView(p, record) {
 export function toggleMission(name) {
   // 미션을 바꿀 때는 미션 초안만 묻는다(메모는 같은 장소라 그대로 둔다).
   if (!confirmDiscardMissionDraft()) return;
+  missionViewNotices.clear();
   state.selectedMission = state.selectedMission === name ? null : name;
   state.missionDraft = null;
   const p = state.places.find((x) => x.id === state.selectedId);
@@ -484,6 +555,7 @@ export function closeMissionDialog() {
   const p = findPlace(state.selectedId);
   if (p && missionSaving.has(missionKey(p.id, name))) return;
   if (!confirmDiscardMissionDraft()) return;
+  missionViewNotices.clear();
   state.selectedMission = null;
   state.missionDraft = null;
   renderDetail();
@@ -530,6 +602,7 @@ const missionViewSelector = (name) => `#detail .mission-view[data-mission="${CSS
 const missionFormSelector = (name) => `#detail .mission-form[data-mission="${CSS.escape(name)}"]`;
 
 function editMission(p, name) {
+  missionViewNotices.delete(missionKey(p.id, name));
   state.missionDraft = newMissionDraft(p, name);
   renderDetail();
   // 휴대폰 키보드가 바로 뜨지 않도록 글자 칸이 아니라 완료 체크 상자로 초점을 옮긴다.

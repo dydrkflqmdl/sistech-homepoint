@@ -29,13 +29,13 @@ export const BODY_TOO_LARGE_MESSAGE = '요청 본문이 너무 큽니다.';
 export const ORIGIN_DENIED_MESSAGE = '허용되지 않은 출처에서 온 요청입니다.';
 
 // ---- 계정 권한(app_metadata.role) ----
-// 'admin' 관리자, 'staff' 직원, 'contractor' 외주. 값이 없거나 모르는 값이면 직원이다(DB의 public.app_role()과 같은 규칙).
-// 이 함수로 고를 수 있는 것은 직원·외주뿐이다. 관리자는 여기서 만들거나 바꾸지 않는다.
+// 'admin' 관리자, 'staff' 직원, 'contractor' 비행팀. 값이 없거나 모르는 값이면 직원이다(DB의 public.app_role()과 같은 규칙).
+// 이 함수로 고를 수 있는 것은 직원·비행팀뿐이다. 관리자는 여기서 만들거나 바꾸지 않는다.
 export const ROLE_ADMIN = 'admin';
 export const ROLE_STAFF = 'staff';
 export const ROLE_CONTRACTOR = 'contractor';
 export const ASSIGNABLE_ROLES = Object.freeze([ROLE_STAFF, ROLE_CONTRACTOR]);
-export const ROLE_RULE = '권한은 직원 또는 외주만 고를 수 있습니다.';
+export const ROLE_RULE = '권한은 직원 또는 비행팀만 고를 수 있습니다.';
 export const ADMIN_ROLE_LOCKED_MESSAGE = '관리자 계정의 권한은 여기서 바꿀 수 없습니다.';
 export const ADMIN_PASSWORD_LOCKED_MESSAGE = '관리자 계정은 본인만 비밀번호를 바꿀 수 있습니다.';
 
@@ -48,7 +48,7 @@ export function roleOf(appMetadata) {
   return ROLE_STAFF;
 }
 
-// 요청의 role 값 검사. 없으면(undefined·null) fallback, 직원·외주가 아니면 400.
+// 요청의 role 값 검사. 없으면(undefined·null) fallback, 직원·비행팀이 아니면 400.
 /** @param {unknown} raw @param {'staff' | 'contractor' | null} fallback @returns {'staff' | 'contractor'} */
 function validateRole(raw, fallback) {
   if ((raw === undefined || raw === null) && fallback !== null) return fallback;
@@ -452,7 +452,7 @@ export function createHandler(deps, options = {}) {
       return json(200, { ok: true }, cors);
     },
 
-    // 직원 ↔ 외주 바꾸기. 관리자 계정(자기 자신 포함)은 바꾸지 않는다.
+    // 직원 ↔ 비행팀 바꾸기. 관리자 계정(자기 자신 포함)은 바꾸지 않는다.
     async set_role(body, cors, caller) {
       const user_id = typeof body.user_id === 'string' ? body.user_id.trim() : '';
       if (!user_id) throw new HttpError(400, '대상 계정이 지정되지 않았습니다.');

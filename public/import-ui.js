@@ -214,7 +214,7 @@ export function renderImport() {
 const isCsvFile = (f) => /\.(csv|tsv|txt)$/i.test(f.name) || f.type === 'text/csv';
 
 // 고르거나 끌어다 놓은 파일들로 가져오기 창을 연다. CSV가 아닌 파일은 건너뛴 것으로 보여 준다.
-// 외주 계정은 가져오기·내보내기를 쓸 수 없다. 단추는 숨겨 두지만, 끌어다 놓기 같은 다른 길도 여기서 막는다.
+// 비행팀 계정은 가져오기·내보내기를 쓸 수 없다. 단추는 숨겨 두지만, 끌어다 놓기 같은 다른 길도 여기서 막는다.
 function contractorBlocked() {
   if (!isContractor()) return false;
   toast(api.CONTRACTOR_MESSAGE);

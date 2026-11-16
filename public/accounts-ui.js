@@ -8,9 +8,9 @@ import { confirmDiscardDraft } from './missions-ui.js';
 import * as loginId from './login-id.js';
 import * as api from './api.js';
 
-// 권한 이름과 "~로 바꿨습니다" 문구. 관리자는 여기서 바꿀 수 없다(직원 ↔ 외주만).
-const ROLE_LABELS = { admin: '관리자', staff: '직원', contractor: '외주' };
-const ROLE_TO = { staff: '직원으로', contractor: '외주로' };
+// 권한 이름과 "~로 바꿨습니다" 문구. 관리자는 여기서 바꿀 수 없다(직원 ↔ 비행팀만).
+const ROLE_LABELS = { admin: '관리자', staff: '직원', contractor: '비행팀' };
+const ROLE_TO = { staff: '직원으로', contractor: '비행팀으로' };
 // 계정의 권한. 서버가 role을 안 주는 옛 판에서는 is_admin으로, 그것도 아니면 직원으로 본다.
 const roleOf = (u) => (u.is_admin || u.role === 'admin' ? 'admin' : u.role === 'contractor' ? 'contractor' : 'staff');
 
@@ -184,7 +184,7 @@ async function submitCreate() {
     if (epoch !== authEpoch || !accounts.open) return;
     accounts.create = { loginId: '', password: '', role: 'staff', invalid: null, shown: false };
     accounts.busy = false;
-    setAccountsMessage({ notice: role === 'contractor' ? `${id} 계정을 외주로 만들었습니다.` : `${id} 계정을 만들었습니다.` });
+    setAccountsMessage({ notice: role === 'contractor' ? `${id} 계정을 비행팀으로 만들었습니다.` : `${id} 계정을 만들었습니다.` });
     await loadAccounts();
     if (epoch === authEpoch && accounts.open) refocus('#accounts-new-id');
   } catch (err) {
@@ -196,7 +196,7 @@ async function submitCreate() {
   }
 }
 
-// 직원 ↔ 외주. 요청하는 동안 표의 단추를 모두 잠그고, 실패하면 서버 문구를 보여 주고 이전 값으로 되돌린다(다시 그리면 목록 값이 그대로다).
+// 직원 ↔ 비행팀. 요청하는 동안 표의 단추를 모두 잠그고, 실패하면 서버 문구를 보여 주고 이전 값으로 되돌린다(다시 그리면 목록 값이 그대로다).
 async function submitRole(user, role) {
   if (accounts.busy || accounts.loading) return;
   // 관리자 계정(본인 포함)은 바꿀 수 없다. 화면에는 단추를 두지 않지만 한 번 더 막는다.
@@ -375,7 +375,7 @@ function accountResetRow(u, self) {
   );
 }
 
-// 권한 칸: 관리자는 글자만, 나머지는 직원/외주 고르는 칸. 요청 중에는 모두 잠근다.
+// 권한 칸: 관리자는 글자만, 나머지는 직원/비행팀 고르는 칸. 요청 중에는 모두 잠근다.
 function roleCell(u, self) {
   const role = roleOf(u);
   if (role === 'admin' || self) return h('span', { class: 'accounts-role-text' }, ROLE_LABELS[role]);
@@ -500,7 +500,7 @@ function accountsCreateForm() {
           },
         }),
       ),
-      // 새 계정의 권한: 직원(기본) 또는 외주.
+      // 새 계정의 권한: 직원(기본) 또는 비행팀.
       h(
         'label',
         { class: 'field field-role' },
@@ -516,7 +516,7 @@ function accountsCreateForm() {
             },
           },
           h('option', { value: 'staff', selected: create.role !== 'contractor' }, '직원'),
-          h('option', { value: 'contractor', selected: create.role === 'contractor' }, '외주'),
+          h('option', { value: 'contractor', selected: create.role === 'contractor' }, '비행팀'),
         ),
       ),
     ),

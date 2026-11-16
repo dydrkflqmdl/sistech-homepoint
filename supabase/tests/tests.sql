@@ -42,7 +42,7 @@ end $$;
 create function t.raises(p_name text, p_sql text, p_message text) returns void
 language sql as $$ select t.eq(p_name, to_jsonb(t.err(p_sql)), to_jsonb('P0001: ' || p_message)) $$;
 
--- 이름으로 장소 id 찾기(지운 장소 포함)
+-- 이름으로 장소 id 찾기(지운 장소는 행이 없어 null)
 create function t.pid(p_name text) returns bigint
 language sql as $$ select id from public.places where name = p_name $$;
 
@@ -86,10 +86,10 @@ select t.eq('places 유일 제약은 places_name_coord (name, lat, lng) 하나',
 select t.ok('places에 시기 제약(places_period_len) 없음', not exists (select from pg_constraint where conrelid = 'public.places'::regclass and conname = 'places_period_len'));
 select t.ok('place_json·import_places 본문에 period 없음',
   not exists (select from pg_proc where pronamespace = 'public'::regnamespace and proname in ('place_json', 'import_places') and prosrc like '%period%'));
--- security definer는 표에 쓰는 RPC 넷, 감사 트리거, 로그인 기록 쓰기 셋, 권한 읽기 둘(app_role·my_role, auth.users를 읽음)뿐이다.
+-- security definer는 표에 쓰는 RPC 다섯(save_mission·update_memo·import_places·delete_place·clear_mission), 감사 트리거, 로그인 기록 쓰기 셋, 권한 읽기 둘(app_role·my_role, auth.users를 읽음)뿐이다.
 select t.eq('security definer 함수 목록',
   (select jsonb_agg(proname::text order by proname) from pg_proc where pronamespace = 'public'::regnamespace and prosecdef),
-  '["app_role", "audit_log_on_change", "delete_place", "import_places", "log_login", "log_logout", "login_logs_on_session", "my_role", "save_mission", "update_memo"]');
+  '["app_role", "audit_log_on_change", "clear_mission", "delete_place", "import_places", "log_login", "log_logout", "login_logs_on_session", "my_role", "save_mission", "update_memo"]');
 select t.ok('security definer 함수는 모두 search_path가 빈 값',
   not exists (select from pg_proc where pronamespace = 'public'::regnamespace and prosecdef and not ('search_path=""' = any (coalesce(proconfig, '{}')))),
   (select string_agg(proname, ', ') from pg_proc where pronamespace = 'public'::regnamespace and prosecdef and not ('search_path=""' = any (coalesce(proconfig, '{}')))));
@@ -112,6 +112,7 @@ select t.ok('authenticated는 RPC 실행 가능',
   and has_function_privilege('authenticated', 'public.save_mission(bigint, text, jsonb, integer)', 'execute')
   and has_function_privilege('authenticated', 'public.update_memo(bigint, text, text)', 'execute')
   and has_function_privilege('authenticated', 'public.delete_place(bigint)', 'execute')
+  and has_function_privilege('authenticated', 'public.clear_mission(bigint, text, integer)', 'execute')
   and has_function_privilege('authenticated', 'public.mission_names(text)', 'execute'));
 select t.ok('update_memo는 3인자 하나뿐(예전 2인자 없음, 셋째 인자 p_base_memo 기본값)',
   (select count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname = 'update_memo') = 1
@@ -182,6 +183,7 @@ select t.raises('sub 없이 import_places', $q$select public.import_places('[]')
 select t.raises('sub 없이 save_mission', $q$select public.save_mission(1, 'x', '{"done":true}', null)$q$, '로그인이 필요합니다.');
 select t.raises('sub 없이 update_memo', $q$select public.update_memo(1, 'x')$q$, '로그인이 필요합니다.');
 select t.raises('sub 없이 delete_place', 'select public.delete_place(1)', '로그인이 필요합니다.');
+select t.raises('sub 없이 clear_mission', $q$select public.clear_mission(1, 'x', null)$q$, '로그인이 필요합니다.');
 select t.eq('읽기 RPC는 sub 없이도 동작(아직 장소 없음)', public.list_places(), '[]');
 -- 여기부터 현장 사용자 u1로 로그인한 상태(JWT 클레임에 아이디 포함)
 select t.login(:'u1', :'u1_claims');
@@ -318,17 +320,17 @@ select t.ok('list_places 원소에 period 키 없음',
   not exists (select from jsonb_array_elements(public.list_places()) e where e ? 'period'));
 select t.ok('get_places 원소에 period 키 없음', not (public.get_places(array[t.pid('시기점')]) -> 0 ? 'period'));
 select t.ok('update_memo의 place에 period 키 없음', not (public.update_memo(t.pid('시기점'), '시기 메모') -> 'place' ? 'period'));
--- 지운 장소는 시기 키와 관계없이 같은 이름·좌표로 되살아난다.
+-- 지운 장소는 실제로 지워진다. 시기 키와 관계없이 같은 이름·좌표로 다시 가져오면 기록 없는 새 장소가 된다.
 create temp table period_gone as select t.pid('시기점') as id;
 select t.ok('시기점 지우기', public.delete_place((select id from period_gone)));
-select t.eq('다른 시기 키로 다시 가져와도 되살림(imported 1)',
+select t.eq('다른 시기 키로 다시 가져와도 새 장소(imported 1)',
   public.import_places('[{"name":"시기점","period":"Q9","lat":35.7,"lng":127.7}]'),
   '{"imported":1,"duplicates":0,"updated":0,"missionChanged":0}');
-select t.eq('되살린 시기점: 같은 id, deleted_at 비움, 기록 그대로',
-  (select jsonb_build_array(id = (select id from period_gone), deleted_at is null,
-                            (select jsonb_agg(m.mission || ':' || m.flight_time) from public.missions m where m.place_id = p.id))
+select t.eq('새 시기점: 새 id, 옛 기록 없음',
+  (select jsonb_build_array(id <> (select id from period_gone), (select count(*) from public.missions m where m.place_id = p.id),
+                            exists (select from public.missions m where m.place_id = (select id from period_gone)))
    from public.places p where name = '시기점'),
-  '[true, true, ["PA_1:Q1분"]]');
+  '[true, 0, false]');
 
 -- ---------- save_mission ----------
 -- A의 미션은 지금 "M_01 ~ 02"(M_01, M_02). 예전 범위의 M_03 기록을 만들 수 없어야 한다.
@@ -511,42 +513,123 @@ select t.eq('인자 이름으로 3인자 호출(PostgREST 방식)',
 select t.eq('인자 이름으로 2인자 호출(예전 화면)',
   public.update_memo(p_place_id => t.pid('A'), p_memo => '메모6') #> '{place,memo}', '"메모6"');
 
--- ---------- delete_place(soft delete, 계약 C3) ----------
+-- ---------- delete_place(실제 삭제, 계약 C3) ----------
+-- 행을 실제로 지운다. 미션 기록은 외래키(on delete cascade)로 함께 지워지고, 다시 등록하면 기록 없는 새 장소다.
 select t.ok('지우기 전 A의 기록 있음', exists (select from public.missions where place_id = t.pid('A')));
 create temp table gone as select t.pid('A') as id, (select count(*) from public.missions where place_id = t.pid('A')) as n;
 select t.ok('delete_place → true', public.delete_place((select id from gone)));
-select t.ok('soft delete: 행은 남고 deleted_at이 채워짐', (select deleted_at is not null from public.places where id = (select id from gone)));
-select t.ok('soft delete: 미션 기록은 그대로 남음', (select count(*) from public.missions where place_id = (select id from gone)) = (select n from gone));
+select t.ok('실제 삭제: 장소 행이 없어짐', not exists (select from public.places where id = (select id from gone)));
+select t.ok('실제 삭제: 그 장소의 미션 기록도 없어짐(지우기 전에는 있었음)',
+  (select n from gone) > 0 and not exists (select from public.missions where place_id = (select id from gone)));
 select t.ok('지운 장소는 list_places에서 빠짐', not exists (select from jsonb_array_elements(public.list_places()) e where (e ->> 'id')::bigint = (select id from gone)));
 select t.eq('지운 장소는 get_places에서도 빠짐', public.get_places(array[(select id from gone)]), '[]');
 select t.ok('다시 지우면 false', not public.delete_place((select id from gone)));
 select t.ok('없는 장소 지우기 false', not public.delete_place(999999));
+select t.ok('null 장소 지우기 false', not public.delete_place(null));
 select t.raises('지운 장소에 미션 저장 → 장소 없음',
   format($q$select public.save_mission(%s, 'M_01', '{"worker":"x"}', 11)$q$, (select id from gone)), '장소를 찾을 수 없습니다.');
 select t.raises('지운 장소 메모 → 장소 없음', format($q$select public.update_memo(%s, 'x')$q$, (select id from gone)), '장소를 찾을 수 없습니다.');
--- 같은 장소를 다시 가져오면 되살아난다. 지금 A: 시군 서산시, 주소 남면 2, 전화 010-1, 미션 M_01 ~ 02, 메모 메모6
-select t.eq('지운 장소 다시 가져오기 → imported 1(되살림)',
-  public.import_places('[{"name":"A","district":"","address":"새 주소","phone":"999","memo":"새 메모","mission":"","lat":36.1234568,"lng":126.1}]'),
+select t.raises('지운 장소에 clear_mission → 장소 없음',
+  format($q$select public.clear_mission(%s, 'M_01', null)$q$, (select id from gone)), '장소를 찾을 수 없습니다.');
+-- 같은 이름·좌표로 다시 가져오면 새 장소다(옛 id·옛 기록·옛 메모는 이어받지 않는다).
+select t.eq('지운 장소 다시 가져오기 → imported 1(새 장소)',
+  public.import_places('[{"name":"A","district":"서산시","address":"남면 2","phone":"010-1","memo":"메모6","mission":"M_01 ~ 02","lat":36.1234568,"lng":126.1}]'),
   '{"imported":1,"duplicates":0,"updated":0,"missionChanged":0}');
-select t.eq('되살린 장소: 같은 id, deleted_at 비움, 갱신 규칙(주소만 CSV로), 전화·메모·미션명 그대로',
-  (select jsonb_build_array(id = (select id from gone), deleted_at is null, district, address, phone, memo, mission) from public.places where name = 'A'),
-  '[true, true, "서산시", "새 주소", "010-1", "메모6", "M_01 ~ 02"]');
-select t.eq('되살린 장소의 옛 미션 기록이 list_places에 다시 나옴',
-  (select to_jsonb(jsonb_array_length(e -> 'missions')) from jsonb_array_elements(public.list_places()) e where e ->> 'name' = 'A'),
-  (select to_jsonb(n) from gone));
-select t.eq('되살린 뒤 다시 가져오면 평소처럼 중복', public.import_places('[{"name":"A","lat":36.1234568,"lng":126.1}]'),
+select t.eq('새 장소: 새 id, deleted_at 비어 있음, 값은 CSV 그대로',
+  (select jsonb_build_array(id <> (select id from gone), deleted_at is null, district, address, phone, memo, mission) from public.places where name = 'A'),
+  '[true, true, "서산시", "남면 2", "010-1", "메모6", "M_01 ~ 02"]');
+select t.eq('같은 (이름, 좌표) 행은 하나뿐', (select to_jsonb(count(*)::int) from public.places where name = 'A' and lat = 36.1234568 and lng = 126.1), '1');
+select t.eq('새 장소에는 옛 미션 기록이 없음(list_places missions [])',
+  (select e -> 'missions' from jsonb_array_elements(public.list_places()) e where e ->> 'name' = 'A'), '[]');
+select t.ok('옛 장소 id에도 기록이 없음', not exists (select from public.missions where place_id = (select id from gone)));
+select t.eq('다시 가져온 뒤 또 가져오면 평소처럼 중복', public.import_places('[{"name":"A","lat":36.1234568,"lng":126.1}]'),
   '{"imported":0,"duplicates":1,"updated":0,"missionChanged":0}');
-select t.eq('되살린 장소에 이어서 저장(version 12)', t.sm('A', 'M_01', '{"worker":"되살림"}', 11) #> '{record,version}', '12');
--- 지운 장소를 미션명을 바꿔 두 줄로 가져오기: 첫 줄은 되살림(imported, missionChanged로 세지 않음), 둘째 줄은 평소 갱신
+select t.eq('새 장소의 첫 저장은 version 1(옛 version 11을 잇지 않음)',
+  (select jsonb_build_array(r -> 'status', r #> '{record,version}') from t.sm('A', 'M_01', '{"worker":"새로"}', null) r), '["ok",1]');
+select t.eq('옛 version을 기준으로 저장하면 충돌(기록은 version 1)',
+  (select jsonb_build_array(r -> 'status', r #> '{record,version}') from t.sm('A', 'M_01', '{"worker":"옛화면"}', 11) r), '["conflict",1]');
+-- 지운 뒤 같은 장소를 두 줄로 가져오기: 첫 줄은 새 장소(imported), 둘째 줄은 평소 갱신(미션명 바뀜)
 select t.eq('RV 가져오기', public.import_places('[{"name":"RV","mission":"V_1 ~ 2","lat":35.1,"lng":127.1}]') -> 'imported', '1');
 select t.eq('RV 기록', t.sm('RV', 'V_2', '{"flightTime":"옛"}', null) -> 'status', '"ok"');
+create temp table rv_gone as select t.pid('RV') as id;
 select t.ok('RV 지우기', public.delete_place(t.pid('RV')));
-select t.eq('지운 장소 + 같은 장소 두 줄: 1 되살림, 1 중복(갱신·missionChanged)',
+select t.eq('지운 장소 + 같은 장소 두 줄: 1 삽입, 1 중복(갱신·missionChanged)',
   public.import_places('[{"name":"RV","mission":"V_1 ~ 3","lat":35.1,"lng":127.1},{"name":"RV","mission":"V_1 ~ 4","lat":35.1,"lng":127.1}]'),
   '{"imported":1,"duplicates":1,"updated":1,"missionChanged":1}');
-select t.eq('RV: 미션명은 마지막 줄 값, 옛 기록(V_2) 남음',
-  (select jsonb_build_array(p.mission, p.deleted_at is null, m.mission, m.flight_time) from public.places p join public.missions m on m.place_id = p.id where p.name = 'RV'),
-  '["V_1 ~ 4", true, "V_2", "옛"]');
+select t.eq('RV: 새 id, 미션명은 마지막 줄 값, 옛 기록(V_2)은 없음',
+  (select jsonb_build_array(p.id <> (select id from rv_gone), p.mission, p.deleted_at is null, (select count(*) from public.missions m where m.place_id = p.id))
+   from public.places p where p.name = 'RV'),
+  '[true, "V_1 ~ 4", true, 0]');
+-- import_places의 되살리기 분기(deleted_at이 찬 행)는 코드에 남아 있다. 지금은 삭제 표시된 행이 생기지 않으므로
+-- 대시보드에서 직접 표시한 옛 행으로 그 규칙(같은 id, 기록 보존, 갱신 규칙)만 확인한다.
+select t.eq('되살리기 시험 장소 SD', public.import_places('[{"name":"SD","district":"태안군","mission":"SD_1 ~ 2","memo":"옛 메모","lat":35.15,"lng":127.15}]') -> 'imported', '1');
+select t.eq('SD 기록', t.sm('SD', 'SD_1', '{"flightTime":"옛"}', null) -> 'status', '"ok"');
+create temp table sd_old as select t.pid('SD') as id;
+reset role;
+update public.places set deleted_at = now() where name = 'SD';
+set role authenticated;
+select t.ok('옛 삭제 표시 행은 list_places에서 빠짐', not exists (select from jsonb_array_elements(public.list_places()) e where e ->> 'name' = 'SD'));
+select t.ok('옛 삭제 표시 행에는 delete_place가 false(이미 지운 장소)', not public.delete_place((select id from sd_old)));
+select t.raises('옛 삭제 표시 행에는 clear_mission도 장소 없음', format($q$select public.clear_mission(%s, 'SD_1', null)$q$, (select id from sd_old)), '장소를 찾을 수 없습니다.');
+select t.eq('옛 삭제 표시 행을 다시 가져오면 되살림(imported 1)',
+  public.import_places('[{"name":"SD","district":"","address":"새 주소","memo":"새 메모","lat":35.15,"lng":127.15}]'),
+  '{"imported":1,"duplicates":0,"updated":0,"missionChanged":0}');
+select t.eq('되살린 SD: 같은 id, deleted_at 비움, 주소만 CSV로, 메모·미션명 그대로, 옛 기록 보존',
+  (select jsonb_build_array(id = (select id from sd_old), deleted_at is null, district, address, memo, mission,
+                            (select jsonb_agg(m.mission || ':' || m.flight_time) from public.missions m where m.place_id = p.id))
+   from public.places p where name = 'SD'),
+  '[true, true, "태안군", "새 주소", "옛 메모", "SD_1 ~ 2", ["SD_1:옛"]]');
+
+-- ---------- clear_mission: 미션 기록 하나 지우기 ----------
+select t.eq('지우기 시험 장소(CL_1 ~ 3)', public.import_places('[{"name":"CL","mission":"CL_1 ~ 3","lat":35.25,"lng":127.25}]') -> 'imported', '1');
+select t.eq('CL_1 기록(version 1)', t.sm('CL', 'CL_1', '{"flightTime":"1분"}', null) #> '{record,version}', '1');
+select t.eq('CL_2 완료 기록', t.sm('CL', 'CL_2', '{"done":true,"worker":"x","flightTime":"2분","batteryNo":"2","batteryLeft":"50"}', null) #> '{record,done}', 'true');
+select t.eq('CL_3 기록(version 1)', t.sm('CL', 'CL_3', '{"flightTime":"3분"}', null) #> '{record,version}', '1');
+select t.eq('CL_3을 한 번 더 고침(version 2)', t.sm('CL', 'CL_3', '{"flightTime":"3분 30초"}', 1) #> '{record,version}', '2');
+select t.eq('clear_mission 결과는 {status, cleared}',
+  (select jsonb_agg(k order by k) from jsonb_object_keys(public.clear_mission(t.pid('CL'), 'CL_1', 1)) k), '["cleared", "status"]');
+select t.ok('CL_1 기록이 없어짐', not exists (select from public.missions where place_id = t.pid('CL') and mission = 'CL_1'));
+select t.eq('list_places에서 CL_1이 빠지고 나머지 기록은 그대로',
+  (select jsonb_agg(m -> 'mission') from jsonb_array_elements(public.list_places()) e, jsonb_array_elements(e -> 'missions') m where e ->> 'name' = 'CL'),
+  '["CL_2","CL_3"]');
+select t.eq('get_places에서도 CL_1이 빠짐',
+  (select jsonb_agg(m -> 'mission') from jsonb_array_elements(public.get_places(array[t.pid('CL')]) -> 0 -> 'missions') m), '["CL_2","CL_3"]');
+select t.eq('이미 없는 기록 지우기 → cleared false', public.clear_mission(t.pid('CL'), 'CL_1', 1), '{"status":"ok","cleared":false}');
+select t.eq('한 번도 없던 미션명 → cleared false', public.clear_mission(t.pid('CL'), 'CL_9', null), '{"status":"ok","cleared":false}');
+select t.eq('미션명 null → cleared false', public.clear_mission(t.pid('CL'), null, null), '{"status":"ok","cleared":false}');
+select t.eq('미션명은 정확히 일치해야 함(대소문자·공백 다르면 cleared false)',
+  jsonb_build_array(public.clear_mission(t.pid('CL'), 'cl_2', null) -> 'cleared', public.clear_mission(t.pid('CL'), ' CL_2', null) -> 'cleared'), '[false, false]');
+select t.ok('지워지지 않은 기록은 그대로', exists (select from public.missions where place_id = t.pid('CL') and mission = 'CL_2'));
+create temp table cl_conflict as select public.clear_mission(t.pid('CL'), 'CL_3', 1) as r;
+select t.eq('버전이 다르면 지우지 않고 conflict(지금 기록 version 2)',
+  (select jsonb_build_array(r -> 'status', r #> '{record,mission}', r #> '{record,version}', r ? 'cleared') from cl_conflict), '["conflict","CL_3",2,false]');
+select t.eq('conflict의 record는 list_places 기록 원소와 같은 모양',
+  (select r -> 'record' from cl_conflict),
+  (select m from jsonb_array_elements(public.list_places()) e, jsonb_array_elements(e -> 'missions') m where e ->> 'name' = 'CL' and m ->> 'mission' = 'CL_3'));
+select t.ok('conflict면 기록이 지워지지 않음', exists (select from public.missions where place_id = t.pid('CL') and mission = 'CL_3' and version = 2));
+select t.eq('미래 version(3)도 다르면 conflict', public.clear_mission(t.pid('CL'), 'CL_3', 3) -> 'status', '"conflict"');
+select t.eq('기준 version이 맞으면 지움', public.clear_mission(t.pid('CL'), 'CL_3', 2), '{"status":"ok","cleared":true}');
+select t.eq('완료(done)된 기록도 지워짐(기준 version null이면 version 확인 없이)', public.clear_mission(t.pid('CL'), 'CL_2', null), '{"status":"ok","cleared":true}');
+select t.ok('CL의 기록이 모두 없어짐', not exists (select from public.missions where place_id = t.pid('CL')));
+select t.ok('장소는 그대로 남음', t.pid('CL') is not null);
+select t.eq('지운 뒤 같은 미션을 저장하면 새 기록(version 1)',
+  (select jsonb_build_array(r -> 'status', r #> '{record,version}', r #> '{record,flightTime}') from t.sm('CL', 'CL_1', '{"flightTime":"새 1분"}', null) r), '["ok",1,"새 1분"]');
+select t.eq('지운 뒤 옛 version으로 저장하면 충돌(기록 없음)',
+  t.sm('CL', 'CL_2', '{"flightTime":"옛화면"}', 1), '{"status":"conflict","record":null}');
+-- 미션명 범위를 줄여 범위 밖이 된 옛 기록도 이름이 맞으면 지울 수 있다
+select t.eq('범위 밖이 될 CL_3 다시 만들기', t.sm('CL', 'CL_3', '{"flightTime":"범위"}', null) #> '{record,version}', '1');
+select t.eq('범위를 줄이면 missionChanged', public.import_places('[{"name":"CL","mission":"CL_1 ~ 2","lat":35.25,"lng":127.25}]') -> 'missionChanged', '1');
+select t.raises('범위 밖 기록은 save_mission으로 못 고침', $q$select t.sm('CL', 'CL_3', '{"flightTime":"x"}', 1)$q$, '이 장소에 없는 미션입니다.');
+select t.eq('범위 밖 기록도 clear_mission으로는 지워짐', public.clear_mission(t.pid('CL'), 'CL_3', 1), '{"status":"ok","cleared":true}');
+select t.ok('범위 밖 기록이 없어짐', not exists (select from public.missions where place_id = t.pid('CL') and mission = 'CL_3'));
+select t.raises('없는 장소 clear_mission', $q$select public.clear_mission(999999, 'CL_1', null)$q$, '장소를 찾을 수 없습니다.');
+select t.raises('장소 id null clear_mission', $q$select public.clear_mission(null, 'CL_1', null)$q$, '장소를 찾을 수 없습니다.');
+select t.ok('clear_mission은 다른 장소의 같은 이름 기록을 건드리지 않음',
+  (select count(*) from public.missions where mission = 'M_01') >= 1 and public.clear_mission(t.pid('CL'), 'M_01', null) = '{"status":"ok","cleared":false}'
+  and (select count(*) from public.missions where mission = 'M_01') >= 1);
+-- 장소를 지우면 남은 기록도 함께 지워진다
+select t.ok('CL 지우기(남은 CL_1 기록도 함께)', public.delete_place(t.pid('CL')));
+select t.ok('CL과 CL 기록이 모두 없어짐', t.pid('CL') is null and not exists (select from public.missions where mission like 'CL\_%'));
 
 -- ---------- 범위 밖 기록 ----------
 -- 미션명 범위가 줄면 범위 밖 기록은 지우지 않고 남긴다(화면이 숨김). 고칠 수는 없고, 범위가 돌아오면 이어서 고친다.
@@ -605,7 +688,7 @@ select t.eq('완료된 기록에 이름을 공백으로 보내도 아이디가 �
 select t.login(:'u2', :'u2_claims');
 select t.eq('u2가 B 메모 저장', public.update_memo(t.pid('B'), 'u2 메모') -> 'status', '"ok"');
 select t.eq('u2가 A 기록 저장(이름은 u2의 아이디)',
-  (select jsonb_build_array(r -> 'status', r #> '{record,worker}') from t.sm('A', 'M_02', '{"worker":"u2"}', 1) r), '["ok","박현장"]');
+  (select jsonb_build_array(r -> 'status', r #> '{record,worker}') from t.sm('A', 'M_02', '{"worker":"u2"}', null) r), '["ok","박현장"]');
 select t.login(:'u1', :'u1_claims');
 select t.ok('authenticated: audit_log select 거부', t.err('select * from public.audit_log') like '42501:%');
 select t.ok('authenticated: audit_log insert 거부', t.err($q$insert into public.audit_log (tbl, op) values ('places', 'INSERT')$q$) like '42501:%');
@@ -624,12 +707,23 @@ select t.ok('감사 로그: 메모 UPDATE는 바뀌기 전·뒤 행(actor u2)',
           and old_row ->> 'memo' = '' and new_row ->> 'memo' = 'u2 메모' and new_row ->> 'updated_by' = :'u2'));
 select t.ok('감사 로그: 충돌로 저장하지 않은 메모는 남지 않음',
   not exists (select from public.audit_log where tbl = 'places' and new_row ->> 'memo' = '덮어쓰기'));
-select t.ok('감사 로그: soft delete는 deleted_at이 채워지는 UPDATE',
-  exists (select from public.audit_log where tbl = 'places' and op = 'UPDATE' and row_id = (select id from gone)
-          and old_row ->> 'deleted_at' is null and new_row ->> 'deleted_at' is not null and actor = :'u1'::uuid));
-select t.ok('감사 로그: 되살림은 deleted_at이 비는 UPDATE',
-  exists (select from public.audit_log where tbl = 'places' and op = 'UPDATE' and row_id = (select id from gone)
+select t.ok('감사 로그: delete_place는 places DELETE(actor u1, 지우기 전 행 전체)',
+  exists (select from public.audit_log where tbl = 'places' and op = 'DELETE' and row_id = (select id from gone)
+          and old_row ->> 'name' = 'A' and new_row is null and actor = :'u1'::uuid));
+select t.ok('감사 로그: delete_place로 함께 지워진 미션 기록도 missions DELETE(actor u1, 기록마다 하나)',
+  (select count(*) from public.audit_log where tbl = 'missions' and op = 'DELETE' and old_row ->> 'place_id' = (select id from gone)::text
+          and actor = :'u1'::uuid) = (select n from gone));
+select t.ok('감사 로그: delete_place는 deleted_at을 채우는 UPDATE를 남기지 않음',
+  not exists (select from public.audit_log where tbl = 'places' and op = 'UPDATE' and row_id = (select id from gone) and new_row ->> 'deleted_at' is not null));
+select t.ok('감사 로그: 옛 삭제 표시 행의 되살림은 deleted_at이 비는 UPDATE',
+  exists (select from public.audit_log where tbl = 'places' and op = 'UPDATE' and row_id = (select id from sd_old)
           and old_row ->> 'deleted_at' is not null and new_row ->> 'deleted_at' is null));
+select t.ok('감사 로그: clear_mission은 missions DELETE(actor u1, 지우기 전 기록 전체)',
+  exists (select from public.audit_log where tbl = 'missions' and op = 'DELETE' and old_row ->> 'mission' = 'CL_1'
+          and old_row ->> 'flight_time' = '1분' and old_row ->> 'version' = '1' and new_row is null and actor = :'u1'::uuid)
+  and exists (select from public.audit_log where tbl = 'missions' and op = 'DELETE' and old_row ->> 'mission' = 'CL_2' and old_row ->> 'done' = 'true'));
+select t.ok('감사 로그: CL_3의 DELETE는 실제로 지운 두 번뿐(충돌로 지우지 않은 시도는 남지 않음)',
+  (select count(*) from public.audit_log where tbl = 'missions' and op = 'DELETE' and old_row ->> 'mission' = 'CL_3') = 2);
 select t.ok('감사 로그: 미션 기록 UPDATE마다 version이 1씩',
   (select bool_and((new_row ->> 'version')::int = (old_row ->> 'version')::int + 1) from public.audit_log where tbl = 'missions' and op = 'UPDATE')
   and (select count(*) from public.audit_log where tbl = 'missions' and op = 'UPDATE') > 10);
@@ -646,8 +740,8 @@ reset role;
 set role authenticated;
 
 -- ---------- 읽기만 가능한 authenticated의 직접 조회(Realtime도 이 권한으로 본다) ----------
-select t.ok('authenticated: places·missions 직접 select 가능(지운 장소 포함)',
-  (select count(*) from public.places where deleted_at is not null) >= 1 and (select count(*) from public.missions) > 0);
+select t.ok('authenticated: places·missions 직접 select 가능',
+  (select count(*) from public.places) > 0 and (select count(*) from public.missions) > 0);
 reset role;
 
 -- ---------- anon은 막힌다 ----------
@@ -663,6 +757,7 @@ select t.ok('anon: save_mission 거부', t.err($q$select public.save_mission(1, 
 select t.ok('anon: update_memo 거부(2인자·3인자)',
   t.err($q$select public.update_memo(1, 'x')$q$) like '42501:%' and t.err($q$select public.update_memo(1, 'x', 'y')$q$) like '42501:%');
 select t.ok('anon: delete_place 거부', t.err('select public.delete_place(1)') like '42501:%');
+select t.ok('anon: clear_mission 거부', t.err($q$select public.clear_mission(1, 'x', null)$q$) like '42501:%');
 select t.ok('anon: mission_names 거부', t.err($q$select public.mission_names('a1~2')$q$) like '42501:%');
 reset role;
 
@@ -732,7 +827,7 @@ select t.eq('version을 안 올린 직접 쓰기 뒤의 저장은 충돌',
 select * from dblink_get_result('b') as x(r text);
 select dblink_exec('a', 'set role authenticated');
 
--- 4) 저장이 장소 잠금을 기다리는 사이 다른 기기가 장소를 지우고(soft delete) 커밋하면 "장소를 찾을 수 없습니다"
+-- 4) 저장이 장소 잠금을 기다리는 사이 다른 기기가 장소를 지우고(실제 삭제) 커밋하면 "장소를 찾을 수 없습니다"
 select dblink_exec('a', 'begin');
 select t.ok('세션 A가 장소 삭제(커밋 전)', (select r from dblink('a', $q$select public.delete_place(t.pid('동시'))$q$) as x(r boolean)));
 select dblink_send_query('b', $q$select t.err($x$select t.sm('동시', 'C_1', '{"worker":"늦은 저장"}', 2)$x$)$q$);
@@ -742,8 +837,51 @@ select dblink_exec('a', 'commit');
 create temp table r4 as select r from dblink_get_result('b') as x(r text);
 select t.eq('삭제 커밋 뒤 기다리던 저장은 장소 없음 오류', (select to_jsonb(r) from r4), '"P0001: 장소를 찾을 수 없습니다."');
 select * from dblink_get_result('b') as x(r text);
-select t.eq('기다리던 저장은 아무것도 쓰지 않음(C_1은 A의 version 2 그대로, 기록은 남음)',
-  (select jsonb_build_array(worker, version) from public.missions where place_id = t.pid('동시') and mission = 'C_1'), '["김현장", 2]');
+select t.ok('기다리던 저장은 아무것도 쓰지 않음(장소와 기록이 모두 없고 "늦은 저장" 기록도 없음)',
+  t.pid('동시') is null and not exists (select from public.missions where mission in ('C_1', 'C_2'))
+  and not exists (select from public.audit_log where tbl = 'missions' and new_row ->> 'worker' = '늦은 저장'));
+
+-- 4-2) clear_mission도 save_mission과 같은 장소 잠금을 거친다. 저장이 끝나기를 기다렸다가 바뀐 version을 보고 충돌로 판정하고,
+--      지우기가 먼저면 기다리던 저장은 기록이 없는 것으로 보고 충돌(record null)이 된다.
+set role authenticated;
+select t.login(:'u1', :'u1_claims');
+select t.eq('지우기 동시성용 장소', public.import_places('[{"name":"지움동시","mission":"D_1 ~ 2","lat":34.6,"lng":128.6}]') -> 'imported', '1');
+select t.eq('D_1 기록(version 1)', t.sm('지움동시', 'D_1', '{"worker":"처음"}', null) #> '{record,version}', '1');
+select t.eq('D_2 기록(version 1)', t.sm('지움동시', 'D_2', '{"worker":"처음"}', null) #> '{record,version}', '1');
+reset role;
+select dblink_exec('a', 'begin');
+select t.eq('세션 A 저장(커밋 전) version 2',
+  (select r::jsonb #> '{record,version}' from dblink('a', $q$select t.sm('지움동시', 'D_1', '{"worker":"A"}', 1)::text$q$) as x(r text)), '2');
+select dblink_send_query('b', $q$select public.clear_mission(t.pid('지움동시'), 'D_1', 1)::text$q$);
+select pg_sleep(0.5);
+select t.ok('세션 B 지우기는 저장이 끝날 때까지 기다림', dblink_is_busy('b') = 1);
+select dblink_exec('a', 'commit');
+create temp table r4b as select r::jsonb as r from dblink_get_result('b') as x(r text);
+select t.eq('기다리던 지우기는 충돌(version 2), 기록은 그대로',
+  (select jsonb_build_array(r -> 'status', r #> '{record,version}', r #> '{record,worker}') from r4b), '["conflict",2,"김현장"]');
+select * from dblink_get_result('b') as x(r text);
+select t.ok('충돌이면 D_1이 남아 있음', exists (select from public.missions where place_id = t.pid('지움동시') and mission = 'D_1' and version = 2));
+select dblink_exec('a', 'begin');
+select t.eq('세션 A 지우기(커밋 전) cleared',
+  (select r::jsonb from dblink('a', $q$select public.clear_mission(t.pid('지움동시'), 'D_2', 1)::text$q$) as x(r text)), '{"status":"ok","cleared":true}');
+select dblink_send_query('b', $q$select t.sm('지움동시', 'D_2', '{"worker":"B"}', 1)::text$q$);
+select pg_sleep(0.5);
+select t.ok('세션 B 저장은 지우기가 끝날 때까지 기다림', dblink_is_busy('b') = 1);
+select dblink_exec('a', 'commit');
+create temp table r4c as select r::jsonb as r from dblink_get_result('b') as x(r text);
+select t.eq('기다리던 저장은 충돌(기록 없음)', (select r from r4c), '{"status":"conflict","record":null}');
+select * from dblink_get_result('b') as x(r text);
+select t.ok('D_2는 지워진 채로 남음', not exists (select from public.missions where place_id = t.pid('지움동시') and mission = 'D_2'));
+select dblink_exec('a', 'begin');
+select t.ok('세션 A 장소 삭제(커밋 전)', (select r from dblink('a', $q$select public.delete_place(t.pid('지움동시'))$q$) as x(r boolean)));
+select dblink_send_query('b', $q$select t.err($x$select public.clear_mission(t.pid('지움동시'), 'D_1', null)$x$)$q$);
+select pg_sleep(0.5);
+select t.ok('세션 B 지우기는 장소 삭제가 끝날 때까지 기다림', dblink_is_busy('b') = 1);
+select dblink_exec('a', 'commit');
+create temp table r4d as select r from dblink_get_result('b') as x(r text);
+select t.eq('장소 삭제 뒤 기다리던 지우기는 장소 없음 오류', (select to_jsonb(r) from r4d), '"P0001: 장소를 찾을 수 없습니다."');
+select * from dblink_get_result('b') as x(r text);
+select t.ok('장소와 기록이 모두 없음', t.pid('지움동시') is null and not exists (select from public.missions where mission in ('D_1', 'D_2')));
 
 -- 5) 두 기기가 같은 메모를 같은 기준으로 동시에 저장하면 뒤에 온 쪽은 충돌(계약 C1)
 set role authenticated;
@@ -1147,8 +1285,8 @@ select t.ok('auth.users 권한 없는 롤로 표시 아이디 복사 재실행 �
 
 -- ===================================================================
 -- 계정 권한(supabase/migrations/20261112100000_roles.sql, 20261112120000_contractor_memo.sql)
--- 관리자(admin)·직원(staff, role 없음이나 모르는 값)·외주(contractor). 권한은 JWT가 아니라 auth.users에서 그때그때 읽는다.
--- 외주는 장소 보기·미션 기록·메모·로그인 기록을 하고, 가져오기·지우기는 정해진 문구로 거절된다.
+-- 관리자(admin)·직원(staff, role 없음이나 모르는 값)·비행팀(contractor). 권한은 JWT가 아니라 auth.users에서 그때그때 읽는다.
+-- 비행팀은 장소 보기·미션 기록·메모·로그인 기록을 하고, 가져오기·장소 지우기·미션 기록 지우기(clear_mission)는 정해진 문구로 거절된다.
 -- 지운 계정(auth.users에 없음)은 세 쓰기 RPC 모두 거절된다(메모는 따로 "계정을 찾을 수 없다" 문구).
 -- ===================================================================
 \set r_admin f0000000-0000-0000-0000-000000000001
@@ -1157,14 +1295,14 @@ select t.ok('auth.users 권한 없는 롤로 표시 아이디 복사 재실행 �
 \set r_odd f0000000-0000-0000-0000-000000000004
 \set r_null f0000000-0000-0000-0000-000000000005
 \set r_jwt f0000000-0000-0000-0000-000000000006
-\set con_msg '외주 계정은 미션 기록과 메모만 할 수 있습니다.'
-\set old_con_msg '외주 계정은 미션 기록만 할 수 있습니다.'
+\set con_msg '비행팀 계정은 미션 기록과 메모만 할 수 있습니다.'
+\set old_con_msg '비행팀 계정은 미션 기록만 할 수 있습니다.'
 \set gone_msg '로그인한 계정을 찾을 수 없습니다. 다시 로그인해 주세요.'
 reset role;
 insert into auth.users (id, email, raw_app_meta_data) values
   (:'r_admin', 'role-admin@sistech.local', '{"provider":"email","role":"admin","login_id":"역할관리"}'),
   (:'r_staff', 'role-staff@sistech.local', '{"provider":"email","login_id":"역할직원"}'),
-  (:'r_con', 'role-con@sistech.local', '{"provider":"email","role":"contractor","login_id":"역할외주"}'),
+  (:'r_con', 'role-con@sistech.local', '{"provider":"email","role":"contractor","login_id":"역할비행팀"}'),
   (:'r_odd', 'role-odd@sistech.local', '{"role":"Contractor"}'),
   (:'r_null', 'role-null@sistech.local', null);
 
@@ -1181,25 +1319,27 @@ select t.ok('app_role()은 anon·authenticated·PUBLIC 모두 직접 실행 못 
 select t.ok('my_role()은 authenticated만 실행(anon 안 됨)',
   has_function_privilege('authenticated', 'public.my_role()', 'execute')
   and not has_function_privilege('anon', 'public.my_role()', 'execute'));
-select t.ok('바꾼 RPC 셋은 여전히 authenticated 실행 가능, anon 불가',
+select t.ok('바꾼 RPC 넷은 여전히 authenticated 실행 가능, anon 불가',
   has_function_privilege('authenticated', 'public.import_places(jsonb)', 'execute')
   and has_function_privilege('authenticated', 'public.update_memo(bigint, text, text)', 'execute')
   and has_function_privilege('authenticated', 'public.delete_place(bigint)', 'execute')
+  and has_function_privilege('authenticated', 'public.clear_mission(bigint, text, integer)', 'execute')
   and not has_function_privilege('anon', 'public.import_places(jsonb)', 'execute')
   and not has_function_privilege('anon', 'public.update_memo(bigint, text, text)', 'execute')
-  and not has_function_privilege('anon', 'public.delete_place(bigint)', 'execute'));
-select t.ok('외주 검사는 import_places·update_memo·delete_place에만 있음(save_mission·읽기·로그인 기록에는 없음)',
+  and not has_function_privilege('anon', 'public.delete_place(bigint)', 'execute')
+  and not has_function_privilege('anon', 'public.clear_mission(bigint, text, integer)', 'execute'));
+select t.ok('비행팀 검사는 import_places·update_memo·delete_place·clear_mission에만 있음(save_mission·읽기·로그인 기록에는 없음)',
   (select jsonb_agg(proname::text order by proname) from pg_proc
    where pronamespace = 'public'::regnamespace and prosrc like '%app_role()%' and proname <> 'my_role')
-  = '["delete_place", "import_places", "update_memo"]');
-select t.ok('가져오기·지우기의 권한 검사는 허용 목록(admin·staff)이고 로그인 검사 바로 뒤, 새 외주 문구',
+  = '["clear_mission", "delete_place", "import_places", "update_memo"]');
+select t.ok('가져오기·지우기의 권한 검사는 허용 목록(admin·staff)이고 로그인 검사 바로 뒤, 새 비행팀 문구',
   (select bool_and(position('auth.uid() is null' in prosrc) > 0
                    and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'') then' in prosrc) > position('auth.uid() is null' in prosrc)
                    and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'') then' in prosrc) < position('auth.uid() is null' in prosrc) + 200
                    and position(:'con_msg' in prosrc) > 0
                    and position('= ''contractor''' in prosrc) = 0)
-   from pg_proc where pronamespace = 'public'::regnamespace and proname in ('import_places', 'delete_place'))
-  and (select count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname in ('import_places', 'delete_place')) = 2);
+   from pg_proc where pronamespace = 'public'::regnamespace and proname in ('import_places', 'delete_place', 'clear_mission'))
+  and (select count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname in ('import_places', 'delete_place', 'clear_mission')) = 3);
 select t.ok('메모의 권한 검사는 허용 목록(admin·staff·contractor)이고 로그인 검사 바로 뒤, 계정 없음 문구',
   (select position('auth.uid() is null' in prosrc) > 0
           and position('coalesce(public.app_role(), '''') not in (''admin'', ''staff'', ''contractor'') then' in prosrc) > position('auth.uid() is null' in prosrc)
@@ -1207,7 +1347,7 @@ select t.ok('메모의 권한 검사는 허용 목록(admin·staff·contractor)�
           and position(:'gone_msg' in prosrc) > 0
           and position(:'con_msg' in prosrc) = 0
    from pg_proc where oid = 'public.update_memo(bigint, text, text)'::regprocedure));
-select t.ok('옛 외주 문구("미션 기록만")는 어느 함수에도 남지 않음',
+select t.ok('옛 비행팀 문구("미션 기록만")는 어느 함수에도 남지 않음',
   not exists (select from pg_proc where pronamespace = 'public'::regnamespace and position(:'old_con_msg' in prosrc) > 0));
 set role anon;
 select t.ok('anon: my_role 거부', t.err('select public.my_role()') like '42501:%');
@@ -1222,7 +1362,7 @@ select t.eq('app_role: 관리자(JWT 값이 아니라 auth.users 값)', to_jsonb
 select t.login(:'r_staff', '{}');
 select t.eq('app_role: role 없음 → staff', to_jsonb(public.app_role()), '"staff"');
 select t.login(:'r_con', '{"app_metadata":{"role":"admin"}}');
-select t.eq('app_role: 외주(JWT에 admin이 있어도 auth.users 값)', to_jsonb(public.app_role()), '"contractor"');
+select t.eq('app_role: 비행팀(JWT에 admin이 있어도 auth.users 값)', to_jsonb(public.app_role()), '"contractor"');
 select t.login(:'r_odd', '{}');
 select t.eq('app_role: 모르는 값(대소문자 다름) → staff', to_jsonb(public.app_role()), '"staff"');
 select t.login(:'r_null', '{}');
@@ -1242,7 +1382,7 @@ select t.eq('my_role: 관리자', to_jsonb(public.my_role()), '"admin"');
 select t.login(:'r_staff', '{}');
 select t.eq('my_role: 직원(role 없음)', to_jsonb(public.my_role()), '"staff"');
 select t.login(:'r_con', '{}');
-select t.eq('my_role: 외주', to_jsonb(public.my_role()), '"contractor"');
+select t.eq('my_role: 비행팀', to_jsonb(public.my_role()), '"contractor"');
 select t.login(:'r_odd', '{}');
 select t.eq('my_role: 모르는 값 → 직원', to_jsonb(public.my_role()), '"staff"');
 select t.login(:'r_jwt', '{"app_metadata":{"role":"contractor"}}');
@@ -1257,6 +1397,9 @@ select t.eq('직원: import_places',
 select t.eq('직원: update_memo', public.update_memo(t.pid('역할점'), '직원메모') #> '{place,memo}', '"직원메모"');
 select t.ok('직원: delete_place', public.delete_place(t.pid('역할지움1')));
 select t.eq('직원: save_mission', t.sm('역할점', 'R_01', '{"done":false}', null) -> 'status', '"ok"');
+select t.eq('직원: clear_mission(지우고 다시 저장하면 새 기록)',
+  jsonb_build_array(public.clear_mission(t.pid('역할점'), 'R_01', 1), t.sm('역할점', 'R_01', '{"done":false}', null) #> '{record,version}'),
+  '[{"status":"ok","cleared":true}, 1]');
 select t.ok('직원: list_places·get_places',
   exists (select from jsonb_array_elements(public.list_places()) e where e ->> 'name' = '역할점')
   and public.get_places(array[t.pid('역할점')]) -> 0 ->> 'name' = '역할점');
@@ -1268,50 +1411,64 @@ select t.eq('관리자: import_places', public.import_places('[{"name":"역할�
 select t.eq('관리자: update_memo', public.update_memo(t.pid('역할점'), '관리자메모') #> '{place,memo}', '"관리자메모"');
 select t.ok('관리자: delete_place', public.delete_place(t.pid('역할지움2')));
 select t.eq('관리자: save_mission', t.sm('역할점', 'R_02', '{"done":false}', null) -> 'status', '"ok"');
+select t.eq('관리자: clear_mission(지우고 다시 저장하면 새 기록)',
+  jsonb_build_array(public.clear_mission(t.pid('역할점'), 'R_02', 1), t.sm('역할점', 'R_02', '{"done":false}', null) #> '{record,version}'),
+  '[{"status":"ok","cleared":true}, 1]');
+select t.eq('관리자: 기록이 있는 장소 준비', public.import_places('[{"name":"역할삭제기록","mission":"RD_1 ~ 2","lat":35.95,"lng":127.95}]') -> 'imported', '1');
+select t.eq('관리자: 삭제할 장소에 기록', t.sm('역할삭제기록', 'RD_1', '{"done":false}', null) -> 'status', '"ok"');
+create temp table rd_gone as select t.pid('역할삭제기록') as id;
+select t.ok('관리자: 기록이 있는 장소 delete_place → true', public.delete_place((select id from rd_gone)));
+select t.ok('관리자: delete_place는 장소와 기록을 실제로 지움',
+  t.pid('역할삭제기록') is null and not exists (select from public.missions where place_id = (select id from rd_gone)));
 select t.ok('관리자: list_places·get_places',
   exists (select from jsonb_array_elements(public.list_places()) e where e ->> 'name' = '역할점')
   and public.get_places(array[t.pid('역할점')]) -> 0 ->> 'name' = '역할점');
 
--- ---------- 외주: 가져오기·지우기 거절, 보기·미션 기록·메모·로그인 기록은 됨 ----------
-select t.login(:'r_con', '{"email":"role-con@sistech.local","app_metadata":{"role":"contractor","login_id":"역할외주"}}');
-select t.raises('외주: import_places 거절',
-  $q$select public.import_places('[{"name":"외주점","lat":34.1,"lng":126.1}]')$q$, :'con_msg');
-select t.raises('외주: import_places 빈 배열도 거절', $q$select public.import_places('[]')$q$, :'con_msg');
-select t.raises('외주: import_places 잘못된 목록도 같은 문구(외주 검사가 입력 검사보다 먼저)', $q$select public.import_places('{}')$q$, :'con_msg');
-select t.eq('외주: update_memo 3인자(기준 메모가 지금 값과 같음) 됨',
+-- ---------- 비행팀: 가져오기·지우기 거절, 보기·미션 기록·메모·로그인 기록은 됨 ----------
+select t.login(:'r_con', '{"email":"role-con@sistech.local","app_metadata":{"role":"contractor","login_id":"역할비행팀"}}');
+select t.raises('비행팀: import_places 거절',
+  $q$select public.import_places('[{"name":"비행팀점","lat":34.1,"lng":126.1}]')$q$, :'con_msg');
+select t.raises('비행팀: import_places 빈 배열도 거절', $q$select public.import_places('[]')$q$, :'con_msg');
+select t.raises('비행팀: import_places 잘못된 목록도 같은 문구(비행팀 검사가 입력 검사보다 먼저)', $q$select public.import_places('{}')$q$, :'con_msg');
+select t.eq('비행팀: update_memo 3인자(기준 메모가 지금 값과 같음) 됨',
   (select jsonb_build_array(r -> 'status', r #> '{place,memo}')
-   from (select public.update_memo(t.pid('역할점'), '외주메모', '관리자메모') r) x),
-  '["ok", "외주메모"]');
-select t.eq('외주: update_memo 충돌(기준 메모가 옛 값) → 서버 값을 돌려주고 저장 안 함',
+   from (select public.update_memo(t.pid('역할점'), '비행팀메모', '관리자메모') r) x),
+  '["ok", "비행팀메모"]');
+select t.eq('비행팀: update_memo 충돌(기준 메모가 옛 값) → 서버 값을 돌려주고 저장 안 함',
   (select jsonb_build_array(r -> 'status', r #> '{place,memo}')
-   from (select public.update_memo(t.pid('역할점'), '외주덮어쓰기', '관리자메모') r) x),
-  '["conflict", "외주메모"]');
-select t.eq('외주: update_memo 충돌 아님(서버 값이 이미 보낸 값과 같음)',
-  public.update_memo(t.pid('역할점'), '외주메모', '관리자메모') -> 'status', '"ok"');
-select t.raises('외주: 없는 장소 update_memo는 장소 없음 문구', 'select public.update_memo(-1, $$x$$)', '장소를 찾을 수 없습니다.');
-select t.raises('외주: 지운 장소 update_memo도 장소 없음 문구', $q$select public.update_memo(t.pid('역할지움1'), 'x')$q$, '장소를 찾을 수 없습니다.');
-select t.raises('외주: delete_place 거절', $q$select public.delete_place(t.pid('역할지움3'))$q$, :'con_msg');
-select t.raises('외주: 없는 장소 delete_place도 같은 문구', 'select public.delete_place(-1)', :'con_msg');
-select t.eq('외주: save_mission(직원이 만든 기록 고침)',
+   from (select public.update_memo(t.pid('역할점'), '비행팀덮어쓰기', '관리자메모') r) x),
+  '["conflict", "비행팀메모"]');
+select t.eq('비행팀: update_memo 충돌 아님(서버 값이 이미 보낸 값과 같음)',
+  public.update_memo(t.pid('역할점'), '비행팀메모', '관리자메모') -> 'status', '"ok"');
+select t.raises('비행팀: 없는 장소 update_memo는 장소 없음 문구', 'select public.update_memo(-1, $$x$$)', '장소를 찾을 수 없습니다.');
+select t.raises('비행팀: 지운 장소 update_memo도 장소 없음 문구', $q$select public.update_memo(t.pid('역할지움1'), 'x')$q$, '장소를 찾을 수 없습니다.');
+select t.raises('비행팀: delete_place 거절', $q$select public.delete_place(t.pid('역할지움3'))$q$, :'con_msg');
+select t.raises('비행팀: 없는 장소 delete_place도 같은 문구', 'select public.delete_place(-1)', :'con_msg');
+select t.raises('비행팀: clear_mission 거절', $q$select public.clear_mission(t.pid('역할점'), 'R_01', null)$q$, :'con_msg');
+select t.raises('비행팀: 없는 장소 clear_mission도 같은 문구(비행팀 검사가 장소 검사보다 먼저)', $q$select public.clear_mission(-1, 'R_01', null)$q$, :'con_msg');
+select t.raises('비행팀: 기록 없는 미션명 clear_mission도 같은 문구', $q$select public.clear_mission(t.pid('역할점'), 'R_99', 1)$q$, :'con_msg');
+select t.ok('비행팀: 거절된 clear_mission 뒤에도 기록이 그대로(R_01·R_02 있음)',
+  (select count(*) from public.missions where place_id = t.pid('역할점') and mission in ('R_01', 'R_02')) = 2);
+select t.eq('비행팀: save_mission(직원이 만든 기록 고침)',
   t.sm('역할점', 'R_01', '{"done":false,"batteryNo":"7"}', (select version from public.missions where place_id = t.pid('역할점') and mission = 'R_01')) -> 'status',
   '"ok"');
-select t.eq('외주: save_mission(관리자가 만든 기록 고침)',
+select t.eq('비행팀: save_mission(관리자가 만든 기록 고침)',
   t.sm('역할점', 'R_02', '{"done":false}', (select version from public.missions where place_id = t.pid('역할점') and mission = 'R_02')) -> 'status',
   '"ok"');
-select t.ok('외주: list_places', exists (select from jsonb_array_elements(public.list_places()) e where e ->> 'name' = '역할점'));
-select t.eq('외주: get_places(외주가 쓴 메모)', public.get_places(array[t.pid('역할점')]) -> 0 -> 'memo', '"외주메모"');
-select t.ok('외주: log_login·log_logout 오류 없음',
-  t.err($q$select public.log_login('외주UA')$q$) is null and t.err('select public.log_logout()') is null);
+select t.ok('비행팀: list_places', exists (select from jsonb_array_elements(public.list_places()) e where e ->> 'name' = '역할점'));
+select t.eq('비행팀: get_places(비행팀이 쓴 메모)', public.get_places(array[t.pid('역할점')]) -> 0 -> 'memo', '"비행팀메모"');
+select t.ok('비행팀: log_login·log_logout 오류 없음',
+  t.err($q$select public.log_login('비행팀UA')$q$) is null and t.err('select public.log_logout()') is null);
 reset role;
-select t.ok('외주 거절 뒤 데이터 그대로(외주점 없음, 지움 상태 그대로), 메모는 외주가 쓴 값이고 updated_by는 외주',
-  t.pid('외주점') is null
-  and (select memo = '외주메모' and updated_by = :'r_con'::uuid from public.places where name = '역할점')
+select t.ok('비행팀 거절 뒤 데이터 그대로(비행팀점 없음, 지움 상태 그대로), 메모는 비행팀이 쓴 값이고 updated_by는 비행팀',
+  t.pid('비행팀점') is null
+  and (select memo = '비행팀메모' and updated_by = :'r_con'::uuid from public.places where name = '역할점')
   and (select deleted_at is null from public.places where name = '역할지움3'));
-select t.eq('외주 미션 기록이 저장됨',
+select t.eq('비행팀 미션 기록이 저장됨',
   (select jsonb_agg(jsonb_build_array(mission, done) order by mission) from public.missions where place_id = t.pid('역할점'))
   || (select jsonb_build_array(battery_no) from public.missions where place_id = t.pid('역할점') and mission = 'R_01'),
   '[["R_01", false], ["R_02", false], "7"]');
-select t.ok('외주 로그인 기록이 남음',
+select t.ok('비행팀 로그인 기록이 남음',
   exists (select from public.login_logs where user_id = :'r_con' and event = 'login'));
 
 -- ---------- 모르는 role 값은 직원과 같다 ----------
@@ -1324,62 +1481,69 @@ select t.login(:'r_staff', '{"app_metadata":{"login_id":"역할직원"}}');
 select t.eq('바꾸기 전 직원: update_memo 됨', public.update_memo(t.pid('역할점'), '바꾸기전') #> '{place,memo}', '"바꾸기전"');
 reset role;
 update auth.users set raw_app_meta_data = raw_app_meta_data || '{"role":"contractor"}' where id = :'r_staff';
-select t.eq('직원 → 외주로 바꾼 직후 app_role(같은 JWT)', to_jsonb(public.app_role()), '"contractor"');
+select t.eq('직원 → 비행팀으로 바꾼 직후 app_role(같은 JWT)', to_jsonb(public.app_role()), '"contractor"');
 set role authenticated;
-select t.eq('직원 → 외주로 바꾼 직후 my_role', to_jsonb(public.my_role()), '"contractor"');
-select t.eq('직원 → 외주로 바꾼 직후 update_memo 됨', public.update_memo(t.pid('역할점'), '바꾼뒤') #> '{place,memo}', '"바꾼뒤"');
-select t.raises('직원 → 외주로 바꾼 직후 delete_place 거절', $q$select public.delete_place(t.pid('역할지움3'))$q$, :'con_msg');
-select t.raises('직원 → 외주로 바꾼 직후 import_places 거절', $q$select public.import_places('[{"name":"바꾼뒤점","lat":34.4,"lng":126.4}]')$q$, :'con_msg');
+select t.eq('직원 → 비행팀으로 바꾼 직후 my_role', to_jsonb(public.my_role()), '"contractor"');
+select t.eq('직원 → 비행팀으로 바꾼 직후 update_memo 됨', public.update_memo(t.pid('역할점'), '바꾼뒤') #> '{place,memo}', '"바꾼뒤"');
+select t.raises('직원 → 비행팀으로 바꾼 직후 delete_place 거절', $q$select public.delete_place(t.pid('역할지움3'))$q$, :'con_msg');
+select t.raises('직원 → 비행팀으로 바꾼 직후 clear_mission 거절', $q$select public.clear_mission(t.pid('역할점'), 'R_01', null)$q$, :'con_msg');
+select t.raises('직원 → 비행팀으로 바꾼 직후 import_places 거절', $q$select public.import_places('[{"name":"바꾼뒤점","lat":34.4,"lng":126.4}]')$q$, :'con_msg');
 reset role;
 update auth.users set raw_app_meta_data = raw_app_meta_data - 'role' where id = :'r_con';
-select t.login(:'r_con', '{"app_metadata":{"role":"contractor","login_id":"역할외주"}}');
-select t.eq('외주 → role 지움(직원) 직후 app_role(JWT에는 아직 contractor)', to_jsonb(public.app_role()), '"staff"');
+select t.login(:'r_con', '{"app_metadata":{"role":"contractor","login_id":"역할비행팀"}}');
+select t.eq('비행팀 → role 지움(직원) 직후 app_role(JWT에는 아직 contractor)', to_jsonb(public.app_role()), '"staff"');
 set role authenticated;
-select t.ok('외주 → 직원 직후 delete_place 됨', public.delete_place(t.pid('역할지움3')));
-select t.eq('외주 → 직원 직후 import_places 됨', public.import_places('[{"name":"외주점","lat":34.1,"lng":126.1}]'),
+select t.ok('비행팀 → 직원 직후 delete_place 됨', public.delete_place(t.pid('역할지움3')));
+select t.eq('비행팀 → 직원 직후 clear_mission 됨(R_01은 바로 다시 저장해 둠)',
+  jsonb_build_array(public.clear_mission(t.pid('역할점'), 'R_01', null), t.sm('역할점', 'R_01', '{"done":false}', null) -> 'status'),
+  '[{"status":"ok","cleared":true}, "ok"]');
+select t.eq('비행팀 → 직원 직후 import_places 됨', public.import_places('[{"name":"비행팀점","lat":34.1,"lng":126.1}]'),
   '{"imported":1,"duplicates":0,"updated":0,"missionChanged":0}');
 reset role;
 select t.ok('권한 바꾸기는 login_id 등 다른 app_metadata 키를 건드리지 않음',
   (select raw_app_meta_data from auth.users where id = :'r_staff') = '{"provider":"email","role":"contractor","login_id":"역할직원"}'
-  and (select raw_app_meta_data from auth.users where id = :'r_con') = '{"provider":"email","login_id":"역할외주"}');
+  and (select raw_app_meta_data from auth.users where id = :'r_con') = '{"provider":"email","login_id":"역할비행팀"}');
 
 -- ---------- 지운 계정: auth.users에 행이 없으면 JWT가 살아 있어도 쓰기 RPC 거절 ----------
 -- 계정을 지워도 받은 JWT는 최대 1시간 쓸 수 있다. 그동안 직원처럼 쓰지 못해야 한다.
 \set r_gone_con f0000000-0000-0000-0000-000000000007
 \set r_gone_staff f0000000-0000-0000-0000-000000000008
 insert into auth.users (id, email, raw_app_meta_data) values
-  (:'r_gone_con', 'role-gone-con@sistech.local', '{"provider":"email","role":"contractor","login_id":"지운외주"}'),
+  (:'r_gone_con', 'role-gone-con@sistech.local', '{"provider":"email","role":"contractor","login_id":"지운비행팀"}'),
   (:'r_gone_staff', 'role-gone-staff@sistech.local', '{"provider":"email","login_id":"지운직원"}');
 set role authenticated;
-select t.login(:'r_gone_con', '{"email":"role-gone-con@sistech.local","app_metadata":{"role":"contractor","login_id":"지운외주"}}');
-select t.eq('지우기 전 외주: my_role', to_jsonb(public.my_role()), '"contractor"');
+select t.login(:'r_gone_con', '{"email":"role-gone-con@sistech.local","app_metadata":{"role":"contractor","login_id":"지운비행팀"}}');
+select t.eq('지우기 전 비행팀: my_role', to_jsonb(public.my_role()), '"contractor"');
 select t.login(:'r_gone_staff', '{"email":"role-gone-staff@sistech.local","app_metadata":{"login_id":"지운직원"}}');
 select t.eq('지우기 전 직원: my_role', to_jsonb(public.my_role()), '"staff"');
 select t.eq('지우기 전 직원: update_memo 됨', public.update_memo(t.pid('역할점'), '지우기전') #> '{place,memo}', '"지우기전"');
 reset role;
 delete from auth.users where id in (:'r_gone_con', :'r_gone_staff');
 set role authenticated;
-select t.login(:'r_gone_con', '{"email":"role-gone-con@sistech.local","app_metadata":{"role":"contractor","login_id":"지운외주"}}');
-select t.eq('지운 외주(같은 JWT): my_role → null', to_jsonb(public.my_role()), null);
-select t.raises('지운 외주: import_places 거절', $q$select public.import_places('[{"name":"지운외주점","lat":34.2,"lng":126.2}]')$q$, :'con_msg');
-select t.raises('지운 외주: update_memo 거절(계정 없음 문구)', $q$select public.update_memo(t.pid('역할점'), '지운외주메모')$q$, :'gone_msg');
-select t.raises('지운 외주: delete_place 거절', $q$select public.delete_place(t.pid('외주점'))$q$, :'con_msg');
+select t.login(:'r_gone_con', '{"email":"role-gone-con@sistech.local","app_metadata":{"role":"contractor","login_id":"지운비행팀"}}');
+select t.eq('지운 비행팀(같은 JWT): my_role → null', to_jsonb(public.my_role()), null);
+select t.raises('지운 비행팀: import_places 거절', $q$select public.import_places('[{"name":"지운비행팀점","lat":34.2,"lng":126.2}]')$q$, :'con_msg');
+select t.raises('지운 비행팀: update_memo 거절(계정 없음 문구)', $q$select public.update_memo(t.pid('역할점'), '지운비행팀메모')$q$, :'gone_msg');
+select t.raises('지운 비행팀: delete_place 거절', $q$select public.delete_place(t.pid('비행팀점'))$q$, :'con_msg');
+select t.raises('지운 비행팀: clear_mission 거절', $q$select public.clear_mission(t.pid('역할점'), 'R_01', null)$q$, :'con_msg');
 select t.login(:'r_gone_staff', '{"email":"role-gone-staff@sistech.local","app_metadata":{"login_id":"지운직원"}}');
 select t.eq('지운 직원(같은 JWT): my_role → null', to_jsonb(public.my_role()), null);
 select t.raises('지운 직원: import_places 거절', $q$select public.import_places('[{"name":"지운직원점","lat":34.3,"lng":126.3}]')$q$, :'con_msg');
 select t.raises('지운 직원: update_memo 거절(계정 없음 문구)', $q$select public.update_memo(t.pid('역할점'), '지운직원메모')$q$, :'gone_msg');
 select t.raises('지운 직원: update_memo 3인자도 거절', $q$select public.update_memo(t.pid('역할점'), '지운직원메모', '지우기전')$q$, :'gone_msg');
 select t.raises('지운 직원: 없는 장소 update_memo도 계정 검사가 먼저', 'select public.update_memo(-1, $$x$$)', :'gone_msg');
-select t.raises('지운 직원: delete_place 거절', $q$select public.delete_place(t.pid('외주점'))$q$, :'con_msg');
+select t.raises('지운 직원: delete_place 거절', $q$select public.delete_place(t.pid('비행팀점'))$q$, :'con_msg');
+select t.raises('지운 직원: clear_mission 거절', $q$select public.clear_mission(t.pid('역할점'), 'R_01', null)$q$, :'con_msg');
 select t.login(:'r_gone_staff', '{"app_metadata":{"role":"admin"}}');
 select t.raises('지운 계정(JWT에 admin): update_memo 거절', $q$select public.update_memo(t.pid('역할점'), 'JWT관리자')$q$, :'gone_msg');
 select t.login(:'r_gone_con', '{"app_metadata":{"role":"contractor"}}');
-select t.raises('지운 외주(JWT에 contractor): update_memo 거절', $q$select public.update_memo(t.pid('역할점'), 'JWT외주')$q$, :'gone_msg');
+select t.raises('지운 비행팀(JWT에 contractor): update_memo 거절', $q$select public.update_memo(t.pid('역할점'), 'JWT비행팀')$q$, :'gone_msg');
 reset role;
-select t.ok('지운 계정 거절 뒤 데이터 그대로(새 장소 없음, 메모·지움 상태 그대로)',
-  t.pid('지운외주점') is null and t.pid('지운직원점') is null
+select t.ok('지운 계정 거절 뒤 데이터 그대로(새 장소 없음, 메모·기록·지움 상태 그대로)',
+  t.pid('지운비행팀점') is null and t.pid('지운직원점') is null
+  and (select count(*) from public.missions where place_id = t.pid('역할점') and mission in ('R_01', 'R_02')) = 2
   and (select memo from public.places where name = '역할점') = '지우기전'
-  and (select deleted_at is null from public.places where name = '외주점'));
+  and (select deleted_at is null from public.places where name = '비행팀점'));
 
 -- ---------- auth.users를 못 읽는 환경이면 JWT의 app_metadata.role로 대신 ----------
 -- 소유자를 auth.users 권한이 없는 롤로 잠깐 바꿔 흉내 낸다(auth.uid()를 부를 수 있게 스키마 USAGE만 준다).
@@ -1402,31 +1566,117 @@ revoke usage on schema auth from rls_probe;
 select t.ok('app_role 소유자 되돌림', (select pg_get_userbyid(proowner) = current_user from pg_proc where oid = 'public.app_role()'::regprocedure));
 
 -- ---------- 마이그레이션을 다시 실행해도 같다(멱등) ----------
+-- delete_place는 20261116100000_real_delete.sql이 마지막으로 정의한다. 권한 마이그레이션 둘을 다시 실행하면
+-- 옛 정의(soft delete)로 되돌아가므로, 그 둘의 비교 대상에서는 빼고 실제 삭제 마이그레이션은 따로 본다.
 create temp table t_roles_acl as
   select proname, proacl::text as acl, prosrc from pg_proc
-  where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place');
+  where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo');
+create temp table t_del_acl as
+  select proname, proacl::text as acl, prosrc from pg_proc
+  where pronamespace = 'public'::regnamespace and proname in ('delete_place', 'clear_mission');
 \ir ../migrations/20261112120000_contractor_memo.sql
-select t.ok('외주 메모 마이그레이션만 재실행 → 함수 본문·권한 그대로',
+select t.ok('비행팀 메모 마이그레이션만 재실행 → 함수 본문·권한 그대로',
   not exists (
     (select proname, proacl::text, prosrc from pg_proc
-     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place')
+     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo')
      except select * from t_roles_acl)
     union all
     (select * from t_roles_acl
      except select proname, proacl::text, prosrc from pg_proc
-     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place'))));
+     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo'))));
 -- 두 파일을 순서대로 다시 실행해도(db push가 처음부터 다시 도는 경우) 결과가 같아야 한다.
 \ir ../migrations/20261112100000_roles.sql
 \ir ../migrations/20261112120000_contractor_memo.sql
 select t.ok('권한 마이그레이션 둘을 순서대로 재실행 → 함수 본문·권한 그대로',
   not exists (
     (select proname, proacl::text, prosrc from pg_proc
-     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place')
+     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo')
      except select * from t_roles_acl)
     union all
     (select * from t_roles_acl
      except select proname, proacl::text, prosrc from pg_proc
-     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo', 'delete_place'))));
+     where pronamespace = 'public'::regnamespace and proname in ('app_role', 'my_role', 'import_places', 'update_memo'))));
+select t.ok('(옛 마이그레이션을 다시 실행하면 delete_place는 soft delete 정의로 돌아감 — 아래에서 실제 삭제 마이그레이션을 다시 실행해 되돌림)',
+  (select prosrc like '%set deleted_at = now()%' from pg_proc where oid = 'public.delete_place(bigint)'::regprocedure));
+
+-- 실제 삭제 마이그레이션 재실행: 예전에 삭제 표시만 해 둔 장소(와 그 미션 기록)를 지우고, 함수 본문·권한은 처음 실행 때와 같다.
+-- 삭제 표시된 행은 이제 만들어지지 않으므로, 대시보드에서 직접 표시한 옛 행을 흉내 낸다(기록이 딸린 행과 없는 행).
+select t.logout();
+insert into public.places (name, lat, lng, mission, deleted_at) values
+  ('표시만1', 1.5, 1.5, 'SDX_1 ~ 2', now() - interval '1 day'), ('표시만2', 1.6, 1.6, '', now()), ('표시안함', 1.7, 1.7, 'SDX_1 ~ 2', null);
+insert into public.missions (place_id, mission) values (t.pid('표시만1'), 'SDX_1'), (t.pid('표시안함'), 'SDX_1');
+create temp table sd_marked as select id from public.places where name in ('표시만1', '표시만2');
+select t.eq('재실행 전: 삭제 표시된 행 2개와 그 기록 1개', jsonb_build_array((select count(*) from public.places where deleted_at is not null),
+  (select count(*) from public.missions where place_id in (select id from sd_marked))), '[2, 1]');
+\ir ../migrations/20261116100000_real_delete.sql
+select t.ok('실제 삭제 마이그레이션: 삭제 표시된 행이 모두 지워짐(행 0개)', not exists (select from public.places where deleted_at is not null));
+select t.ok('실제 삭제 마이그레이션: 삭제 표시된 행의 미션 기록도 함께 지워짐',
+  not exists (select from public.missions where place_id in (select id from sd_marked)));
+select t.ok('실제 삭제 마이그레이션: 삭제 표시 없는 행과 그 기록은 그대로',
+  (select count(*) from public.places where name = '표시안함') = 1 and (select count(*) from public.missions where place_id = t.pid('표시안함')) = 1);
+select t.ok('실제 삭제 마이그레이션: 지워진 장소의 감사 로그는 DELETE로 남음',
+  (select count(*) from public.audit_log where tbl = 'places' and op = 'DELETE' and row_id in (select id from sd_marked)) = 2);
+select t.ok('실제 삭제 마이그레이션 재실행 → delete_place는 실제 삭제 본문(soft delete 아님)',
+  (select prosrc like '%delete from public.places%' and prosrc not like '%set deleted_at%' from pg_proc where oid = 'public.delete_place(bigint)'::regprocedure));
+select t.ok('실제 삭제 마이그레이션 재실행 → delete_place·clear_mission 본문·권한이 처음 실행 때와 같음',
+  not exists (
+    (select proname, proacl::text, prosrc from pg_proc
+     where pronamespace = 'public'::regnamespace and proname in ('delete_place', 'clear_mission')
+     except select * from t_del_acl)
+    union all
+    (select * from t_del_acl
+     except select proname, proacl::text, prosrc from pg_proc
+     where pronamespace = 'public'::regnamespace and proname in ('delete_place', 'clear_mission'))));
+select t.ok('실제 삭제 마이그레이션: delete_place·clear_mission은 authenticated만 실행(anon·PUBLIC 불가)',
+  has_function_privilege('authenticated', 'public.delete_place(bigint)', 'execute')
+  and has_function_privilege('authenticated', 'public.clear_mission(bigint, text, integer)', 'execute')
+  and not has_function_privilege('anon', 'public.delete_place(bigint)', 'execute')
+  and not has_function_privilege('anon', 'public.clear_mission(bigint, text, integer)', 'execute')
+  and not exists (select from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                  where p.proname in ('delete_place', 'clear_mission') and p.pronamespace = 'public'::regnamespace
+                    and a.grantee = 0 and a.privilege_type = 'EXECUTE'));
+select t.ok('실제 삭제 마이그레이션: 두 함수 모두 security definer, search_path 빈 값, 소유자는 마이그레이션 실행 롤',
+  (select bool_and(prosecdef and 'search_path=""' = any (proconfig) and pg_get_userbyid(proowner) = current_user)
+   from pg_proc where pronamespace = 'public'::regnamespace and proname in ('delete_place', 'clear_mission'))
+  and (select count(*) from pg_proc where pronamespace = 'public'::regnamespace and proname in ('delete_place', 'clear_mission')) = 2);
+-- 재실행해도 새 기록을 지우지 않고(조건 있는 delete), 두 번 더 돌려도 같다
+\ir ../migrations/20261116100000_real_delete.sql
+select t.ok('실제 삭제 마이그레이션을 한 번 더 실행해도 표시 없는 장소·기록은 그대로',
+  (select count(*) from public.places where name = '표시안함') = 1 and (select count(*) from public.missions where place_id = t.pid('표시안함')) = 1);
+-- 문구 마이그레이션(20261116110000_flight_team_message.sql): 운영 DB처럼 import_places에 옛 문구가 남은 상태를 흉내 내고(문구만 다른 정의),
+-- 이 파일을 실행하면 새 문구로 돌아오는지 본다. 본문은 최신 정의(20261112120000_contractor_memo.sql)와 문구 외에 같아야 하므로,
+-- 위에서 그 파일을 다시 실행한 뒤 비교한 t_roles_acl(import_places 포함)과 같은지로 확인한다.
+do $$ begin
+  execute replace(pg_get_functiondef('public.import_places(jsonb)'::regprocedure), '비행팀 계정은', '옛 이름 계정은');
+end $$;
+select t.ok('(시험 준비) import_places에 옛 문구를 넣음',
+  (select prosrc like '%옛 이름 계정은%' and prosrc not like '%비행팀 계정은%' from pg_proc where oid = 'public.import_places(jsonb)'::regprocedure));
+\ir ../migrations/20261116110000_flight_team_message.sql
+select t.ok('문구 마이그레이션 실행 → import_places 본문·권한이 최신 정의와 같음(문구는 새 문구)',
+  (select prosrc like '%' || :'con_msg' || '%' and prosrc not like '%옛 이름%' from pg_proc where oid = 'public.import_places(jsonb)'::regprocedure)
+  and not exists (
+    (select proname, proacl::text, prosrc from pg_proc where pronamespace = 'public'::regnamespace and proname = 'import_places'
+     except select * from t_roles_acl where proname = 'import_places')
+    union all
+    (select * from t_roles_acl where proname = 'import_places'
+     except select proname, proacl::text, prosrc from pg_proc where pronamespace = 'public'::regnamespace and proname = 'import_places')));
+select t.ok('문구 마이그레이션: import_places는 authenticated만 실행(anon·PUBLIC 불가)',
+  has_function_privilege('authenticated', 'public.import_places(jsonb)', 'execute')
+  and not has_function_privilege('anon', 'public.import_places(jsonb)', 'execute')
+  and not exists (select from pg_proc p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                  where p.oid = 'public.import_places(jsonb)'::regprocedure and a.grantee = 0 and a.privilege_type = 'EXECUTE'));
+select t.ok('문구 마이그레이션: security definer, search_path 빈 값',
+  (select prosecdef and 'search_path=""' = any (proconfig) from pg_proc where oid = 'public.import_places(jsonb)'::regprocedure));
+set role authenticated;
+select t.login(:'r_staff', '{"app_metadata":{"login_id":"역할직원"}}');
+select t.raises('문구 마이그레이션 뒤 비행팀 import_places 거절 문구(r_staff는 위에서 비행팀으로 바꿈)',
+  $q$select public.import_places('[{"name":"문구점","lat":34.5,"lng":126.5}]')$q$, '비행팀 계정은 미션 기록과 메모만 할 수 있습니다.');
+reset role;
+select t.logout();
+select t.ok('문구 마이그레이션은 표 데이터를 바꾸지 않음(문구점 없음)', t.pid('문구점') is null);
+-- 모든 함수에 이전 이름이 남아 있지 않다
+select t.ok('어느 함수 본문에도 옛 이름이 없음(다섯 쓰기 RPC의 문구 포함)',
+  not exists (select from pg_proc where pronamespace = 'public'::regnamespace and prosrc like '%외' || '주%'));
 select t.ok('권한 마이그레이션은 auth.users의 role을 바꾸지 않음',
   (select count(*) from auth.users where raw_app_meta_data ->> 'role' = 'contractor') = 1);
 select t.logout();

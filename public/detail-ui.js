@@ -42,7 +42,7 @@ export function renderDetail() {
   );
   const missions = missionNames(p.mission);
   const progress = missionProgress(p.mission, p.missions);
-  // 외주 계정은 장소 삭제가 없다(메모는 모두 같이 쓴다).
+  // 비행팀 계정은 장소 삭제가 없다(메모는 모두 같이 쓴다).
   const contractor = isContractor();
   const memoBlock = h(
     'div',

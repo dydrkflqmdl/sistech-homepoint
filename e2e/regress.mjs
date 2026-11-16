@@ -34,7 +34,7 @@ check('제목 클릭은 다시 받지 않음(list_places 호출 그대로)', lis
 
 // ── 필터 접힘 ──
 await prepare(b, { rows, after });
-const snap = (label) => ev(`(() => ({ label: ${JSON.stringify(label)}, heads: [...document.querySelectorAll('#place-list .group-head')].map(h => h.querySelector('.group-name').textContent.trim() + ' ' + h.querySelector('.group-count').textContent + ' open=' + h.getAttribute('aria-expanded')), visibleRows: [...document.querySelectorAll('#place-list button .name')].filter(n => n.offsetParent !== null).length, summary: document.querySelector('#list-summary').textContent }))()`);
+const snap = (label) => ev(`(() => ({ label: ${JSON.stringify(label)}, missionTotal: document.querySelector('#mission-total')?.textContent ?? null, heads: [...document.querySelectorAll('#place-list .group-head')].map(h => h.querySelector('.group-name').textContent.trim() + ' ' + h.querySelector('.group-count').textContent + ' open=' + h.getAttribute('aria-expanded')), visibleRows: [...document.querySelectorAll('#place-list button .name')].filter(n => n.offsetParent !== null).length, summary: document.querySelector('#list-summary').textContent }))()`);
 const s0 = await snap('초기');
 await ev(`[...document.querySelectorAll('#color-filters .chip')].find(c => /진행 중/.test(c.textContent)).click()`); await sleep(400);
 const s1 = await snap('진행 중 칩');
@@ -58,6 +58,9 @@ const ok1 = s1.heads.length === 1 && /^태안 총 미션 1\/34 open=false/.test(
 const ok2 = s2.heads.length === 1 && /^보은 .* open=true/.test(s2.heads[0]) && s2.visibleRows === 8;
 check('초기: 모두 접힘, 머리글은 그 시군의 "총 미션 완료/전체"(태안 1/61·보은 0/129)', ok0, s0);
 check('분류 칩: 걸러지지만 접힌 채, 머리글은 걸러진 장소만 합친 미션 수(태안 1/34)', ok1, s1);
+// 요약 줄: 장소 수 옆에 전체 장소의 미션 진행(10곳 190개 중 1개 완료 → 내림 0%). 분류로 걸러도 전체 기준 그대로다.
+check('요약 줄: "장소 10개" 옆에 "총 미션 1/190 (0%)"', s0.summary === '장소 10개' && s0.missionTotal === '총 미션 1/190 (0%)', s0);
+check('요약 줄: 분류로 걸러도 총 미션은 전체 장소 기준(1/190)', s1.summary === '1개 / 전체 10개' && s1.missionTotal === '총 미션 1/190 (0%)', s1);
 check('검색: 자동 펼침 유지', ok2, s2);
 check('손으로 펼친 뒤 분류 칩 → 모두 접힘, 새로고침 → 접힌 채 시작', ok3, { s3, s4, s5 });
 

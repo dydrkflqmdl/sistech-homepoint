@@ -64,6 +64,8 @@ function renderKeepingInput() {
   else if (form && el.tagName === 'INPUT' && el.name) {
     selector = `#detail .mission-form[data-mission="${CSS.escape(form.dataset.mission)}"] input[name="${CSS.escape(el.name)}"]`;
   }
+  // 미션 단추(기록 지우기 뒤 초점이 가 있는 곳)도 다시 그린 뒤 같은 단추로 돌려놓는다.
+  else if (el?.matches?.('#detail .mission-item')) selector = `#detail .mission-item[data-mission="${CSS.escape(el.dataset.mission)}"]`;
   const caret = selector && el.type !== 'checkbox' && { start: el.selectionStart, end: el.selectionEnd };
 
   render();
@@ -148,7 +150,7 @@ $('#home-link').addEventListener('click', (e) => {
 
 // ── 로그인 ──────────────────────────────────────────────
 
-// 역할(관리자·직원·외주)을 바꾼다. 화면에 남은 것(가져오기 창·내보내기 메뉴·계정 관리 창)도 정리한다. 고치던 메모는 외주도 쓰므로 그대로 둔다.
+// 역할(관리자·직원·비행팀)을 바꾼다. 화면에 남은 것(가져오기 창·내보내기 메뉴·계정 관리 창)도 정리한다. 고치던 메모는 비행팀도 쓰므로 그대로 둔다.
 // 역할은 로그인할 때 토큰(jwtRole)에서 먼저 읽고, my_role()로 DB의 현재 값을 받아 바로잡는다(refreshRole).
 // 토큰 값은 처음 열 때(enterApp)만 쓴다. 그 뒤로는 my_role()로 받은 값만 따른다.
 function changeRole(role) {
@@ -182,7 +184,7 @@ async function refreshRole() {
   if (role && epoch === authEpoch && currentUser) changeRole(role);
 }
 
-// 서버가 "외주 계정은 미션 기록과 메모만 할 수 있습니다."(예전 서버는 "미션 기록만")로 거절하면(직원으로 알던 화면이 낡은 것) 문구를 알리고 역할을 다시 받는다.
+// 서버가 "비행팀 계정은 미션 기록과 메모만 할 수 있습니다."로 거절하면(직원으로 알던 화면이 낡은 것) 문구를 알리고 역할을 다시 받는다.
 api.onRoleRejected(() => {
   if (!signedIn()) return;
   toast(api.CONTRACTOR_MESSAGE);

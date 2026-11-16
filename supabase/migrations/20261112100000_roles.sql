@@ -1,10 +1,10 @@
--- 계정 권한 세 가지: 관리자(admin), 직원(staff), 외주(contractor).
+-- 계정 권한 세 가지: 관리자(admin), 직원(staff), 비행팀(contractor).
 -- 권한은 auth.users.raw_app_meta_data->>'role'(= JWT의 app_metadata.role)에 둔다. 사용자가 스스로 바꿀 수 없는 칸이다.
 --   'admin'      관리자. 지금과 같다(계정 관리 함수는 Edge Function admin-users가 따로 검사한다).
---   'contractor' 외주. 장소 보기(list_places, get_places), 미션 기록(save_mission), 로그인 기록(log_login, log_logout)만 할 수 있다.
+--   'contractor' 비행팀. 장소 보기(list_places, get_places), 미션 기록(save_mission), 로그인 기록(log_login, log_logout)만 할 수 있다.
 --                CSV 가져오기(import_places), 메모 고치기(update_memo), 장소 지우기(delete_place)는 거절한다.
 --   그 밖의 값이나 값이 없으면 'staff'(직원). 지금까지의 일반 계정이 그대로 직원이 된다.
--- 이 파일은 누구에게도 권한을 넣지 않는다(저장소가 공개라 누가 외주인지 올리지 않는다).
+-- 이 파일은 누구에게도 권한을 넣지 않는다(저장소가 공개라 누가 비행팀인지 올리지 않는다).
 -- 기존 관리자는 그대로 관리자이고, 나머지는 role이 없으므로 직원이다. 권한은 계정 관리 화면이나 SQL Editor에서 바꾼다.
 --
 -- 권한은 JWT가 아니라 auth.users에서 그때그때 읽는다. 그래서 바꾸면 다시 로그인하지 않아도 바로 적용된다.
@@ -17,7 +17,7 @@
 
 -- 'admin' | 'contractor' | 'staff'. 로그인하지 않았으면(auth.uid() 없음) null.
 -- auth.users에 행이 없으면 null이다. 지운 계정의 JWT가 아직 살아 있어도(최대 1시간) 쓰기 RPC를 못 하게 한다.
--- 쓰기 RPC는 'admin'·'staff'만 허용하므로(허용 목록) null은 외주처럼 거절된다.
+-- 쓰기 RPC는 'admin'·'staff'만 허용하므로(허용 목록) null은 비행팀처럼 거절된다.
 -- auth.users를 못 읽는 환경이면(권한·칸 이름이 다른 경우) 쓰기 RPC가 모두 멈추지 않게 JWT의 app_metadata.role로 대신한다.
 -- 이때는 경고(warning)를 남겨 로그에서 알 수 있게 한다.
 -- 다른 security definer 함수 안에서만 부른다. 화면은 my_role()을 쓴다.
@@ -58,8 +58,8 @@ as $$
 $$;
 
 -- ===================================================================
--- 3) import_places: 외주 계정 거절
--- 20261109170000_drop_places_period.sql의 정의 그대로이고, 로그인 검사 바로 뒤에 권한 검사만 넣었다(관리자·직원만 통과, 외주와 auth.users에 없는 계정은 거절).
+-- 3) import_places: 비행팀 계정 거절
+-- 20261109170000_drop_places_period.sql의 정의 그대로이고, 로그인 검사 바로 뒤에 권한 검사만 넣었다(관리자·직원만 통과, 비행팀과 auth.users에 없는 계정은 거절).
 -- ===================================================================
 
 create or replace function public.import_places(rows jsonb) returns jsonb
@@ -97,7 +97,7 @@ begin
     raise exception using message = '로그인이 필요합니다.', errcode = 'P0001';
   end if;
   if coalesce(public.app_role(), '') not in ('admin', 'staff') then
-    raise exception using message = '외주 계정은 미션 기록만 할 수 있습니다.', errcode = 'P0001';
+    raise exception using message = '비행팀 계정은 미션 기록만 할 수 있습니다.', errcode = 'P0001';
   end if;
   if rows is null or jsonb_typeof(rows) <> 'array' then
     raise exception using message = '가져올 장소 목록이 잘못되었습니다.', errcode = 'P0001';
@@ -212,8 +212,8 @@ end
 $$;
 
 -- ===================================================================
--- 4) update_memo: 외주 계정 거절
--- 20261109130000_places_missions_hardening.sql의 정의 그대로이고, 로그인 검사 바로 뒤에 권한 검사만 넣었다(관리자·직원만 통과, 외주와 auth.users에 없는 계정은 거절).
+-- 4) update_memo: 비행팀 계정 거절
+-- 20261109130000_places_missions_hardening.sql의 정의 그대로이고, 로그인 검사 바로 뒤에 권한 검사만 넣었다(관리자·직원만 통과, 비행팀과 auth.users에 없는 계정은 거절).
 -- (그 파일은 예전 2인자 판을 지우고 create function으로 만들었다. 여기서는 같은 3인자 판을 create or replace로 바꾼다.)
 -- ===================================================================
 
@@ -229,7 +229,7 @@ begin
     raise exception using message = '로그인이 필요합니다.', errcode = 'P0001';
   end if;
   if coalesce(public.app_role(), '') not in ('admin', 'staff') then
-    raise exception using message = '외주 계정은 미션 기록만 할 수 있습니다.', errcode = 'P0001';
+    raise exception using message = '비행팀 계정은 미션 기록만 할 수 있습니다.', errcode = 'P0001';
   end if;
   if p_memo is null then
     raise exception using message = '메모는 문자열이어야 합니다.', errcode = 'P0001';
@@ -256,8 +256,8 @@ end
 $$;
 
 -- ===================================================================
--- 5) delete_place: 외주 계정 거절
--- 20261109130000_places_missions_hardening.sql의 정의 그대로이고, 로그인 검사 바로 뒤에 권한 검사만 넣었다(관리자·직원만 통과, 외주와 auth.users에 없는 계정은 거절).
+-- 5) delete_place: 비행팀 계정 거절
+-- 20261109130000_places_missions_hardening.sql의 정의 그대로이고, 로그인 검사 바로 뒤에 권한 검사만 넣었다(관리자·직원만 통과, 비행팀과 auth.users에 없는 계정은 거절).
 -- ===================================================================
 
 create or replace function public.delete_place(p_place_id bigint) returns boolean
@@ -269,7 +269,7 @@ begin
     raise exception using message = '로그인이 필요합니다.', errcode = 'P0001';
   end if;
   if coalesce(public.app_role(), '') not in ('admin', 'staff') then
-    raise exception using message = '외주 계정은 미션 기록만 할 수 있습니다.', errcode = 'P0001';
+    raise exception using message = '비행팀 계정은 미션 기록만 할 수 있습니다.', errcode = 'P0001';
   end if;
   update public.places set deleted_at = now() where id = p_place_id and deleted_at is null;
   return found;

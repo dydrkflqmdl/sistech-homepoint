@@ -3,7 +3,7 @@ import { $, fill, focusDetailTitle, h, refocus } from './dom.js';
 import { collapseAllGroups, hooks, placeColor, state } from './state.js';
 import { loadPlaces } from './sync.js';
 import { PALETTE, colorLabel, paletteEntry } from './palette.js';
-import { missionProgress } from './mission.js';
+import { missionPercent, missionProgress } from './mission.js';
 
 // 다시 그리기(app.js)·장소 고르기(detail-ui.js)는 위쪽 모듈에 있어 hooks로 부른다.
 const render = (...args) => hooks.render(...args);
@@ -141,18 +141,24 @@ function memoIcon(p) {
   return icon;
 }
 
-// 시군 머리: "태안 총 미션 12/120 ●2 ●1 ▸". 미션 수는 그 시군 장소들의 완료한 미션/전체 미션을 더한 것이다(장소 배지 "미션 4/20"의 합).
-// 미션이 하나도 없는 시군은 미션 수를 달지 않는다. 상태 점 옆 숫자는 그 상태인 장소 수다(장소가 있는 상태만, 미진행 → 진행 중 → 완료 순서로).
-function groupHead(district, places, open, listId) {
-  const counts = new Map();
+// 장소들의 미션 진행을 더한다(장소 배지 "미션 4/20"의 합): { done, total }.
+function missionTotals(places) {
   let done = 0;
   let total = 0;
   for (const p of places) {
-    counts.set(placeColor(p), (counts.get(placeColor(p)) ?? 0) + 1);
     const progress = missionProgress(p.mission, p.missions);
     done += progress.done;
     total += progress.total;
   }
+  return { done, total };
+}
+
+// 시군 머리: "태안 총 미션 12/120 ●2 ●1 ▸". 미션 수는 그 시군 장소들의 완료한 미션/전체 미션을 더한 것이다(장소 배지 "미션 4/20"의 합).
+// 미션이 하나도 없는 시군은 미션 수를 달지 않는다. 상태 점 옆 숫자는 그 상태인 장소 수다(장소가 있는 상태만, 미진행 → 진행 중 → 완료 순서로).
+function groupHead(district, places, open, listId) {
+  const counts = new Map();
+  for (const p of places) counts.set(placeColor(p), (counts.get(placeColor(p)) ?? 0) + 1);
+  const { done, total } = missionTotals(places);
   return h(
     'button',
     {
@@ -216,6 +222,11 @@ export function renderList(visible) {
     : visible.length === total ? `장소 ${total}개`
     : visible.length === 0 ? '조건에 맞는 장소가 없습니다.'
     : `${visible.length}개 / 전체 ${total}개`;
+  // 장소 수 옆에 전체 미션 진행: "총 미션 완료/전체 (퍼센트)". 검색·분류로 걸러도 늘 전체 장소 기준이다(시군 머리글은 보이는 장소만 합친다).
+  // 미션이 하나도 없으면 적지 않는다.
+  const all = missionTotals(state.places);
+  $('#mission-total').textContent = all.total > 0 ? `총 미션 ${all.done}/${all.total} (${missionPercent(all.done, all.total)}%)` : '';
+  $('#summary-row').hidden = total === 0;
 
   // 검색어·거르기·선택이 바뀌면 "이번만 접어 둔" 묶음을 잊고 저절로 펼치는 규칙을 다시 따른다.
   const listKey = `${state.query.trim()}|${state.filterColor}|${state.selectedId}`;
