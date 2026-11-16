@@ -141,10 +141,18 @@ function memoIcon(p) {
   return icon;
 }
 
-// 시군 머리: "태안 2미션 ●2 ●1 ▸". 홈포인트 하나를 미션 하나로 센다. 상태 점은 장소가 있는 상태만, 미진행 → 진행 중 → 완료 순서로.
+// 시군 머리: "태안 총 미션 12/120 ●2 ●1 ▸". 미션 수는 그 시군 장소들의 완료한 미션/전체 미션을 더한 것이다(장소 배지 "미션 4/20"의 합).
+// 미션이 하나도 없는 시군은 미션 수를 달지 않는다. 상태 점 옆 숫자는 그 상태인 장소 수다(장소가 있는 상태만, 미진행 → 진행 중 → 완료 순서로).
 function groupHead(district, places, open, listId) {
   const counts = new Map();
-  for (const p of places) counts.set(placeColor(p), (counts.get(placeColor(p)) ?? 0) + 1);
+  let done = 0;
+  let total = 0;
+  for (const p of places) {
+    counts.set(placeColor(p), (counts.get(placeColor(p)) ?? 0) + 1);
+    const progress = missionProgress(p.mission, p.missions);
+    done += progress.done;
+    total += progress.total;
+  }
   return h(
     'button',
     {
@@ -157,14 +165,14 @@ function groupHead(district, places, open, listId) {
       onclick: () => toggleGroup(district, places),
     },
     h('span', { class: 'group-name' }, district),
-    h('span', { class: 'group-count' }, `${places.length}미션`),
+    total > 0 && h('span', { class: 'group-count' }, `총 미션 ${done}/${total}`),
     h(
       'span',
       { class: 'group-states' },
       PALETTE.filter(({ hex }) => counts.has(hex)).map(({ hex, label }) =>
         h(
           'span',
-          { class: 'group-state', title: `${label} ${counts.get(hex)}미션` },
+          { class: 'group-state', title: `${label} ${counts.get(hex)}곳` },
           stateDot(hex, { 'aria-hidden': 'true' }),
           h('span', { class: 'sr-only' }, `${label} `),
           String(counts.get(hex)),

@@ -53,11 +53,11 @@ await b.waitFor(`document.querySelectorAll('#place-list .group').length > 0`);
 await sleep(300);
 const s5 = await snap('새로고침 후');
 const ok3 = s3.heads.some((h) => /^보은 .* open=true/.test(h)) && s4.heads.every((h) => /open=false/.test(h)) && s4.visibleRows === 0 && s5.heads.every((h) => /open=false/.test(h));
-const ok0 = ok3 && s0.heads.every((h) => /미션 open=false/.test(h)) && s0.heads.some((h) => /^태안 2미션/.test(h)) && s0.visibleRows === 0;
-const ok1 = s1.heads.length === 1 && /^태안 1미션 open=false/.test(s1.heads[0]) && s1.visibleRows === 0;
+const ok0 = ok3 && s0.heads.every((h) => / 총 미션 \d+\/\d+ open=false$/.test(h)) && s0.heads.some((h) => /^태안 총 미션 1\/61 /.test(h)) && s0.heads.some((h) => /^보은 총 미션 0\/129 /.test(h)) && s0.visibleRows === 0;
+const ok1 = s1.heads.length === 1 && /^태안 총 미션 1\/34 open=false/.test(s1.heads[0]) && s1.visibleRows === 0;
 const ok2 = s2.heads.length === 1 && /^보은 .* open=true/.test(s2.heads[0]) && s2.visibleRows === 8;
-check('초기: 모두 접힘, 단위 "미션"', ok0, s0);
-check('분류 칩: 걸러지지만 접힌 채', ok1, s1);
+check('초기: 모두 접힘, 머리글은 그 시군의 "총 미션 완료/전체"(태안 1/61·보은 0/129)', ok0, s0);
+check('분류 칩: 걸러지지만 접힌 채, 머리글은 걸러진 장소만 합친 미션 수(태안 1/34)', ok1, s1);
 check('검색: 자동 펼침 유지', ok2, s2);
 check('손으로 펼친 뒤 분류 칩 → 모두 접힘, 새로고침 → 접힌 채 시작', ok3, { s3, s4, s5 });
 

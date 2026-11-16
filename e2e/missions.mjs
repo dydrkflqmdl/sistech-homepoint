@@ -31,12 +31,12 @@ check('목록 배지 미션 0/34 ┃ 남은 미션 개수 34', badge !== null &&
 const panelFalse = await evaluate(`/false/.test(document.querySelector('.panel').textContent)`);
 check('패널에 "false" 없음', panelFalse === false);
 
-// 1a. 시군 그룹: 처음엔 모두 접힘, 태안 2곳·보은 8곳, 머리글 클릭으로 펼침, 장소 선택 시 그 그룹 자동 펼침
+// 1a. 시군 그룹: 처음엔 모두 접힘, 머리글은 그 시군의 완료/전체 미션(태안 2곳 34+27=61, 보은 8곳 129)과 상태별 장소 수, 머리글 클릭으로 펼침, 장소 선택 시 그 그룹 자동 펼침
 const groups = await evaluate(`(() => ({
   heads: [...document.querySelectorAll('#place-list .group-head')].map(h => ({ name: h.querySelector('.group-name')?.textContent.trim(), text: h.textContent.replace(/\s+/g, ' ').trim(), open: h.getAttribute('aria-expanded') })),
   visibleRows: [...document.querySelectorAll('#place-list button .name')].filter(n => n.offsetParent !== null).length,
 }))()`);
-check('시군 그룹 2개(태안·보은) 처음엔 접힘', groups.heads.length === 2 && groups.heads.every((h) => h.open === 'false') && groups.heads.some((h) => h.name === '태안' && /2미션/.test(h.text)) && groups.heads.some((h) => h.name === '보은' && /8미션/.test(h.text)) && groups.visibleRows === 0, JSON.stringify(groups));
+check('시군 그룹 2개(태안·보은) 처음엔 접힘, 머리글 "총 미션 완료/전체"(태안 0/61·보은 0/129)와 상태별 장소 수(2곳·8곳)', groups.heads.length === 2 && groups.heads.every((h) => h.open === 'false') && groups.heads.some((h) => h.name === '태안' && /^태안총 미션 0\/61미진행 2/.test(h.text)) && groups.heads.some((h) => h.name === '보은' && /^보은총 미션 0\/129미진행 8/.test(h.text)) && groups.visibleRows === 0, JSON.stringify(groups));
 await evaluate(`[...document.querySelectorAll('#place-list .group-head')].find(h => h.querySelector('.group-name')?.textContent.trim() === '보은').click()`); await sleep(300);
 const opened = await evaluate(`(() => { const h = [...document.querySelectorAll('#place-list .group-head')].find(h => h.querySelector('.group-name')?.textContent.trim() === '보은'); return { open: h.getAttribute('aria-expanded'), rows: [...document.querySelectorAll('#place-list button .name')].filter(n => n.offsetParent !== null).length }; })()`);
 check('보은 머리글 클릭 → 8곳 펼침', opened.open === 'true' && opened.rows === 8, JSON.stringify(opened));
