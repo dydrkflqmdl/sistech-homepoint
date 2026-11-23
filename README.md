@@ -419,7 +419,7 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 계정 만들기는 service_role 키가 있어야 해서 DB 함수가 아니라 Supabase Edge Function(`supabase/functions/admin-users/`)으로 둡니다. 화면은 `supabase-js`의 `functions.invoke('admin-users', { body })`로 부르고, 로그인 토큰은 자동으로 함께 갑니다.
 
 - 함수의 supabase-js 버전: `index.ts`의 import 한 곳(`jsr:@supabase/supabase-js@2.119.0`)에 정확한 버전으로 고정되어 있습니다. `@2`처럼 범위로 두면 jsr 최신으로 풀려 배포할 때마다 함수가 달라집니다.
-  - 올리는 순서: import 버전 수정 → 로컬에서 CI와 같은 `deno check --no-lock --node-modules-dir=none supabase/functions/admin-users/index.ts` 실행 → PR → 병합하면 함수 파일이 바뀌었으므로 함수가 다시 배포됩니다.
+  - 올리는 순서: import 버전 수정 → 로컬에서 CI와 같은 `deno check --no-lock --node-modules-dir=none supabase/functions/admin-users/index.ts` 실행 → PR → 병합하면 함수 파일이 바뀌었으므로 함수가 다시 배포됩니다 → 배포 뒤 관리자 계정으로 "계정 관리" 창에서 목록 보기·계정 만들기·비밀번호 재설정·권한(직원 ↔ 비행팀) 바꾸기가 그대로 동작하는지 확인합니다.
   - 화면용 `package.json`의 supabase-js(`public/vendor/`)와는 따로라서 버전을 맞출 필요가 없습니다.
 
 - 권한: 함수가 Supabase 안에서 토큰을 검증하고(`auth.getUser`) 그 사용자의 `app_metadata.role`이 `admin`일 때만 처리합니다. 토큰이 없거나 틀리면 401, 관리자가 아니면 403입니다. 화면 버튼을 숨기는 것과 별개로 서버에서 막습니다.
