@@ -212,7 +212,7 @@ npm run vendor    # public/vendor/supabase-js.js 다시 만들기(supabase-js �
 | 2 | 린트 | `npm run lint` | |
 | 3 | 번들 확인 | `node scripts/vendor.mjs --check` | `public/vendor/`를 손으로 고쳤거나 버전이 어긋나면 실패 |
 | 4 | SQL 테스트 | `PGBIN=/usr/lib/postgresql/16/bin npm run test:sql` | 러너(ubuntu-latest)에 깔린 PostgreSQL 16 사용(운영은 17, 이 테스트가 쓰는 기능은 같음) |
-| 5 | Edge Function 타입 검사 | `deno check --no-lock supabase/functions/admin-users/index.ts` | Deno 2.9.6 |
+| 5 | Edge Function 타입 검사 | `deno check --no-lock --node-modules-dir=none supabase/functions/admin-users/index.ts` | Deno 2.9.6. 프런트엔드용 `node_modules`를 쓰지 않고 전역 캐시에서 받습니다 |
 | 6 | 헤드리스 E2E | `CHROME_BIN=$(which google-chrome) E2E_PORT=4198 node e2e/run-all.mjs` | `e2e/run-all.mjs`가 저장소에 있을 때만. 실패하면 `e2e/shots/`를 아티팩트로 14일 보관 |
 
 어느 하나라도 실패하면 마이그레이션과 배포는 실행되지 않습니다.
@@ -417,6 +417,10 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 ### 계정 관리 함수 (Edge Function `admin-users`)
 
 계정 만들기는 service_role 키가 있어야 해서 DB 함수가 아니라 Supabase Edge Function(`supabase/functions/admin-users/`)으로 둡니다. 화면은 `supabase-js`의 `functions.invoke('admin-users', { body })`로 부르고, 로그인 토큰은 자동으로 함께 갑니다.
+
+- 함수의 supabase-js 버전: `index.ts`의 import 한 곳(`jsr:@supabase/supabase-js@2.119.0`)에 정확한 버전으로 고정되어 있습니다. `@2`처럼 범위로 두면 jsr 최신으로 풀려 배포할 때마다 함수가 달라집니다.
+  - 올리는 순서: import 버전 수정 → 로컬에서 CI와 같은 `deno check --no-lock --node-modules-dir=none supabase/functions/admin-users/index.ts` 실행 → PR → 병합하면 함수 파일이 바뀌었으므로 함수가 다시 배포됩니다.
+  - 화면용 `package.json`의 supabase-js(`public/vendor/`)와는 따로라서 버전을 맞출 필요가 없습니다.
 
 - 권한: 함수가 Supabase 안에서 토큰을 검증하고(`auth.getUser`) 그 사용자의 `app_metadata.role`이 `admin`일 때만 처리합니다. 토큰이 없거나 틀리면 401, 관리자가 아니면 403입니다. 화면 버튼을 숨기는 것과 별개로 서버에서 막습니다.
 - 요청(POST JSON): `{ action, login_id?, password?, user_id?, role? }`
@@ -633,6 +637,7 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 �
 - 2026-11-06 계정: 한글 아이디 로그인, 로그인 기록(DB에만), 관리자 전용 계정 관리(Edge Function `admin-users`, 관리자 표시는 `app_metadata.role`). 사이트 주소를 `https://sistech.dpdns.org`로 변경.
 - 2026-11-06 이름: 서비스 이름을 "SISTECH 관리 페이지(홈포인트 지도)"에서 **HOME POINT NAVI(홈포인트 네비)**로 변경. 브라우저 탭 제목은 "HOME POINT NAVI | 시스테크", 머리글과 로그인 카드의 제목 아래에 작게 "by SISTECH". 사이트 주소, 로그인 이메일 도메인(`sistech.local`), 저장소 이름 같은 내부 식별자는 그대로.
 - 2026-11-23 운영: 배포 워크플로가 마이그레이션을 적용하기 직전에 주간 점검과 같은 방식의 암호화 DB 백업(아티팩트 `db-backup-predeploy-…`, 90일)을 만들고, 백업이 실패하면 마이그레이션 전에 멈춤. 장애 대응 표의 관리자 비밀번호 재설정 명령을 스크립트가 받는 형식(`npm run users -- --reset-password 김용문`, 비밀번호는 실행 중에 입력)으로 바로잡음.
+- 2026-11-23 함수: `admin-users`의 supabase-js를 `@2`에서 `2.119.0`으로 고정(마지막 배포 때 풀린 버전)하고, CI 타입 검사에 `--node-modules-dir=none`을 붙여 프런트엔드 `package.json` 버전과 jsr 새 버전에 흔들리지 않게 함. 병합하면 함수 파일이 바뀌어 함수가 다시 배포됨.
 - 2026-11-16 요약 줄: 목록 위 장소 수 옆에 전체 장소의 미션 진행(`총 미션 완료/전체 (퍼센트)`) 표시.
 - 2026-11-16 권한 이름: 세 번째 권한의 이름을 '비행팀'으로 정함(화면·문구·문서·점검). 내부 값 `contractor`는 그대로. 서버 거절 문구는 "비행팀 계정은 미션 기록과 메모만 할 수 있습니다."로 하나만 알아봄.
 - 2026-11-16 지우기: 장소 삭제가 삭제 표시(soft delete)에서 실제 삭제로 바뀜(장소 행과 미션 기록이 지워지고, 같은 CSV를 다시 가져오면 기록 없는 새 장소). 미션 기록 창 보기 화면에 [기록 지우기] 추가(관리자·직원만, 새 함수 `clear_mission`, 그사이 다른 기기가 고쳤으면 지우지 않고 최신 값 안내).

@@ -3,7 +3,9 @@
 // SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY 는 Supabase 가 실행 환경에 자동으로 넣어 준다(우리는 어디에도 저장하지 않음).
 // ALLOWED_ORIGINS(선택): 쉼표로 구분한 허용 출처. 예) https://sistech.dpdns.org,http://localhost:4100
 //   비워 두면 지금처럼 모든 출처('*')를 허용한다. 설정: supabase secrets set ALLOWED_ORIGINS=...
-import { createClient, type User } from 'jsr:@supabase/supabase-js@2';
+// supabase-js 는 일부러 정확한 버전으로 고정한다. '@2' 는 jsr 최신으로 풀려 배포할 때마다 함수가 달라지고 CI 타입 검사도 깨진다.
+//   올릴 때는 이 줄만 고치고 README '계정 관리 함수' 절의 순서를 따른다.
+import { createClient, type User } from 'jsr:@supabase/supabase-js@2.119.0';
 import { createHandler } from './handler.js';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL');

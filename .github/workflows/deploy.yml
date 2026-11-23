@@ -54,8 +54,10 @@ jobs:
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: 2.9.6
+      # 루트 package.json 이 있으면 Deno 가 npm: 패키지를 프런트엔드용 node_modules 에서만 찾아 버전이 어긋나면 실패한다.
+      # --node-modules-dir=none 으로 그 폴더를 쓰지 않고 전역 캐시에서 받게 해 프런트엔드 supabase-js 버전과 떼어 놓는다.
       - name: Edge Function 타입 검사
-        run: deno check --no-lock supabase/functions/admin-users/index.ts
+        run: deno check --no-lock --node-modules-dir=none supabase/functions/admin-users/index.ts
       # 헤드리스 화면 검사는 한글 글꼴이 있어야 머리글 높이 같은 배치 검사가 맞는다.
       - name: 한글 글꼴 설치(E2E용)
         if: hashFiles('e2e/run-all.mjs') != ''
