@@ -142,6 +142,58 @@ jobs:
       - name: Supabase 프로젝트 연결
         if: steps.changes.outputs.db == 'true' || steps.changes.outputs.fn == 'true'
         run: supabase link --project-ref "$SUPABASE_PROJECT_ID"
+      # ── 배포 전 백업: 마이그레이션을 적용할 때만, 바로 앞에서 만든다 ──
+      # 주간 점검(weekly.yml 의 backup 잡)과 같은 방식이다. 덤프 → BACKUP_PASSPHRASE 로 암호화 → Actions 아티팩트 90일 보관.
+      # 아래 네 단계 중 하나라도 실패하면 잡이 멈춰 마이그레이션 적용·함수 배포는 돌지 않는다(백업 없이 DB 를 바꾸지 않음).
+      # 덤프·암호화 방식을 바꾸면 weekly.yml 도 함께 바꾼다. README 배포 절 5의 풀기·복원 절차가 두 백업에 같이 쓰인다.
+      - name: 배포 전 백업 - 암호 Secret 확인
+        if: steps.changes.outputs.db == 'true'
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::BACKUP_PASSPHRASE Secret 이 없어 마이그레이션 전 백업을 만들 수 없습니다. 백업 없이 DB 를 바꾸지 않으므로 여기서 멈춥니다(README 배포 절 1)."
+            exit 1
+          fi
+      # schema.sql: public 등 우리 스키마 구조 / data.sql: 모든 스키마의 데이터(auth.users 비밀번호 해시 포함 → 반드시 암호화) / roles.sql: 직접 만든 역할
+      - name: 배포 전 백업 - 덤프
+        if: steps.changes.outputs.db == 'true'
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/backup"   # 작업 폴더(저장소) 밖에 둔다: 실수로라도 커밋되지 않게
+          mkdir -p "$out"
+          supabase db dump --remote -f "$out/roles.sql" --role-only
+          supabase db dump --remote -f "$out/schema.sql"
+          supabase db dump --remote -f "$out/data.sql" --data-only --use-copy
+          # 데이터 내용은 로그에 찍지 않는다. 크기와 표 개수만 남긴다.
+          ls -l "$out"
+          echo "COPY 블록 수: $(grep -c '^COPY ' "$out/data.sql" || true)"
+          test -s "$out/schema.sql"
+          test -s "$out/data.sql"
+      - name: 배포 전 백업 - 암호화
+        if: steps.changes.outputs.db == 'true'
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          name="sistech-db-predeploy-$(date -u +%Y%m%dT%H%MZ)-${GITHUB_SHA::7}"
+          tar czf "$name.tar.gz" -C backup roles.sql schema.sql data.sql
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BACKUP_PASSPHRASE -in "$name.tar.gz" -out "$name.tar.gz.enc"
+          # 평문은 바로 지운다.
+          rm -rf backup "$name.tar.gz"
+          mkdir -p out && mv "$name.tar.gz.enc" out/
+          ls -l out
+      # 이름에 시도 번호(run_attempt)를 붙인다. Re-run failed jobs 로 다시 돌 때 같은 실행 안에서 이름이 겹쳐 올리기가 실패하지 않게.
+      - name: 배포 전 백업 - 올리기(90일 보관)
+        if: steps.changes.outputs.db == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: db-backup-predeploy-${{ github.run_number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/out/*.tar.gz.enc
+          retention-days: 90
+          if-no-files-found: error
+          compression-level: 0 # 이미 압축·암호화된 파일
       # 이미 적용된 파일은 건너뛰고 새 파일만 적용한다. 되돌리지 않으므로 마이그레이션은 '추가만' 하게 쓴다(README 배포 절).
       - name: 마이그레이션 적용
         if: steps.changes.outputs.db == 'true'

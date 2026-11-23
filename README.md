@@ -291,7 +291,7 @@ npm run vendor    # public/vendor/supabase-js.js 다시 만들기(supabase-js �
 | `SUPABASE_URL` | Project URL. 빌드 때 `config.js`에 들어가고, 가입 차단 확인·휴면 방지에도 씁니다. |
 | `SUPABASE_ANON_KEY` | anon(공개) 키. 빌드 때 `config.js`에 들어가고, 가입 차단 확인·휴면 방지에도 씁니다. |
 | `KAKAO_JS_KEY` | 카카오맵 JavaScript 키. 빌드 때 `config.js`에 들어갑니다. |
-| `BACKUP_PASSPHRASE` | 주간 백업 암호화 비밀번호(20자 이상 무작위 권장). 없으면 백업이 실패하고 이슈가 열립니다. 잃어버리면 백업을 풀 수 없으니 비밀번호 관리자에 따로 보관하세요. |
+| `BACKUP_PASSPHRASE` | 주간 백업과 배포 전 백업의 암호화 비밀번호(20자 이상 무작위 권장). 없으면 주간 백업이 실패하고 이슈가 열리며, 마이그레이션이 있는 배포도 백업을 만들지 못해 마이그레이션 전에 멈춥니다. 잃어버리면 백업을 풀 수 없으니 비밀번호 관리자에 따로 보관하세요. |
 
 - 권장(선택): Settings → Environments에서 `production` 환경을 만들고 Required reviewers(승인자)나 Deployment branches(main만)를 걸면, 마이그레이션 잡에 `environment: production`을 한 줄 추가해 DB를 바꾸기 전에 승인을 받게 할 수 있습니다. 이때 DB용 Secret 3개(`SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_ID`)를 저장소 Secret 대신 환경 Secret으로 옮기면 다른 워크플로가 쓸 수 없게 됩니다(그러면 `weekly.yml`의 백업 잡에도 같은 줄이 필요). 지금은 적용하지 않았습니다.
 - 실패 알림: 배포나 주간 점검이 실패하면 워크플로가 저장소에 이슈(`[배포 실패] …`, `[주간 점검 실패] …`)를 엽니다. 같은 제목의 이슈가 열려 있으면 댓글만 답니다. 이슈 알림을 받으려면 저장소 오른쪽 위 Watch → All Activity(또는 Custom → Issues)를 켜 두세요. GitHub 앱(휴대폰)의 알림도 같이 옵니다.
@@ -308,7 +308,7 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
   └▶ DB 마이그레이션·함수 배포
        ├ 가입 차단 확인(auth/v1/settings 의 disable_signup 이 true 가 아니면 중단)
        ├ 바뀐 부분 확인(마지막 성공 배포 커밋과 비교)
-       ├ supabase/migrations/** 또는 config.toml 이 바뀜 → supabase db push --remote --yes
+       ├ supabase/migrations/** 또는 config.toml 이 바뀜 → 배포 전 백업(실패하면 여기서 멈춤) → supabase db push --remote --yes
        └ supabase/functions/** 또는 config.toml 이 바뀜 → supabase functions deploy admin-users
             └▶ 페이지 배포(build.mjs <커밋 해시 7자리> → dist 업로드 → Pages → version.json 확인)
                  └▶ (어디서든 실패하면) 실패 알림 이슈
@@ -321,6 +321,7 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
   - 이미 적용된 마이그레이션 파일은 고치지 말고 새 파일을 추가하세요. `db push`는 아직 적용되지 않은 파일만 적용합니다.
 - 비교 기준은 "이 워크플로가 마지막으로 성공한 커밋"입니다. 마이그레이션이 실패한 채 다른 커밋을 push해도, 다음 실행에서 그 마이그레이션까지 다시 적용합니다. 성공한 배포 기록을 못 찾거나 수동 실행이면 둘 다 실행합니다.
 - 가입 차단 확인: Supabase에서 가입이 켜져 있으면(공개 anon 키로 누구나 계정을 만들 수 있는 상태) 마이그레이션도 배포도 하지 않습니다.
+- 배포 전 백업: 마이그레이션을 적용하는 실행에서만, `db push` 바로 앞에서 주간 점검과 같은 방식(덤프 → `BACKUP_PASSPHRASE`로 암호화)으로 DB 백업을 만들어 그 배포 실행의 아티팩트 `db-backup-predeploy-<실행 번호>-<시도 번호>`로 **90일** 보관합니다. `BACKUP_PASSPHRASE`가 없거나 덤프·암호화·올리기 중 하나라도 실패하면 잡이 멈춰 마이그레이션과 함수 배포는 하지 않습니다(페이지 배포도 하지 않음). 마이그레이션이 없는 배포(화면·함수만 바뀜)는 백업하지 않습니다. 받기·풀기·복원은 배포 절 5와 같습니다.
 - 빌드는 `public/`을 `dist/`로 복사하고, Secrets 값으로 `config.js`를 새로 만들고, 다음을 붙입니다.
   - HTML·JS가 부르는 파일 뒤에 `?v=<커밋 해시>`. 배포할 때마다 주소가 달라져 브라우저가 옛 파일을 쓰지 않습니다. 스탬프를 붙일 수 없는 상대 import(예: ``import(`./${이름}.js`)``)가 남으면 빌드가 실패합니다.
   - `config.js`만은 `?v=<커밋 해시>-<내용 해시 8자>`. Secrets만 바꾸고 같은 커밋을 다시 배포(Run workflow)해도 새 값이 바로 내려갑니다.
@@ -330,19 +331,20 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 
 ### 4. 실패했을 때·되돌리기
 
-- 일시적인 실패(네트워크, Supabase 점검 등): Actions → 실패한 실행 → 오른쪽 위 **Re-run jobs → Re-run failed jobs**. 성공한 잡은 다시 돌지 않고 실패한 잡과 그 뒤 잡만 돕니다. 마이그레이션은 이미 적용된 것을 건너뛰므로 다시 돌려도 안전합니다.
+- 일시적인 실패(네트워크, Supabase 점검 등): Actions → 실패한 실행 → 오른쪽 위 **Re-run jobs → Re-run failed jobs**. 성공한 잡은 다시 돌지 않고 실패한 잡과 그 뒤 잡만 돕니다. 마이그레이션은 이미 적용된 것을 건너뛰므로 다시 돌려도 안전합니다. 다시 돌리면 배포 전 백업도 새로 만들어지는데(`…-<실행 번호>-2`), 마이그레이션이 중간에 실패했었다면 앞 파일이 이미 적용된 DB를 담습니다. 마이그레이션 전 상태는 첫 시도(`…-<실행 번호>-1`) 아티팩트에 있습니다.
 - 실패 단계별 상태
 
 | 멈춘 단계 | DB·함수 | 사이트 |
 | --- | --- | --- |
 | 테스트 | 그대로 | 그대로 |
 | 가입 차단 확인 | 그대로 | 그대로 |
+| 배포 전 백업 | 그대로(마이그레이션·함수 배포 모두 돌지 않음) | 그대로 |
 | 마이그레이션 적용 | 실패한 파일은 파일 단위 트랜잭션이라 통째로 취소되고, 그 앞 파일은 적용된 채 남음 | 그대로 |
 | Edge Function 배포 | 마이그레이션은 적용됨, 함수는 옛 것 | 그대로 |
 | 페이지 배포 | 새 것 | 옛 것(추가만 하는 마이그레이션이면 문제없음) |
 | 배포 확인(version.json) | 새 것 | 대개 새 것. 도메인·Pages 설정 확인 |
 
-- 되돌리기: 문제가 생긴 커밋을 `git revert <커밋>`으로 되돌리고 push하면 이전 화면과 이전 함수가 다시 배포됩니다. **마이그레이션은 되돌려지지 않습니다**(`db push`는 앞으로만 적용). DB 구조를 되돌려야 하면 되돌리는 마이그레이션을 새 파일로 추가하세요. 데이터를 되돌려야 하면 주간 백업(아래)에서 복원합니다.
+- 되돌리기: 문제가 생긴 커밋을 `git revert <커밋>`으로 되돌리고 push하면 이전 화면과 이전 함수가 다시 배포됩니다. **마이그레이션은 되돌려지지 않습니다**(`db push`는 앞으로만 적용). DB 구조를 되돌려야 하면 되돌리는 마이그레이션을 새 파일로 추가하세요. 데이터를 되돌려야 하면 주간 백업(아래) 또는 그 배포 실행의 배포 전 백업(`db-backup-predeploy-…`, 마이그레이션 직전 상태)에서 복원합니다.
 
 ### 5. 주간 점검(휴면 방지·백업)
 
@@ -351,8 +353,8 @@ developers.kakao.com → 내 애플리케이션 → 플랫폼 키 → Web의 사
 - 휴면 방지: anon 키로 `rest/v1/places`(권한이 없어 401이 정상)와 `auth/v1/settings`를 부릅니다. 응답이 5xx이거나 연결이 안 되면(일시정지 의심), 또는 가입이 켜져 있으면 실패로 보고 이슈를 엽니다.
 - 백업: `supabase db dump`로 `roles.sql`, `schema.sql`(우리 스키마 구조), `data.sql`(데이터, `auth.users`의 비밀번호 해시·로그인 기록 포함)을 받아 `BACKUP_PASSPHRASE`로 암호화(`openssl` AES-256, PBKDF2)한 뒤 Actions 아티팩트 `db-backup-<번호>`로 **90일** 보관합니다. 실제 DB에 접속하므로 이것도 휴면 방지가 됩니다.
   - 공개 저장소의 아티팩트는 GitHub에 로그인한 누구나 받을 수 있습니다. 그래서 암호화하지 않은 백업은 올리지 않고, 백업 파일은 절대 저장소에 커밋하지 않습니다.
-  - 받기: Actions → 주간 점검 → 원하는 실행 → Artifacts에서 내려받아 압축을 풉니다(`.tar.gz.enc` 하나가 나옴).
-  - 풀기: `openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in sistech-db-<날짜>.tar.gz.enc -out backup.tar.gz` → 비밀번호 입력 → `tar xzf backup.tar.gz`. macOS 기본 `openssl`로도 됩니다.
+  - 받기: Actions → 주간 점검 → 원하는 실행 → Artifacts에서 내려받아 압축을 풉니다(`.tar.gz.enc` 하나가 나옴). 배포 전 백업은 Actions → 배포 → 그 배포 실행 → Artifacts의 `db-backup-predeploy-…`이고, 파일 이름은 `sistech-db-predeploy-<시각>-<커밋 7자>.tar.gz.enc`입니다.
+  - 풀기: `openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in sistech-db-<날짜>.tar.gz.enc -out backup.tar.gz` → 비밀번호 입력 → `tar xzf backup.tar.gz`(배포 전 백업은 `-in` 뒤 파일 이름만 `sistech-db-predeploy-…`로 바꿉니다). macOS 기본 `openssl`로도 됩니다.
   - 복원(새 프로젝트 또는 비운 DB에): 새 프로젝트를 만들고 마이그레이션을 먼저 적용한 뒤(배포 워크플로 수동 실행), SQL Editor 대신 `psql`로 데이터를 넣습니다. 연결 문자열은 대시보드 Connect → Session pooler에서 복사합니다.
 
     ```bash
@@ -564,7 +566,7 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 �
 - Supabase 무료 플랜은 일주일 정도 활동이 없으면 프로젝트가 일시정지됩니다. 주간 점검 워크플로가 월·목에 접속해 이를 막습니다. 그래도 정지되면(주간 점검 실패 이슈가 열림) 아래 장애 대응 표대로 복구합니다. 정지돼도 데이터는 지워지지 않습니다(정지가 90일 넘게 이어지면 복구할 수 없게 될 수 있으니 바로 복구하세요).
 - GitHub Pages는 파일을 최대 10분 정도 캐시합니다. 배포 직후 옛 화면이 보이면 잠시 뒤 새로고침하세요. 파일 주소에 커밋 해시를 붙여 두어 대부분은 바로 바뀝니다. 지금 사이트가 몇 번 배포인지는 `https://sistech.dpdns.org/version.json`으로 확인합니다.
 - 기존 Express + SQLite 서버의 데이터(`data/places.db`)는 자동으로 옮겨지지 않습니다. 옛 서버에서 CSV로 내보낸 뒤 새 사이트에서 다시 가져오세요. 단, 메모는 CSV에 포함되어 다시 가져와지지만 미션 기록(완료·이름·비행시간·배터리)은 CSV에 없어서 옮겨지지 않습니다. 필요하면 옛 DB 파일을 따로 보관하세요.
-- 백업: Supabase 무료 플랜은 자동 백업이 없어서 주간 점검 워크플로가 암호화한 DB 덤프를 90일 보관합니다(배포 절 5). 중요한 작업 전에는 Actions → 주간 점검 → Run workflow로 즉시 백업을 하나 더 만들어 두세요. 화면의 "내보내기" CSV는 장소 목록만 담고 미션 기록은 없으므로 백업을 대신하지 못합니다.
+- 백업: Supabase 무료 플랜은 자동 백업이 없어서 주간 점검 워크플로가 암호화한 DB 덤프를 90일 보관합니다(배포 절 5). 마이그레이션이 있는 배포는 DB를 바꾸기 직전에 같은 방식의 백업을 저절로 하나 더 만듭니다(배포 절 3). 그 밖에 중요한 작업 전에는 Actions → 주간 점검 → Run workflow로 즉시 백업을 하나 더 만들어 두세요. 화면의 "내보내기" CSV는 장소 목록만 담고 미션 기록은 없으므로 백업을 대신하지 못합니다.
 - 초기화: 대시보드의 Table Editor나 SQL Editor에서 `places` 표를 비우면 됩니다(`missions`는 함께 지워집니다). `delete from public.places;`로 지우면 행마다 `audit_log`에 DELETE 기록이 남고, `truncate public.places, public.missions;`는 기록을 남기지 않습니다. `audit_log`도 비우려면 `truncate public.audit_log;`.
 - 휴대폰 실기기에서 카카오맵 앱이 열리는지는 아직 확인하지 않았습니다.
 
@@ -586,7 +588,7 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 �
 | 증상 | 확인 | 조치 |
 | --- | --- | --- |
 | 사이트는 뜨는데 로그인·데이터가 안 됨, 주간 점검 실패 이슈 | Supabase 대시보드에 "Paused" 표시 | 프로젝트 화면의 **Restore project**(몇 분 걸림) → Actions → 주간 점검 → Run workflow로 확인 → 이슈 닫기 |
-| 관리자 비밀번호 분실 | — | 다른 관리자가 화면 "계정 관리"에서 재설정. 관리자가 한 명뿐이면 `.env`에 service_role 키를 넣고 `npm run users -- --password <새 비밀번호> --reset-password 김용문`(관리자 표시가 빠졌으면 `npm run users -- --admin 김용문`), 다 쓰면 키를 비움. 또는 대시보드 Authentication → Users에서 직접 변경. 관리자를 두 명 이상 지정해 두면 안전합니다 |
+| 관리자 비밀번호 분실 | — | 다른 관리자가 화면 "계정 관리"에서 재설정. 관리자가 한 명뿐이면 `.env`에 service_role 키를 넣고 `npm run users -- --reset-password 김용문`(새 비밀번호는 실행 중에 두 번 묻습니다. 관리자 표시가 빠졌으면 `npm run users -- --admin 김용문`), 다 쓰면 키를 비움. 또는 대시보드 Authentication → Users에서 직접 변경. 관리자를 두 명 이상 지정해 두면 안전합니다 |
 | 배포 실패 이슈 | Actions의 실패한 실행에서 빨간 단계 로그 | 일시적이면 Re-run failed jobs. 코드 문제면 고쳐서 push하거나 `git revert` 후 push(배포 절 4). 가입 차단 확인 실패면 Supabase Authentication → Sign In / Providers에서 가입 허용을 끄고 Re-run |
 | 배포 확인(version.json) 실패 | Settings → Pages의 Custom domain 상태(DNS check), 브라우저로 `/version.json` 열기 | 도메인 DNS·HTTPS 인증서 문제면 Pages 설정에서 다시 확인(Check again) |
 | 도메인(`sistech.dpdns.org`) 만료·DNS 장애 | 도메인 등록처 대시보드의 만료일 | 갱신. 급하면 Settings → Pages에서 사용자 지정 도메인을 지우고 `https://<계정>.github.io/<저장소>/`로 접속(카카오 콘솔에 `https://<계정>.github.io`를 미리 등록해 두어야 지도가 뜸) |
@@ -630,6 +632,7 @@ Q1_A_TA_SW_01,Q1_A_TA_SW__01_01 ~ _34,Q1,태안,가람면,가람면 하늘리 �
 - 2026-11-06 전환: Express + SQLite 서버를 없애고 GitHub Pages(정적) + Supabase(Postgres·Auth·Realtime) 구조로 바꿈. 로그인 필수와 실시간 반영을 추가하고, CSV 읽기를 브라우저로 옮기고, API를 DB 함수 5개로 대체. GitHub Actions로 테스트 → 마이그레이션 → 배포를 자동화.
 - 2026-11-06 계정: 한글 아이디 로그인, 로그인 기록(DB에만), 관리자 전용 계정 관리(Edge Function `admin-users`, 관리자 표시는 `app_metadata.role`). 사이트 주소를 `https://sistech.dpdns.org`로 변경.
 - 2026-11-06 이름: 서비스 이름을 "SISTECH 관리 페이지(홈포인트 지도)"에서 **HOME POINT NAVI(홈포인트 네비)**로 변경. 브라우저 탭 제목은 "HOME POINT NAVI | 시스테크", 머리글과 로그인 카드의 제목 아래에 작게 "by SISTECH". 사이트 주소, 로그인 이메일 도메인(`sistech.local`), 저장소 이름 같은 내부 식별자는 그대로.
+- 2026-11-23 운영: 배포 워크플로가 마이그레이션을 적용하기 직전에 주간 점검과 같은 방식의 암호화 DB 백업(아티팩트 `db-backup-predeploy-…`, 90일)을 만들고, 백업이 실패하면 마이그레이션 전에 멈춤. 장애 대응 표의 관리자 비밀번호 재설정 명령을 스크립트가 받는 형식(`npm run users -- --reset-password 김용문`, 비밀번호는 실행 중에 입력)으로 바로잡음.
 - 2026-11-16 요약 줄: 목록 위 장소 수 옆에 전체 장소의 미션 진행(`총 미션 완료/전체 (퍼센트)`) 표시.
 - 2026-11-16 권한 이름: 세 번째 권한의 이름을 '비행팀'으로 정함(화면·문구·문서·점검). 내부 값 `contractor`는 그대로. 서버 거절 문구는 "비행팀 계정은 미션 기록과 메모만 할 수 있습니다."로 하나만 알아봄.
 - 2026-11-16 지우기: 장소 삭제가 삭제 표시(soft delete)에서 실제 삭제로 바뀜(장소 행과 미션 기록이 지워지고, 같은 CSV를 다시 가져오면 기록 없는 새 장소). 미션 기록 창 보기 화면에 [기록 지우기] 추가(관리자·직원만, 새 함수 `clear_mission`, 그사이 다른 기기가 고쳤으면 지우지 않고 최신 값 안내).
